@@ -362,10 +362,11 @@ dev-with-db: server-stop db-start
 	 go run $(MAIN_PATH)
 
 ## dev-with-tls: Run development server with HTTPS/TLS enabled
-dev-with-tls: server-stop deps
+dev-with-tls: server-stop deps build
 	@echo "Starting development server with HTTPS/TLS enabled..."
 	@OVIM_TLS_ENABLED=true \
 	 OVIM_ENVIRONMENT=development \
+	 OVIM_OIDC_ENABLED=true \
 	 OVIM_LOG_LEVEL=debug \
 	 go run $(MAIN_PATH)
 

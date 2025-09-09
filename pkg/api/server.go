@@ -26,6 +26,7 @@ type Server struct {
 	provisioner  kubevirt.VMProvisioner
 	authManager  *auth.Middleware
 	tokenManager *auth.TokenManager
+	oidcProvider *auth.OIDCProvider
 	router       *gin.Engine
 }
 
@@ -44,12 +45,35 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 	// Create auth middleware
 	authManager := auth.NewMiddleware(tokenManager)
 
+	// Create OIDC provider if enabled
+	var oidcProvider *auth.OIDCProvider
+	if cfg.Auth.OIDC.Enabled {
+		var err error
+		authOIDCConfig := &auth.OIDCConfig{
+			Enabled:      cfg.Auth.OIDC.Enabled,
+			IssuerURL:    cfg.Auth.OIDC.IssuerURL,
+			ClientID:     cfg.Auth.OIDC.ClientID,
+			ClientSecret: cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:  cfg.Auth.OIDC.RedirectURL,
+			Scopes:       cfg.Auth.OIDC.Scopes,
+		}
+		oidcProvider, err = auth.NewOIDCProvider(authOIDCConfig)
+		if err != nil {
+			klog.Errorf("Failed to initialize OIDC provider: %v", err)
+			// Don't fail server startup, just disable OIDC
+			oidcProvider = nil
+		} else {
+			klog.Infof("OIDC provider initialized successfully for issuer: %s", cfg.Auth.OIDC.IssuerURL)
+		}
+	}
+
 	server := &Server{
 		config:       cfg,
 		storage:      storage,
 		provisioner:  provisioner,
 		authManager:  authManager,
 		tokenManager: tokenManager,
+		oidcProvider: oidcProvider,
 		router:       gin.New(),
 	}
 
@@ -101,9 +125,16 @@ func (s *Server) setupRoutes() {
 		// Authentication routes (no auth required)
 		auth := api.Group("/auth")
 		{
-			authHandlers := NewAuthHandlers(s.storage, s.tokenManager)
+			authHandlers := NewAuthHandlers(s.storage, s.tokenManager, s.oidcProvider)
 			auth.POST("/login", authHandlers.Login)
 			auth.POST("/logout", authHandlers.Logout)
+			auth.GET("/info", authHandlers.GetAuthInfo)
+
+			// OIDC endpoints
+			if s.oidcProvider != nil {
+				auth.GET("/oidc/auth-url", authHandlers.GetOIDCAuthURL)
+				auth.POST("/oidc/callback", authHandlers.HandleOIDCCallback)
+			}
 		}
 
 		// Protected routes (authentication required)

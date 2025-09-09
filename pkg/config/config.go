@@ -34,6 +34,13 @@ const (
 	EnvJWTSecret           = "OVIM_JWT_SECRET"
 	EnvEnvironment         = "OVIM_ENVIRONMENT"
 	EnvLogLevel            = "OVIM_LOG_LEVEL"
+
+	// OIDC Environment variables
+	EnvOIDCEnabled      = "OVIM_OIDC_ENABLED"
+	EnvOIDCIssuerURL    = "OVIM_OIDC_ISSUER_URL"
+	EnvOIDCClientID     = "OVIM_OIDC_CLIENT_ID"
+	EnvOIDCClientSecret = "OVIM_OIDC_CLIENT_SECRET"
+	EnvOIDCRedirectURL  = "OVIM_OIDC_REDIRECT_URL"
 )
 
 // Config holds all configuration for the OVIM backend
@@ -90,6 +97,17 @@ type KubeVirtConfig struct {
 type AuthConfig struct {
 	JWTSecret     string        `yaml:"jwtSecret"`
 	TokenDuration time.Duration `yaml:"tokenDuration"`
+	OIDC          OIDCConfig    `yaml:"oidc"`
+}
+
+// OIDCConfig holds OpenID Connect configuration
+type OIDCConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	IssuerURL    string   `yaml:"issuerUrl"`
+	ClientID     string   `yaml:"clientId"`
+	ClientSecret string   `yaml:"clientSecret"`
+	RedirectURL  string   `yaml:"redirectUrl"`
+	Scopes       []string `yaml:"scopes"`
 }
 
 // LoggingConfig holds logging configuration
@@ -133,6 +151,14 @@ func Load(configPath string) (*Config, error) {
 		Auth: AuthConfig{
 			JWTSecret:     getEnvString(EnvJWTSecret, DefaultJWTSecret),
 			TokenDuration: 24 * time.Hour,
+			OIDC: OIDCConfig{
+				Enabled:      getEnvBool(EnvOIDCEnabled, false),
+				IssuerURL:    getEnvString(EnvOIDCIssuerURL, ""),
+				ClientID:     getEnvString(EnvOIDCClientID, ""),
+				ClientSecret: getEnvString(EnvOIDCClientSecret, ""),
+				RedirectURL:  getEnvString(EnvOIDCRedirectURL, ""),
+				Scopes:       []string{"openid", "profile", "email"},
+			},
 		},
 		Logging: LoggingConfig{
 			Level:  getEnvString(EnvLogLevel, "info"),
