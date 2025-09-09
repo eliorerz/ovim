@@ -6,7 +6,7 @@
 *.dll
 *.so
 *.dylib
-ovim-server
+ovim_server
 ovim-backend
 ovim-updated
 *.tar.gz

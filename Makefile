@@ -3,7 +3,7 @@
 
 # Project configuration
 PROJECT_NAME := ovim-backend
-BINARY_NAME := ovim-server
+BINARY_NAME := ovim_server
 MAIN_PATH := ./cmd/ovim-server
 MODULE_NAME := github.com/eliorerz/ovim-updated
 
@@ -167,6 +167,7 @@ dev: server-stop deps
 ## server-stop: Stop any running OVIM server processes
 server-stop:
 	@echo "Stopping any running OVIM server processes..."
+	@-pkill -f "ovim_server" 2>/dev/null || true
 	@-pkill -f "ovim-server" 2>/dev/null || true
 	@-pkill -f "go run.*ovim-server" 2>/dev/null || true
 	@-pkill -f "air" 2>/dev/null || true
