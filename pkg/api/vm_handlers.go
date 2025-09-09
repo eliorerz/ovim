@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
+	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/eliorerz/ovim-updated/pkg/util"
@@ -14,13 +17,15 @@ import (
 
 // VMHandlers handles VM-related requests
 type VMHandlers struct {
-	storage storage.Storage
+	storage     storage.Storage
+	provisioner kubevirt.VMProvisioner
 }
 
 // NewVMHandlers creates a new VM handlers instance
-func NewVMHandlers(storage storage.Storage) *VMHandlers {
+func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner) *VMHandlers {
 	return &VMHandlers{
-		storage: storage,
+		storage:     storage,
+		provisioner: provisioner,
 	}
 }
 
@@ -186,17 +191,42 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		},
 	}
 
+	// Create VM in database first
 	if err := h.storage.CreateVM(vm); err != nil {
 		if err == storage.ErrAlreadyExists {
 			c.JSON(http.StatusConflict, gin.H{"error": "VM already exists"})
 			return
 		}
-		klog.Errorf("Failed to create VM: %v", err)
+		klog.Errorf("Failed to create VM in storage: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create VM"})
 		return
 	}
 
-	klog.Infof("VM %s (%s) created in organization %s by user %s (%s)", vm.Name, vm.ID, org.Name, username, userID)
+	// Create VM in KubeVirt cluster
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := h.provisioner.CreateVM(ctx, vm, vdc, template); err != nil {
+		klog.Errorf("Failed to provision VM %s in KubeVirt: %v", vm.ID, err)
+		
+		// Update VM status to error in database
+		vm.Status = models.VMStatusError
+		if updateErr := h.storage.UpdateVM(vm); updateErr != nil {
+			klog.Errorf("Failed to update VM %s status to error: %v", vm.ID, updateErr)
+		}
+		
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to provision VM in cluster"})
+		return
+	}
+
+	// Update VM status to provisioning
+	vm.Status = models.VMStatusProvisioning
+	if err := h.storage.UpdateVM(vm); err != nil {
+		klog.Errorf("Failed to update VM %s status to provisioning: %v", vm.ID, err)
+		// Don't fail the request - VM was created successfully
+	}
+
+	klog.Infof("VM %s (%s) created and provisioned in organization %s by user %s (%s)", vm.Name, vm.ID, org.Name, username, userID)
 
 	c.JSON(http.StatusCreated, vm)
 }
@@ -248,6 +278,93 @@ func (h *VMHandlers) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, vm)
+}
+
+// GetStatus handles getting VM status from KubeVirt cluster
+func (h *VMHandlers) GetStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VM ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Get VM from database to check permissions
+	vm, err := h.storage.GetVM(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "VM not found"})
+			return
+		}
+		klog.Errorf("Failed to get VM %s for user %s (%s): %v", id, username, userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VM"})
+		return
+	}
+
+	// Check access permissions
+	if role == models.RoleSystemAdmin {
+		// System admin can access any VM
+	} else if role == models.RoleOrgAdmin {
+		// Org admin can access VMs in their organization
+		if userOrgID == "" || userOrgID != vm.OrgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied to this VM"})
+			return
+		}
+	} else if role == models.RoleOrgUser {
+		// Org user can only access their own VMs
+		if userOrgID == "" || userOrgID != vm.OrgID || userID != vm.OwnerID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied to this VM"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+		return
+	}
+
+	// Get VDC to determine namespace
+	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if err != nil {
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+		return
+	}
+
+	// Get VM status from KubeVirt
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	status, err := h.provisioner.GetVMStatus(ctx, vm.ID, vdc.Namespace)
+	if err != nil {
+		klog.Errorf("Failed to get VM %s status from KubeVirt: %v", vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VM status from cluster"})
+		return
+	}
+
+	// Update VM status and IP in database if changed
+	clusterStatus := mapKubeVirtStatusToModel(status.Phase, status.Ready)
+	if vm.Status != clusterStatus || (status.IPAddress != "" && vm.IPAddress != status.IPAddress) {
+		vm.Status = clusterStatus
+		if status.IPAddress != "" {
+			vm.IPAddress = status.IPAddress
+		}
+		if err := h.storage.UpdateVM(vm); err != nil {
+			klog.Errorf("Failed to update VM %s status in database: %v", vm.ID, err)
+			// Don't fail the request - we can still return the current status
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"vm_id":      vm.ID,
+		"status":     vm.Status,
+		"ip_address": vm.IPAddress,
+		"cluster":    status,
+	})
 }
 
 // UpdatePower handles updating VM power state
@@ -315,36 +432,63 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 		return
 	}
 
-	// Update VM status based on action
+	// Get VDC to determine namespace
+	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if err != nil {
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+		return
+	}
+
+	// Perform power action on KubeVirt cluster
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	var newStatus string
 	switch req.Action {
 	case "start":
-		if vm.Status == models.VMStatusStopped {
-			newStatus = models.VMStatusRunning
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "VM must be stopped to start"})
+		if vm.Status == models.VMStatusRunning {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "VM is already running"})
 			return
 		}
+		// Allow starting VMs in pending or stopped state
+		if err := h.provisioner.StartVM(ctx, vm.ID, vdc.Namespace); err != nil {
+			klog.Errorf("Failed to start VM %s in KubeVirt: %v", vm.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start VM in cluster"})
+			return
+		}
+		newStatus = models.VMStatusRunning
+
 	case "stop":
-		if vm.Status == models.VMStatusRunning {
-			newStatus = models.VMStatusStopped
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "VM must be running to stop"})
+		if vm.Status == models.VMStatusStopped {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "VM is already stopped"})
 			return
 		}
+		if err := h.provisioner.StopVM(ctx, vm.ID, vdc.Namespace); err != nil {
+			klog.Errorf("Failed to stop VM %s in KubeVirt: %v", vm.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stop VM in cluster"})
+			return
+		}
+		newStatus = models.VMStatusStopped
+		vm.IPAddress = "" // Clear IP when stopped
+
 	case "restart":
-		if vm.Status == models.VMStatusRunning {
-			newStatus = models.VMStatusRunning // Restart keeps it running
-		} else {
+		if vm.Status != models.VMStatusRunning {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "VM must be running to restart"})
 			return
 		}
+		if err := h.provisioner.RestartVM(ctx, vm.ID, vdc.Namespace); err != nil {
+			klog.Errorf("Failed to restart VM %s in KubeVirt: %v", vm.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to restart VM in cluster"})
+			return
+		}
+		newStatus = models.VMStatusRunning
 	}
 
+	// Update VM status in database
 	vm.Status = newStatus
-
 	if err := h.storage.UpdateVM(vm); err != nil {
-		klog.Errorf("Failed to update VM %s power state: %v", id, err)
+		klog.Errorf("Failed to update VM %s power state in database: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update VM power state"})
 		return
 	}
@@ -405,9 +549,11 @@ func (h *VMHandlers) Delete(c *gin.Context) {
 		return
 	}
 
-	// Check if VM can be deleted (should be stopped first)
-	if vm.Status == models.VMStatusRunning {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "VM must be stopped before deletion"})
+	// Get VDC to determine namespace
+	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if err != nil {
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
 		return
 	}
 
@@ -418,15 +564,53 @@ func (h *VMHandlers) Delete(c *gin.Context) {
 		// Continue with deletion anyway
 	}
 
-	if err := h.storage.DeleteVM(id); err != nil {
-		klog.Errorf("Failed to delete VM %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VM"})
+	// Delete VM from KubeVirt cluster first
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := h.provisioner.DeleteVM(ctx, vm.ID, vdc.Namespace); err != nil {
+		klog.Errorf("Failed to delete VM %s from KubeVirt: %v", vm.ID, err)
+		// Update status back to error instead of continuing
+		vm.Status = models.VMStatusError
+		if updateErr := h.storage.UpdateVM(vm); updateErr != nil {
+			klog.Errorf("Failed to update VM %s status to error: %v", vm.ID, updateErr)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VM from cluster"})
 		return
 	}
 
-	klog.Infof("VM %s (%s) deleted by user %s (%s)", vm.Name, vm.ID, username, userID)
+	// Delete VM from database
+	if err := h.storage.DeleteVM(id); err != nil {
+		klog.Errorf("Failed to delete VM %s from database: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VM from database"})
+		return
+	}
+
+	klog.Infof("VM %s (%s) deleted from cluster and database by user %s (%s)", vm.Name, vm.ID, username, userID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "VM deleted successfully",
 	})
+}
+
+// mapKubeVirtStatusToModel maps KubeVirt VM phase and ready status to our model status
+func mapKubeVirtStatusToModel(phase string, ready bool) string {
+	switch phase {
+	case "Pending", "Scheduling":
+		return models.VMStatusProvisioning
+	case "Running":
+		if ready {
+			return models.VMStatusRunning
+		}
+		return models.VMStatusProvisioning
+	case "Succeeded", "Stopped":
+		return models.VMStatusStopped
+	case "Failed":
+		return models.VMStatusError
+	default:
+		if ready {
+			return models.VMStatusRunning
+		}
+		return models.VMStatusPending
+	}
 }

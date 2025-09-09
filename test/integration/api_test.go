@@ -9,6 +9,7 @@ import (
 
 	"github.com/eliorerz/ovim-updated/pkg/api"
 	"github.com/eliorerz/ovim-updated/pkg/config"
+	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -41,7 +42,10 @@ func setupTestSuite(t *testing.T) *IntegrationTestSuite {
 		},
 	}
 
-	server := api.NewServer(cfg, storage)
+	// Create mock KubeVirt provisioner for testing
+	provisioner := kubevirt.NewMockClient()
+
+	server := api.NewServer(cfg, storage, provisioner)
 
 	httpServer := httptest.NewServer(server.Handler())
 

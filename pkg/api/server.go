@@ -8,6 +8,7 @@ import (
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/config"
+	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/eliorerz/ovim-updated/pkg/version"
 )
@@ -20,15 +21,16 @@ const (
 
 // Server represents the HTTP server for the OVIM API
 type Server struct {
-	config       *config.Config
-	storage      storage.Storage
-	authManager  *auth.Middleware
-	tokenManager *auth.TokenManager
-	router       *gin.Engine
+	config        *config.Config
+	storage       storage.Storage
+	provisioner   kubevirt.VMProvisioner
+	authManager   *auth.Middleware
+	tokenManager  *auth.TokenManager
+	router        *gin.Engine
 }
 
 // NewServer creates a new API server instance
-func NewServer(cfg *config.Config, storage storage.Storage) *Server {
+func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt.VMProvisioner) *Server {
 	// Set gin mode based on environment
 	if cfg.Server.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -43,11 +45,12 @@ func NewServer(cfg *config.Config, storage storage.Storage) *Server {
 	authManager := auth.NewMiddleware(tokenManager)
 
 	server := &Server{
-		config:       cfg,
-		storage:      storage,
-		authManager:  authManager,
-		tokenManager: tokenManager,
-		router:       gin.New(),
+		config:        cfg,
+		storage:       storage,
+		provisioner:   provisioner,
+		authManager:   authManager,
+		tokenManager:  tokenManager,
+		router:        gin.New(),
 	}
 
 	server.setupMiddleware()
@@ -142,10 +145,11 @@ func (s *Server) setupRoutes() {
 			// VM management (all authenticated users, filtered by role)
 			vms := protected.Group("/vms")
 			{
-				vmHandlers := NewVMHandlers(s.storage)
+				vmHandlers := NewVMHandlers(s.storage, s.provisioner)
 				vms.GET("/", vmHandlers.List)
 				vms.POST("/", vmHandlers.Create)
 				vms.GET("/:id", vmHandlers.Get)
+				vms.GET("/:id/status", vmHandlers.GetStatus)
 				vms.PUT("/:id/power", vmHandlers.UpdatePower)
 				vms.DELETE("/:id", vmHandlers.Delete)
 			}
