@@ -51,7 +51,7 @@ GO_BUILD_FLAGS := -tags netgo -a -installsuffix cgo
 GO_TEST_FLAGS := -race -cover
 
 # Targets
-.PHONY: help clean build test lint fmt vet deps run dev server-stop
+.PHONY: help clean build test lint fmt vet deps run dev dev-with-tls dev-with-db-tls server-stop
 .PHONY: container-build container-run container-push container-clean
 .PHONY: pod-create pod-start pod-stop pod-clean pod-logs pod-status
 .PHONY: db-start db-stop db-restart db-logs db-shell db-migrate db-seed
@@ -357,6 +357,23 @@ db-seed: build
 dev-with-db: server-stop db-start
 	@echo "Starting development server with PostgreSQL..."
 	@OVIM_DATABASE_URL="$(DATABASE_URL)" \
+	 OVIM_ENVIRONMENT=development \
+	 OVIM_LOG_LEVEL=debug \
+	 go run $(MAIN_PATH)
+
+## dev-with-tls: Run development server with HTTPS/TLS enabled
+dev-with-tls: server-stop deps
+	@echo "Starting development server with HTTPS/TLS enabled..."
+	@OVIM_TLS_ENABLED=true \
+	 OVIM_ENVIRONMENT=development \
+	 OVIM_LOG_LEVEL=debug \
+	 go run $(MAIN_PATH)
+
+## dev-with-db-tls: Run development server with PostgreSQL and HTTPS/TLS
+dev-with-db-tls: server-stop db-start
+	@echo "Starting development server with PostgreSQL and HTTPS/TLS..."
+	@OVIM_TLS_ENABLED=true \
+	 OVIM_DATABASE_URL="$(DATABASE_URL)" \
 	 OVIM_ENVIRONMENT=development \
 	 OVIM_LOG_LEVEL=debug \
 	 go run $(MAIN_PATH)

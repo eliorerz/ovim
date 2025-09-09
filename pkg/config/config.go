@@ -10,6 +10,7 @@ import (
 const (
 	// Default configuration values
 	DefaultPort            = "8080"
+	DefaultTLSPort         = "8443"
 	DefaultJWTSecret       = "ovim-default-secret-change-in-production"
 	DefaultEnvironment     = "development"
 	DefaultDatabaseURL     = "postgres://ovim:ovim@localhost/ovim?sslmode=disable"
@@ -20,6 +21,11 @@ const (
 
 	// Environment variable names
 	EnvPort                = "OVIM_PORT"
+	EnvTLSEnabled          = "OVIM_TLS_ENABLED"
+	EnvTLSPort             = "OVIM_TLS_PORT"
+	EnvTLSCertFile         = "OVIM_TLS_CERT_FILE"
+	EnvTLSKeyFile          = "OVIM_TLS_KEY_FILE"
+	EnvTLSAutoGenerateCert = "OVIM_TLS_AUTO_GENERATE_CERT"
 	EnvDatabaseURL         = "OVIM_DATABASE_URL"
 	EnvKubernetesConfig    = "OVIM_KUBECONFIG"
 	EnvKubernetesInCluster = "OVIM_KUBERNETES_IN_CLUSTER"
@@ -46,6 +52,16 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `yaml:"writeTimeout"`
 	IdleTimeout  time.Duration `yaml:"idleTimeout"`
 	Environment  string        `yaml:"environment"`
+	TLS          TLSConfig     `yaml:"tls"`
+}
+
+// TLSConfig holds TLS/HTTPS configuration
+type TLSConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Port             string `yaml:"port"`
+	CertFile         string `yaml:"certFile"`
+	KeyFile          string `yaml:"keyFile"`
+	AutoGenerateCert bool   `yaml:"autoGenerateCert"`
 }
 
 // DatabaseConfig holds database configuration
@@ -91,6 +107,13 @@ func Load(configPath string) (*Config, error) {
 			WriteTimeout: DefaultWriteTimeout,
 			IdleTimeout:  DefaultIdleTimeout,
 			Environment:  getEnvString(EnvEnvironment, DefaultEnvironment),
+			TLS: TLSConfig{
+				Enabled:          getEnvBool(EnvTLSEnabled, false),
+				Port:             getEnvString(EnvTLSPort, DefaultTLSPort),
+				CertFile:         getEnvString(EnvTLSCertFile, ""),
+				KeyFile:          getEnvString(EnvTLSKeyFile, ""),
+				AutoGenerateCert: getEnvBool(EnvTLSAutoGenerateCert, true),
+			},
 		},
 		Database: DatabaseConfig{
 			URL:             getEnvString(EnvDatabaseURL, DefaultDatabaseURL),

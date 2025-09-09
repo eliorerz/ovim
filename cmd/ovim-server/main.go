@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
+	tlsutils "github.com/eliorerz/ovim-updated/pkg/tls"
 	"github.com/eliorerz/ovim-updated/pkg/version"
 )
 
@@ -106,30 +108,94 @@ func main() {
 	}
 
 	server := api.NewServer(cfg, storageImpl, provisioner)
+	handler := server.Handler()
 
-	srv := &http.Server{
-		Addr:    ":" + cfg.Server.Port,
-		Handler: server.Handler(),
+	// Channel to collect server errors
+	serverErrors := make(chan error, 2)
+
+	// HTTP Server (always runs)
+	httpSrv := &http.Server{
+		Addr:         ":" + cfg.Server.Port,
+		Handler:      handler,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
 	go func() {
-		klog.Infof("OVIM Backend Server listening on port %s", cfg.Server.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			klog.Fatalf("Failed to start server: %v", err)
+		klog.Infof("OVIM Backend HTTP Server listening on port %s", cfg.Server.Port)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErrors <- fmt.Errorf("HTTP server error: %w", err)
 		}
 	}()
 
+	// HTTPS Server (optional)
+	var httpsSrv *http.Server
+	if cfg.Server.TLS.Enabled {
+		// Set default certificate paths if not provided
+		certFile := cfg.Server.TLS.CertFile
+		keyFile := cfg.Server.TLS.KeyFile
+		if certFile == "" {
+			certFile = filepath.Join(".", "certs", "server.crt")
+		}
+		if keyFile == "" {
+			keyFile = filepath.Join(".", "certs", "server.key")
+		}
+
+		// Ensure certificates exist
+		if err := tlsutils.EnsureCertificates(certFile, keyFile, cfg.Server.TLS.AutoGenerateCert); err != nil {
+			klog.Fatalf("Failed to ensure TLS certificates: %v", err)
+		}
+
+		// Load TLS configuration
+		tlsConfig, err := tlsutils.LoadTLSConfig(certFile, keyFile)
+		if err != nil {
+			klog.Fatalf("Failed to load TLS configuration: %v", err)
+		}
+
+		httpsSrv = &http.Server{
+			Addr:         ":" + cfg.Server.TLS.Port,
+			Handler:      handler,
+			TLSConfig:    tlsConfig,
+			ReadTimeout:  cfg.Server.ReadTimeout,
+			WriteTimeout: cfg.Server.WriteTimeout,
+			IdleTimeout:  cfg.Server.IdleTimeout,
+		}
+
+		go func() {
+			klog.Infof("OVIM Backend HTTPS Server listening on port %s", cfg.Server.TLS.Port)
+			if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				serverErrors <- fmt.Errorf("HTTPS server error: %w", err)
+			}
+		}()
+	}
+
+	// Wait for shutdown signal or server error
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	klog.Info("Shutting down server...")
 
+	select {
+	case err := <-serverErrors:
+		klog.Fatalf("Server error: %v", err)
+	case <-quit:
+		klog.Info("Shutting down servers...")
+	}
+
+	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		klog.Fatalf("Server forced to shutdown: %v", err)
+	// Shutdown HTTP server
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		klog.Errorf("HTTP server forced to shutdown: %v", err)
 	}
 
-	klog.Info("Server exited")
+	// Shutdown HTTPS server if running
+	if httpsSrv != nil {
+		if err := httpsSrv.Shutdown(ctx); err != nil {
+			klog.Errorf("HTTPS server forced to shutdown: %v", err)
+		}
+	}
+
+	klog.Info("Servers exited")
 }
