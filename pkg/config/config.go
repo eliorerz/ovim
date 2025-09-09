@@ -141,7 +141,7 @@ func Load(configPath string) (*Config, error) {
 			IdleTimeout:  DefaultIdleTimeout,
 			Environment:  getEnvString(EnvEnvironment, DefaultEnvironment),
 			TLS: TLSConfig{
-				Enabled:          getEnvBool(EnvTLSEnabled, false),
+				Enabled:          getEnvBool(EnvTLSEnabled, true),
 				Port:             getEnvString(EnvTLSPort, DefaultTLSPort),
 				CertFile:         getEnvString(EnvTLSCertFile, ""),
 				KeyFile:          getEnvString(EnvTLSKeyFile, ""),

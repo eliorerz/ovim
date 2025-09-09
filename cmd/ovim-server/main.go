@@ -111,26 +111,11 @@ func main() {
 	handler := server.Handler()
 
 	// Channel to collect server errors
-	serverErrors := make(chan error, 2)
+	serverErrors := make(chan error, 1)
 
-	// HTTP Server (always runs)
-	httpSrv := &http.Server{
-		Addr:         ":" + cfg.Server.Port,
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
-	}
+	var mainSrv *http.Server
 
-	go func() {
-		klog.Infof("OVIM Backend HTTP Server listening on port %s", cfg.Server.Port)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErrors <- fmt.Errorf("HTTP server error: %w", err)
-		}
-	}()
-
-	// HTTPS Server (optional)
-	var httpsSrv *http.Server
+	// Only run HTTPS server when TLS is enabled
 	if cfg.Server.TLS.Enabled {
 		// Set default certificate paths if not provided
 		certFile := cfg.Server.TLS.CertFile
@@ -153,7 +138,7 @@ func main() {
 			klog.Fatalf("Failed to load TLS configuration: %v", err)
 		}
 
-		httpsSrv = &http.Server{
+		mainSrv = &http.Server{
 			Addr:         ":" + cfg.Server.TLS.Port,
 			Handler:      handler,
 			TLSConfig:    tlsConfig,
@@ -164,8 +149,25 @@ func main() {
 
 		go func() {
 			klog.Infof("OVIM Backend HTTPS Server listening on port %s", cfg.Server.TLS.Port)
-			if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			if err := mainSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 				serverErrors <- fmt.Errorf("HTTPS server error: %w", err)
+			}
+		}()
+	} else {
+		// Fallback to HTTP only if TLS is disabled (for development/testing)
+		klog.Warning("TLS is disabled - running HTTP server only (not recommended for production)")
+		mainSrv = &http.Server{
+			Addr:         ":" + cfg.Server.Port,
+			Handler:      handler,
+			ReadTimeout:  cfg.Server.ReadTimeout,
+			WriteTimeout: cfg.Server.WriteTimeout,
+			IdleTimeout:  cfg.Server.IdleTimeout,
+		}
+
+		go func() {
+			klog.Infof("OVIM Backend HTTP Server listening on port %s", cfg.Server.Port)
+			if err := mainSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				serverErrors <- fmt.Errorf("HTTP server error: %w", err)
 			}
 		}()
 	}
@@ -185,16 +187,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 	defer cancel()
 
-	// Shutdown HTTP server
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		klog.Errorf("HTTP server forced to shutdown: %v", err)
-	}
-
-	// Shutdown HTTPS server if running
-	if httpsSrv != nil {
-		if err := httpsSrv.Shutdown(ctx); err != nil {
-			klog.Errorf("HTTPS server forced to shutdown: %v", err)
-		}
+	// Shutdown main server
+	if err := mainSrv.Shutdown(ctx); err != nil {
+		klog.Errorf("Server forced to shutdown: %v", err)
 	}
 
 	klog.Info("Servers exited")

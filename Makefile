@@ -20,7 +20,7 @@ BACKEND_CONTAINER_NAME := ovim-backend-container
 FRONTEND_CONTAINER_NAME := ovim-ui-container
 
 # Port configuration
-BACKEND_PORT := 8080
+BACKEND_PORT := 8443
 FRONTEND_PORT := 3000
 DB_PORT := 5432
 
@@ -224,8 +224,8 @@ pod-start: pod-create container-build
 		-e OVIM_ENVIRONMENT=development \
 		$(CONTAINER_IMAGE)
 	@echo "OVIM backend started in pod $(POD_NAME)"
-	@echo "Backend available at: http://localhost:$(BACKEND_PORT)"
-	@echo "API health check: http://localhost:$(BACKEND_PORT)/health"
+	@echo "Backend available at: https://localhost:8443"
+	@echo "API health check: https://localhost:8443/health"
 
 ## pod-stop: Stop the pod
 pod-stop:
