@@ -339,7 +339,7 @@ func TestVMLifecycle(t *testing.T) {
 		assert.Equal(t, "org-acme", vm.OrgID)
 		assert.Equal(t, "vdc-acme-main", vm.VDCID)
 		assert.Equal(t, "tmpl-ubuntu22", vm.TemplateID)
-		assert.Equal(t, models.VMStatusPending, vm.Status)
+		assert.Equal(t, models.VMStatusProvisioning, vm.Status)
 		assert.Equal(t, 2, vm.CPU)
 		assert.Equal(t, "2Gi", vm.Memory)
 	})

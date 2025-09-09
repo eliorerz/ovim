@@ -104,7 +104,7 @@ func (h *VMHandlers) Create(c *gin.Context) {
 
 	// Ensure user is associated with an organization
 	if userOrgID == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "User not associated with any organization"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User not associated with any organization"})
 		return
 	}
 
