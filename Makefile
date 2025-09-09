@@ -22,6 +22,14 @@ FRONTEND_CONTAINER_NAME := ovim-ui-container
 # Port configuration
 BACKEND_PORT := 8080
 FRONTEND_PORT := 3000
+DB_PORT := 5432
+
+# Database configuration
+DB_USER := ovim
+DB_PASSWORD := ovim123
+DB_NAME := ovim
+DB_HOST := localhost
+DATABASE_URL := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
 # Build configuration
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -43,9 +51,10 @@ GO_BUILD_FLAGS := -tags netgo -a -installsuffix cgo
 GO_TEST_FLAGS := -race -cover
 
 # Targets
-.PHONY: help clean build test lint fmt vet deps run dev
+.PHONY: help clean build test lint fmt vet deps run dev server-stop
 .PHONY: container-build container-run container-push container-clean
 .PHONY: pod-create pod-start pod-stop pod-clean pod-logs pod-status
+.PHONY: db-start db-stop db-restart db-logs db-shell db-migrate db-seed
 .PHONY: install-tools release
 
 ## help: Show this help message
@@ -106,7 +115,7 @@ build: deps fmt vet
 		-o $(BINARY_NAME) $(MAIN_PATH)
 
 ## run: Build and run the server locally
-run: build
+run: server-stop build
 	@echo "Starting OVIM backend server..."
 	@OVIM_ENVIRONMENT=development \
 	 OVIM_PORT=$(BACKEND_PORT) \
@@ -114,7 +123,7 @@ run: build
 	 ./$(BINARY_NAME)
 
 ## dev: Run in development mode with hot reload
-dev: deps
+dev: server-stop deps
 	@echo "Starting development server..."
 	@if command -v air >/dev/null 2>&1; then \
 		OVIM_ENVIRONMENT=development \
@@ -123,8 +132,20 @@ dev: deps
 		air; \
 	else \
 		echo "air not installed, running without hot reload..."; \
-		$(MAKE) run; \
+		$(MAKE) build; \
+		OVIM_ENVIRONMENT=development \
+		OVIM_PORT=$(BACKEND_PORT) \
+		OVIM_LOG_LEVEL=info \
+		./$(BINARY_NAME); \
 	fi
+
+## server-stop: Stop any running OVIM server processes
+server-stop:
+	@echo "Stopping any running OVIM server processes..."
+	@-pkill -f "ovim-server" 2>/dev/null || true
+	@-pkill -f "go run.*ovim-server" 2>/dev/null || true
+	@-pkill -f "air" 2>/dev/null || true
+	@echo "Server processes stopped"
 
 ## container-build: Build container image
 container-build:
@@ -236,6 +257,83 @@ version:
 	@echo "Commit: $(GIT_COMMIT)"
 	@echo "Tree State: $(GIT_TREE_STATE)"
 	@echo "Build Date: $(BUILD_DATE)"
+
+#################################
+# Database Management Targets  #
+#################################
+
+## db-start: Start PostgreSQL database with Podman Compose
+db-start: db-stop
+	@echo "Starting PostgreSQL database..."
+	@if command -v podman-compose >/dev/null 2>&1; then \
+		podman-compose up -d postgres; \
+	else \
+		echo "Starting PostgreSQL with podman run..."; \
+		podman run -d --name ovim-postgres \
+			-e POSTGRES_USER=$(DB_USER) \
+			-e POSTGRES_PASSWORD=$(DB_PASSWORD) \
+			-e POSTGRES_DB=$(DB_NAME) \
+			-p $(DB_PORT):5432 \
+			-v ovim_postgres_data:/var/lib/postgresql/data \
+			docker.io/postgres:16-alpine; \
+	fi
+	@echo "Waiting for database to be ready..."
+	@sleep 5
+	@echo "Database started successfully"
+
+## db-stop: Stop PostgreSQL database
+db-stop:
+	@echo "Stopping PostgreSQL database..."
+	@if command -v podman-compose >/dev/null 2>&1; then \
+		podman-compose down postgres; \
+	else \
+		podman stop ovim-postgres 2>/dev/null || true; \
+		podman rm ovim-postgres 2>/dev/null || true; \
+	fi
+	@echo "Database stopped"
+
+## db-restart: Restart PostgreSQL database
+db-restart: db-stop db-start
+
+## db-logs: Show PostgreSQL database logs
+db-logs:
+	@echo "Showing PostgreSQL logs..."
+	@if podman ps --filter name=ovim-postgres --format "{{.Names}}" | grep -q ovim-postgres; then \
+		podman logs -f ovim-postgres; \
+	elif command -v podman-compose >/dev/null 2>&1; then \
+		podman-compose logs -f postgres; \
+	else \
+		echo "Database container not found"; \
+	fi
+
+## db-shell: Connect to PostgreSQL database shell
+db-shell:
+	@echo "Connecting to PostgreSQL shell..."
+	@if podman ps --filter name=ovim-postgres --format "{{.Names}}" | grep -q ovim-postgres; then \
+		podman exec -it ovim-postgres psql -U $(DB_USER) -d $(DB_NAME); \
+	else \
+		echo "Database container not running. Start it with 'make db-start'"; \
+	fi
+
+## db-migrate: Run database migrations (application will handle this automatically)
+db-migrate: build
+	@echo "Running database migrations..."
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" ./$(BINARY_NAME) -version >/dev/null
+	@echo "Database migrations completed (GORM AutoMigrate)"
+
+## db-seed: Seed database with initial data (application will handle this automatically)
+db-seed: build
+	@echo "Seeding database with initial data..."
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" ./$(BINARY_NAME) -version >/dev/null
+	@echo "Database seeding completed"
+
+## dev-with-db: Run development server with PostgreSQL
+dev-with-db: server-stop db-start
+	@echo "Starting development server with PostgreSQL..."
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" \
+	 OVIM_ENVIRONMENT=development \
+	 OVIM_LOG_LEVEL=debug \
+	 go run $(MAIN_PATH)
 
 # Default target
 all: test build

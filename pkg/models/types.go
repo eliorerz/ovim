@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -21,72 +24,109 @@ const (
 	VMStatusDeleting     = "deleting"
 )
 
+// StringMap is a custom type that implements GORM interface for map[string]string
+type StringMap map[string]string
+
+// Scan implements the Scanner interface for database deserialization
+func (sm *StringMap) Scan(value interface{}) error {
+	if value == nil {
+		*sm = make(StringMap)
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("cannot scan %T into StringMap", value)
+	}
+
+	if len(bytes) == 0 {
+		*sm = make(StringMap)
+		return nil
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return err
+	}
+
+	*sm = StringMap(result)
+	return nil
+}
+
+// Value implements the driver Valuer interface for database serialization
+func (sm StringMap) Value() (driver.Value, error) {
+	if sm == nil {
+		return nil, nil
+	}
+	return json.Marshal(map[string]string(sm))
+}
+
 // User represents a user in the system
 type User struct {
-	ID           string    `json:"id" db:"id"`
-	Username     string    `json:"username" db:"username"`
-	Email        string    `json:"email" db:"email"`
-	PasswordHash string    `json:"-" db:"password_hash"`
-	Role         string    `json:"role" db:"role"`
-	OrgID        *string   `json:"org_id,omitempty" db:"org_id"`
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	ID           string    `json:"id" gorm:"primaryKey"`
+	Username     string    `json:"username" gorm:"uniqueIndex"`
+	Email        string    `json:"email" gorm:"uniqueIndex"`
+	PasswordHash string    `json:"-"`
+	Role         string    `json:"role"`
+	OrgID        *string   `json:"org_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Organization represents a tenant organization
 type Organization struct {
-	ID          string    `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	Namespace   string    `json:"namespace" db:"namespace"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	ID          string    `json:"id" gorm:"primaryKey"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Namespace   string    `json:"namespace" gorm:"uniqueIndex"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // VirtualDataCenter represents a virtual data center within an organization
 type VirtualDataCenter struct {
-	ID             string            `json:"id" db:"id"`
-	Name           string            `json:"name" db:"name"`
-	Description    string            `json:"description" db:"description"`
-	OrgID          string            `json:"org_id" db:"org_id"`
-	Namespace      string            `json:"namespace" db:"namespace"`
-	ResourceQuotas map[string]string `json:"resource_quotas" db:"resource_quotas"`
-	CreatedAt      time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at" db:"updated_at"`
+	ID             string    `json:"id" gorm:"primaryKey"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	OrgID          string    `json:"org_id"`
+	Namespace      string    `json:"namespace"`
+	ResourceQuotas StringMap `json:"resource_quotas" gorm:"type:jsonb"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Template represents a VM template available in the catalog
 type Template struct {
-	ID          string            `json:"id" db:"id"`
-	Name        string            `json:"name" db:"name"`
-	Description string            `json:"description" db:"description"`
-	OSType      string            `json:"os_type" db:"os_type"`
-	OSVersion   string            `json:"os_version" db:"os_version"`
-	CPU         int               `json:"cpu" db:"cpu"`
-	Memory      string            `json:"memory" db:"memory"`
-	DiskSize    string            `json:"disk_size" db:"disk_size"`
-	ImageURL    string            `json:"image_url" db:"image_url"`
-	Metadata    map[string]string `json:"metadata" db:"metadata"`
-	CreatedAt   time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at" db:"updated_at"`
+	ID          string    `json:"id" gorm:"primaryKey"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	OSType      string    `json:"os_type"`
+	OSVersion   string    `json:"os_version"`
+	CPU         int       `json:"cpu"`
+	Memory      string    `json:"memory"`
+	DiskSize    string    `json:"disk_size"`
+	ImageURL    string    `json:"image_url"`
+	Metadata    StringMap `json:"metadata" gorm:"type:jsonb"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // VirtualMachine represents a deployed virtual machine
 type VirtualMachine struct {
-	ID         string            `json:"id" db:"id"`
-	Name       string            `json:"name" db:"name"`
-	OrgID      string            `json:"org_id" db:"org_id"`
-	VDCID      string            `json:"vdc_id" db:"vdc_id"`
-	TemplateID string            `json:"template_id" db:"template_id"`
-	OwnerID    string            `json:"owner_id" db:"owner_id"`
-	Status     string            `json:"status" db:"status"`
-	CPU        int               `json:"cpu" db:"cpu"`
-	Memory     string            `json:"memory" db:"memory"`
-	DiskSize   string            `json:"disk_size" db:"disk_size"`
-	IPAddress  string            `json:"ip_address" db:"ip_address"`
-	Metadata   map[string]string `json:"metadata" db:"metadata"`
-	CreatedAt  time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at" db:"updated_at"`
+	ID         string    `json:"id" gorm:"primaryKey"`
+	Name       string    `json:"name"`
+	OrgID      string    `json:"org_id"`
+	VDCID      string    `json:"vdc_id"`
+	TemplateID string    `json:"template_id"`
+	OwnerID    string    `json:"owner_id"`
+	Status     string    `json:"status"`
+	CPU        int       `json:"cpu"`
+	Memory     string    `json:"memory"`
+	DiskSize   string    `json:"disk_size"`
+	IPAddress  string    `json:"ip_address"`
+	Metadata   StringMap `json:"metadata" gorm:"type:jsonb"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // CreateOrganizationRequest represents a request to create an organization

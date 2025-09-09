@@ -49,12 +49,12 @@ func NewMemoryStorage() (Storage, error) {
 
 // seedData populates the storage with initial test data
 func (s *MemoryStorage) seedData() error {
-	adminHash, err := auth.HashPassword("admin")
+	adminHash, err := auth.HashPassword("adminpassword")
 	if err != nil {
 		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	userHash, err := auth.HashPassword("user")
+	userHash, err := auth.HashPassword("userpassword")
 	if err != nil {
 		return fmt.Errorf("failed to hash user password: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *MemoryStorage) seedData() error {
 			Description:    "Main virtual data center for Acme Corp",
 			OrgID:          "org-acme",
 			Namespace:      "acme-corp",
-			ResourceQuotas: map[string]string{"cpu": "20", "memory": "64Gi", "storage": "1Ti"},
+			ResourceQuotas: models.StringMap{"cpu": "20", "memory": "64Gi", "storage": "1Ti"},
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
@@ -140,7 +140,7 @@ func (s *MemoryStorage) seedData() error {
 			Description:    "Development virtual data center",
 			OrgID:          "org-dev",
 			Namespace:      "dev-team",
-			ResourceQuotas: map[string]string{"cpu": "10", "memory": "32Gi", "storage": "500Gi"},
+			ResourceQuotas: models.StringMap{"cpu": "10", "memory": "32Gi", "storage": "500Gi"},
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
@@ -162,7 +162,7 @@ func (s *MemoryStorage) seedData() error {
 			Memory:      "4Gi",
 			DiskSize:    "20Gi",
 			ImageURL:    "registry.redhat.io/rhel9/rhel:latest",
-			Metadata:    map[string]string{"vendor": "Red Hat", "certified": "true"},
+			Metadata:    models.StringMap{"vendor": "Red Hat", "certified": "true"},
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		},
@@ -176,7 +176,7 @@ func (s *MemoryStorage) seedData() error {
 			Memory:      "2Gi",
 			DiskSize:    "20Gi",
 			ImageURL:    "registry.ubuntu.com/ubuntu:22.04",
-			Metadata:    map[string]string{"vendor": "Canonical", "lts": "true"},
+			Metadata:    models.StringMap{"vendor": "Canonical", "lts": "true"},
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		},
@@ -190,7 +190,7 @@ func (s *MemoryStorage) seedData() error {
 			Memory:      "2Gi",
 			DiskSize:    "20Gi",
 			ImageURL:    "quay.io/centos/centos:stream9",
-			Metadata:    map[string]string{"vendor": "CentOS", "stream": "true"},
+			Metadata:    models.StringMap{"vendor": "CentOS", "stream": "true"},
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		},
