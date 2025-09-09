@@ -21,12 +21,12 @@ const (
 
 // Server represents the HTTP server for the OVIM API
 type Server struct {
-	config        *config.Config
-	storage       storage.Storage
-	provisioner   kubevirt.VMProvisioner
-	authManager   *auth.Middleware
-	tokenManager  *auth.TokenManager
-	router        *gin.Engine
+	config       *config.Config
+	storage      storage.Storage
+	provisioner  kubevirt.VMProvisioner
+	authManager  *auth.Middleware
+	tokenManager *auth.TokenManager
+	router       *gin.Engine
 }
 
 // NewServer creates a new API server instance
@@ -45,12 +45,12 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 	authManager := auth.NewMiddleware(tokenManager)
 
 	server := &Server{
-		config:        cfg,
-		storage:       storage,
-		provisioner:   provisioner,
-		authManager:   authManager,
-		tokenManager:  tokenManager,
-		router:        gin.New(),
+		config:       cfg,
+		storage:      storage,
+		provisioner:  provisioner,
+		authManager:  authManager,
+		tokenManager: tokenManager,
+		router:       gin.New(),
 	}
 
 	server.setupMiddleware()

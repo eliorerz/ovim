@@ -208,13 +208,13 @@ func (h *VMHandlers) Create(c *gin.Context) {
 
 	if err := h.provisioner.CreateVM(ctx, vm, vdc, template); err != nil {
 		klog.Errorf("Failed to provision VM %s in KubeVirt: %v", vm.ID, err)
-		
+
 		// Update VM status to error in database
 		vm.Status = models.VMStatusError
 		if updateErr := h.storage.UpdateVM(vm); updateErr != nil {
 			klog.Errorf("Failed to update VM %s status to error: %v", vm.ID, updateErr)
 		}
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to provision VM in cluster"})
 		return
 	}

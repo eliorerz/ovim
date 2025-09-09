@@ -19,15 +19,15 @@ const (
 	DefaultIdleTimeout     = 60 * time.Second
 
 	// Environment variable names
-	EnvPort                  = "OVIM_PORT"
-	EnvDatabaseURL           = "OVIM_DATABASE_URL"
-	EnvKubernetesConfig      = "OVIM_KUBECONFIG"
-	EnvKubernetesInCluster   = "OVIM_KUBERNETES_IN_CLUSTER"
-	EnvKubevirtEnabled       = "OVIM_KUBEVIRT_ENABLED"
-	EnvKubevirtNamespace     = "OVIM_KUBEVIRT_NAMESPACE"
-	EnvJWTSecret             = "OVIM_JWT_SECRET"
-	EnvEnvironment           = "OVIM_ENVIRONMENT"
-	EnvLogLevel              = "OVIM_LOG_LEVEL"
+	EnvPort                = "OVIM_PORT"
+	EnvDatabaseURL         = "OVIM_DATABASE_URL"
+	EnvKubernetesConfig    = "OVIM_KUBECONFIG"
+	EnvKubernetesInCluster = "OVIM_KUBERNETES_IN_CLUSTER"
+	EnvKubevirtEnabled     = "OVIM_KUBEVIRT_ENABLED"
+	EnvKubevirtNamespace   = "OVIM_KUBEVIRT_NAMESPACE"
+	EnvJWTSecret           = "OVIM_JWT_SECRET"
+	EnvEnvironment         = "OVIM_ENVIRONMENT"
+	EnvLogLevel            = "OVIM_LOG_LEVEL"
 )
 
 // Config holds all configuration for the OVIM backend
@@ -65,9 +65,9 @@ type KubernetesConfig struct {
 
 // KubeVirtConfig holds KubeVirt-specific configuration
 type KubeVirtConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Namespace   string `yaml:"namespace"`
-	UseMock     bool   `yaml:"useMock"`
+	Enabled   bool   `yaml:"enabled"`
+	Namespace string `yaml:"namespace"`
+	UseMock   bool   `yaml:"useMock"`
 }
 
 // AuthConfig holds authentication configuration

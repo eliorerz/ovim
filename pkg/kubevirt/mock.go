@@ -77,7 +77,7 @@ func (m *MockClient) GetVMStatus(ctx context.Context, vmID, namespace string) (*
 		IPAddress: vm.IP,
 		Conditions: []VMCondition{
 			{
-				Type:   "Ready",
+				Type: "Ready",
 				Status: func() string {
 					if vm.Running {
 						return "True"
@@ -95,8 +95,8 @@ func (m *MockClient) GetVMStatus(ctx context.Context, vmID, namespace string) (*
 			},
 		},
 		Annotations: map[string]string{
-			"ovim.io/mock":        "true",
-			"ovim.io/created-at":  vm.CreatedAt.Format(time.RFC3339),
+			"ovim.io/mock":       "true",
+			"ovim.io/created-at": vm.CreatedAt.Format(time.RFC3339),
 		},
 	}
 
