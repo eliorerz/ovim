@@ -41,6 +41,12 @@ const (
 	EnvOIDCClientID     = "OVIM_OIDC_CLIENT_ID"
 	EnvOIDCClientSecret = "OVIM_OIDC_CLIENT_SECRET"
 	EnvOIDCRedirectURL  = "OVIM_OIDC_REDIRECT_URL"
+
+	// OpenShift Environment variables
+	EnvOpenShiftEnabled           = "OVIM_OPENSHIFT_ENABLED"
+	EnvOpenShiftConfig            = "OVIM_OPENSHIFT_KUBECONFIG"
+	EnvOpenShiftInCluster         = "OVIM_OPENSHIFT_IN_CLUSTER"
+	EnvOpenShiftTemplateNamespace = "OVIM_OPENSHIFT_TEMPLATE_NAMESPACE"
 )
 
 // Config holds all configuration for the OVIM backend
@@ -48,6 +54,7 @@ type Config struct {
 	Server     ServerConfig     `yaml:"server"`
 	Database   DatabaseConfig   `yaml:"database"`
 	Kubernetes KubernetesConfig `yaml:"kubernetes"`
+	OpenShift  OpenShiftConfig  `yaml:"openshift"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
@@ -91,6 +98,14 @@ type KubeVirtConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Namespace string `yaml:"namespace"`
 	UseMock   bool   `yaml:"useMock"`
+}
+
+// OpenShiftConfig holds OpenShift client configuration
+type OpenShiftConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	ConfigPath        string `yaml:"configPath"`
+	InCluster         bool   `yaml:"inCluster"`
+	TemplateNamespace string `yaml:"templateNamespace"`
 }
 
 // AuthConfig holds authentication configuration
@@ -147,6 +162,12 @@ func Load(configPath string) (*Config, error) {
 				Namespace: getEnvString(EnvKubevirtNamespace, "default"),
 				UseMock:   getEnvString(EnvEnvironment, DefaultEnvironment) == "development",
 			},
+		},
+		OpenShift: OpenShiftConfig{
+			Enabled:           getEnvBool(EnvOpenShiftEnabled, false),
+			ConfigPath:        getEnvString(EnvOpenShiftConfig, ""),
+			InCluster:         getEnvBool(EnvOpenShiftInCluster, false),
+			TemplateNamespace: getEnvString(EnvOpenShiftTemplateNamespace, "openshift"),
 		},
 		Auth: AuthConfig{
 			JWTSecret:     getEnvString(EnvJWTSecret, DefaultJWTSecret),

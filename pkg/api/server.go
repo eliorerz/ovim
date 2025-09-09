@@ -9,6 +9,7 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
+	"github.com/eliorerz/ovim-updated/pkg/openshift"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/eliorerz/ovim-updated/pkg/version"
 )
@@ -21,13 +22,14 @@ const (
 
 // Server represents the HTTP server for the OVIM API
 type Server struct {
-	config       *config.Config
-	storage      storage.Storage
-	provisioner  kubevirt.VMProvisioner
-	authManager  *auth.Middleware
-	tokenManager *auth.TokenManager
-	oidcProvider *auth.OIDCProvider
-	router       *gin.Engine
+	config          *config.Config
+	storage         storage.Storage
+	provisioner     kubevirt.VMProvisioner
+	authManager     *auth.Middleware
+	tokenManager    *auth.TokenManager
+	oidcProvider    *auth.OIDCProvider
+	openshiftClient *openshift.Client
+	router          *gin.Engine
 }
 
 // NewServer creates a new API server instance
@@ -67,14 +69,29 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		}
 	}
 
+	// Create OpenShift client if enabled
+	var openshiftClient *openshift.Client
+	if cfg.OpenShift.Enabled {
+		var err error
+		openshiftClient, err = openshift.NewClient(&cfg.OpenShift)
+		if err != nil {
+			klog.Errorf("Failed to initialize OpenShift client: %v", err)
+			// Don't fail server startup, just disable OpenShift integration
+			openshiftClient = nil
+		} else {
+			klog.Infof("OpenShift client initialized successfully")
+		}
+	}
+
 	server := &Server{
-		config:       cfg,
-		storage:      storage,
-		provisioner:  provisioner,
-		authManager:  authManager,
-		tokenManager: tokenManager,
-		oidcProvider: oidcProvider,
-		router:       gin.New(),
+		config:          cfg,
+		storage:         storage,
+		provisioner:     provisioner,
+		authManager:     authManager,
+		tokenManager:    tokenManager,
+		oidcProvider:    oidcProvider,
+		openshiftClient: openshiftClient,
+		router:          gin.New(),
 	}
 
 	server.setupMiddleware()
@@ -183,6 +200,18 @@ func (s *Server) setupRoutes() {
 				vms.GET("/:id/status", vmHandlers.GetStatus)
 				vms.PUT("/:id/power", vmHandlers.UpdatePower)
 				vms.DELETE("/:id", vmHandlers.Delete)
+			}
+
+			// OpenShift integration (all authenticated users)
+			if s.openshiftClient != nil {
+				openshift := protected.Group("/openshift")
+				{
+					osHandlers := NewOpenShiftHandlers(s.openshiftClient)
+					openshift.GET("/status", osHandlers.GetOpenShiftStatus)
+					openshift.GET("/templates", osHandlers.GetOpenShiftTemplates)
+					openshift.GET("/vms", osHandlers.GetOpenShiftVMs)
+					openshift.POST("/vms", osHandlers.DeployVMFromTemplate)
+				}
 			}
 		}
 	}
