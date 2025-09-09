@@ -107,6 +107,31 @@ test: fmt vet
 	@echo "Running tests..."
 	@go test $(GO_TEST_FLAGS) ./...
 
+## test-unit: Run unit tests only (excludes integration)
+test-unit: fmt vet
+	@echo "Running unit tests..."
+	@go test $(GO_TEST_FLAGS) -short ./pkg/...
+
+## test-integration: Run integration tests (memory storage only)
+test-integration: fmt vet
+	@echo "Running integration tests..."
+	@go test $(GO_TEST_FLAGS) -short ./test/integration/...
+
+## test-integration-full: Run all integration tests including PostgreSQL
+test-integration-full: fmt vet
+	@echo "Running full integration tests..."
+	@go test $(GO_TEST_FLAGS) ./test/integration/...
+
+## test-integration-coverage: Run integration tests with coverage
+test-integration-coverage: fmt vet
+	@echo "Running integration tests with coverage..."
+	@go test $(GO_TEST_FLAGS) -coverprofile=coverage.out ./test/integration/...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+## test-all: Run all tests including unit and integration
+test-all: test-unit test-integration-full
+
 ## build: Build the binary
 build: deps fmt vet
 	@echo "Building $(BINARY_NAME)..."
