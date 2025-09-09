@@ -1,0 +1,180 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
+
+	"github.com/eliorerz/ovim-updated/pkg/auth"
+	"github.com/eliorerz/ovim-updated/pkg/config"
+	"github.com/eliorerz/ovim-updated/pkg/storage"
+	"github.com/eliorerz/ovim-updated/pkg/version"
+)
+
+const (
+	// API version constants
+	APIVersion = "v1"
+	APIPrefix  = "/api/" + APIVersion
+)
+
+// Server represents the HTTP server for the OVIM API
+type Server struct {
+	config       *config.Config
+	storage      storage.Storage
+	authManager  *auth.Middleware
+	tokenManager *auth.TokenManager
+	router       *gin.Engine
+}
+
+// NewServer creates a new API server instance
+func NewServer(cfg *config.Config, storage storage.Storage) *Server {
+	// Set gin mode based on environment
+	if cfg.Server.Environment == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	} else {
+		gin.SetMode(gin.DebugMode)
+	}
+
+	// Create token manager
+	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenDuration)
+
+	// Create auth middleware
+	authManager := auth.NewMiddleware(tokenManager)
+
+	server := &Server{
+		config:       cfg,
+		storage:      storage,
+		authManager:  authManager,
+		tokenManager: tokenManager,
+		router:       gin.New(),
+	}
+
+	server.setupMiddleware()
+	server.setupRoutes()
+
+	return server
+}
+
+// Handler returns the HTTP handler for the server
+func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
+// setupMiddleware configures global middleware
+func (s *Server) setupMiddleware() {
+	// Recovery middleware
+	s.router.Use(gin.Recovery())
+
+	// Logging middleware
+	if s.config.Server.Environment != "production" {
+		s.router.Use(gin.Logger())
+	}
+
+	// CORS middleware
+	s.router.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
+}
+
+// setupRoutes configures all API routes
+func (s *Server) setupRoutes() {
+	// Health endpoint (no authentication required)
+	s.router.GET("/health", s.healthHandler)
+	s.router.GET("/version", s.versionHandler)
+
+	// API routes
+	api := s.router.Group(APIPrefix)
+	{
+		// Authentication routes (no auth required)
+		auth := api.Group("/auth")
+		{
+			authHandlers := NewAuthHandlers(s.storage, s.tokenManager)
+			auth.POST("/login", authHandlers.Login)
+			auth.POST("/logout", authHandlers.Logout)
+		}
+
+		// Protected routes (authentication required)
+		protected := api.Group("/")
+		protected.Use(s.authManager.RequireAuth())
+		{
+			// Organization management (system admin only)
+			orgs := protected.Group("/organizations")
+			orgs.Use(s.authManager.RequireRole("system_admin"))
+			{
+				orgHandlers := NewOrganizationHandlers(s.storage)
+				orgs.GET("/", orgHandlers.List)
+				orgs.POST("/", orgHandlers.Create)
+				orgs.GET("/:id", orgHandlers.Get)
+				orgs.PUT("/:id", orgHandlers.Update)
+				orgs.DELETE("/:id", orgHandlers.Delete)
+			}
+
+			// VDC management (system admin and org admin)
+			vdcs := protected.Group("/vdcs")
+			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
+			{
+				vdcHandlers := NewVDCHandlers(s.storage)
+				vdcs.GET("/", vdcHandlers.List)
+				vdcs.POST("/", vdcHandlers.Create)
+				vdcs.GET("/:id", vdcHandlers.Get)
+				vdcs.PUT("/:id", vdcHandlers.Update)
+				vdcs.DELETE("/:id", vdcHandlers.Delete)
+			}
+
+			// VM catalog (all authenticated users)
+			catalog := protected.Group("/catalog")
+			{
+				catalogHandlers := NewCatalogHandlers(s.storage)
+				catalog.GET("/templates", catalogHandlers.ListTemplates)
+				catalog.GET("/templates/:id", catalogHandlers.GetTemplate)
+			}
+
+			// VM management (all authenticated users, filtered by role)
+			vms := protected.Group("/vms")
+			{
+				vmHandlers := NewVMHandlers(s.storage)
+				vms.GET("/", vmHandlers.List)
+				vms.POST("/", vmHandlers.Create)
+				vms.GET("/:id", vmHandlers.Get)
+				vms.PUT("/:id/power", vmHandlers.UpdatePower)
+				vms.DELETE("/:id", vmHandlers.Delete)
+			}
+		}
+	}
+
+	klog.Infof("API routes configured with prefix %s", APIPrefix)
+}
+
+// healthHandler handles health check requests
+func (s *Server) healthHandler(c *gin.Context) {
+	status := "healthy"
+	httpStatus := http.StatusOK
+
+	// Check storage health
+	if err := s.storage.Ping(); err != nil {
+		klog.Errorf("Storage health check failed: %v", err)
+		status = "unhealthy"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	c.JSON(httpStatus, gin.H{
+		"status":  status,
+		"service": "OVIM Backend",
+		"version": version.Get().GitVersion,
+	})
+}
+
+// versionHandler handles version information requests
+func (s *Server) versionHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, version.Get())
+}

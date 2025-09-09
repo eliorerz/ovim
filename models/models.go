@@ -1,0 +1,83 @@
+package models
+
+import (
+	"time"
+)
+
+type User struct {
+	ID           string    `json:"id" db:"id"`
+	Username     string    `json:"username" db:"username"`
+	Email        string    `json:"email" db:"email"`
+	PasswordHash string    `json:"-" db:"password_hash"`
+	Role         string    `json:"role" db:"role"`
+	OrgID        *string   `json:"org_id,omitempty" db:"org_id"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+}
+
+type Organization struct {
+	ID          string    `json:"id" db:"id"`
+	Name        string    `json:"name" db:"name"`
+	Description string    `json:"description" db:"description"`
+	Namespace   string    `json:"namespace" db:"namespace"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+}
+
+type VirtualDataCenter struct {
+	ID             string            `json:"id" db:"id"`
+	Name           string            `json:"name" db:"name"`
+	Description    string            `json:"description" db:"description"`
+	OrgID          string            `json:"org_id" db:"org_id"`
+	Namespace      string            `json:"namespace" db:"namespace"`
+	ResourceQuotas map[string]string `json:"resource_quotas" db:"resource_quotas"`
+	CreatedAt      time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at" db:"updated_at"`
+}
+
+type Template struct {
+	ID          string            `json:"id" db:"id"`
+	Name        string            `json:"name" db:"name"`
+	Description string            `json:"description" db:"description"`
+	OSType      string            `json:"os_type" db:"os_type"`
+	OSVersion   string            `json:"os_version" db:"os_version"`
+	CPU         int               `json:"cpu" db:"cpu"`
+	Memory      string            `json:"memory" db:"memory"`
+	DiskSize    string            `json:"disk_size" db:"disk_size"`
+	ImageURL    string            `json:"image_url" db:"image_url"`
+	Metadata    map[string]string `json:"metadata" db:"metadata"`
+	CreatedAt   time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at" db:"updated_at"`
+}
+
+type VirtualMachine struct {
+	ID         string            `json:"id" db:"id"`
+	Name       string            `json:"name" db:"name"`
+	OrgID      string            `json:"org_id" db:"org_id"`
+	VDCID      string            `json:"vdc_id" db:"vdc_id"`
+	TemplateID string            `json:"template_id" db:"template_id"`
+	OwnerID    string            `json:"owner_id" db:"owner_id"`
+	Status     string            `json:"status" db:"status"`
+	CPU        int               `json:"cpu" db:"cpu"`
+	Memory     string            `json:"memory" db:"memory"`
+	DiskSize   string            `json:"disk_size" db:"disk_size"`
+	IPAddress  string            `json:"ip_address" db:"ip_address"`
+	Metadata   map[string]string `json:"metadata" db:"metadata"`
+	CreatedAt  time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at" db:"updated_at"`
+}
+
+const (
+	RoleSystemAdmin = "system_admin"
+	RoleOrgAdmin    = "org_admin"
+	RoleOrgUser     = "org_user"
+)
+
+const (
+	VMStatusPending      = "pending"
+	VMStatusProvisioning = "provisioning"
+	VMStatusRunning      = "running"
+	VMStatusStopped      = "stopped"
+	VMStatusError        = "error"
+	VMStatusDeleting     = "deleting"
+)
