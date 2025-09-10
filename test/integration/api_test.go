@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/api"
+	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/models"
@@ -26,7 +28,7 @@ type IntegrationTestSuite struct {
 }
 
 func setupTestSuite(t *testing.T) *IntegrationTestSuite {
-	storage, err := storage.NewMemoryStorage()
+	storage, err := storage.NewMemoryStorageForTest()
 	require.NoError(t, err)
 
 	cfg := &config.Config{
@@ -55,6 +57,8 @@ func setupTestSuite(t *testing.T) *IntegrationTestSuite {
 		httpServer: httpServer,
 	}
 
+	// Seed required test users
+	suite.seedTestUsers(t)
 	suite.authenticateUsers(t)
 	return suite
 }
@@ -62,6 +66,66 @@ func setupTestSuite(t *testing.T) *IntegrationTestSuite {
 func (suite *IntegrationTestSuite) tearDown() {
 	suite.httpServer.Close()
 	suite.storage.Close()
+}
+
+func (suite *IntegrationTestSuite) seedTestUsers(t *testing.T) {
+	adminHash, err := auth.HashPassword("adminpassword")
+	require.NoError(t, err)
+
+	userHash, err := auth.HashPassword("userpassword")
+	require.NoError(t, err)
+
+	now := time.Now()
+
+	// Create a test organization for org users
+	testOrg := &models.Organization{
+		ID:          "org-test",
+		Name:        "Test Organization",
+		Description: "Test organization for development and testing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	err = suite.storage.CreateOrganization(testOrg)
+	require.NoError(t, err)
+
+	// Seed test users
+	users := []*models.User{
+		{
+			ID:           "user-admin",
+			Username:     "admin",
+			Email:        "admin@ovim.local",
+			PasswordHash: adminHash,
+			Role:         models.RoleSystemAdmin,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		},
+		{
+			ID:           "user-orgadmin",
+			Username:     "orgadmin",
+			Email:        "orgadmin@ovim.local",
+			PasswordHash: adminHash,
+			Role:         models.RoleOrgAdmin,
+			OrgID:        &testOrg.ID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		},
+		{
+			ID:           "user-user",
+			Username:     "user",
+			Email:        "user@ovim.local",
+			PasswordHash: userHash,
+			Role:         models.RoleOrgUser,
+			OrgID:        &testOrg.ID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		},
+	}
+
+	for _, user := range users {
+		err := suite.storage.CreateUser(user)
+		require.NoError(t, err)
+	}
 }
 
 func (suite *IntegrationTestSuite) authenticateUsers(t *testing.T) {
@@ -182,8 +246,8 @@ func TestOrganizationManagement(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&orgResp)
 		require.NoError(t, err)
 
-		assert.Len(t, orgResp.Organizations, 0)
-		assert.Equal(t, 0, orgResp.Total)
+		assert.Len(t, orgResp.Organizations, 1)
+		assert.Equal(t, 1, orgResp.Total)
 	})
 
 	t.Run("GetNonExistentOrganization", func(t *testing.T) {
