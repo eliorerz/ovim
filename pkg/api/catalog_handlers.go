@@ -58,3 +58,26 @@ func (h *CatalogHandlers) GetTemplate(c *gin.Context) {
 
 	c.JSON(http.StatusOK, template)
 }
+
+// ListTemplatesByOrg handles listing VM templates for a specific organization
+func (h *CatalogHandlers) ListTemplatesByOrg(c *gin.Context) {
+	orgID := c.Param("id")
+	if orgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	templates, err := h.storage.ListTemplatesByOrg(orgID)
+	if err != nil {
+		klog.Errorf("Failed to list templates for organization %s: %v", orgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list templates"})
+		return
+	}
+
+	klog.V(6).Infof("Listed %d templates for organization %s", len(templates), orgID)
+	c.JSON(http.StatusOK, gin.H{
+		"templates": templates,
+		"total":     len(templates),
+		"org_id":    orgID,
+	})
+}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
-	"github.com/eliorerz/ovim-updated/pkg/util"
 )
 
 // PostgresStorage implements the Storage interface using PostgreSQL with GORM
@@ -101,11 +100,6 @@ func (s *PostgresStorage) seedData() error {
 		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	userHash, err := auth.HashPassword("userpassword")
-	if err != nil {
-		return fmt.Errorf("failed to hash user password: %w", err)
-	}
-
 	now := time.Now()
 
 	// Seed users
@@ -119,26 +113,6 @@ func (s *PostgresStorage) seedData() error {
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
-		{
-			ID:           "user-orgadmin",
-			Username:     "orgadmin",
-			Email:        "orgadmin@acme.com",
-			PasswordHash: adminHash,
-			Role:         models.RoleOrgAdmin,
-			OrgID:        util.StringPtr("org-acme"),
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ID:           "user-regular",
-			Username:     "user",
-			Email:        "user@acme.com",
-			PasswordHash: userHash,
-			Role:         models.RoleOrgUser,
-			OrgID:        util.StringPtr("org-acme"),
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
 	}
 
 	for _, user := range users {
@@ -147,116 +121,13 @@ func (s *PostgresStorage) seedData() error {
 		}
 	}
 
-	// Seed organizations
-	orgs := []*models.Organization{
-		{
-			ID:          "org-acme",
-			Name:        "Acme Corporation",
-			Description: "Main corporate organization",
-			Namespace:   "acme-corp",
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "org-dev",
-			Name:        "Development Team",
-			Description: "Development and testing environment",
-			Namespace:   "dev-team",
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-	}
+	// No seed organizations - start with empty list
 
-	for _, org := range orgs {
-		if err := s.db.Create(org).Error; err != nil {
-			return fmt.Errorf("failed to create organization %s: %w", org.Name, err)
-		}
-	}
+	// No seed VDCs - start with empty list
 
-	// Seed VDCs
-	vdcs := []*models.VirtualDataCenter{
-		{
-			ID:             "vdc-acme-main",
-			Name:           "Acme Main VDC",
-			Description:    "Main virtual data center for Acme Corp",
-			OrgID:          "org-acme",
-			Namespace:      "acme-corp",
-			ResourceQuotas: models.StringMap{"cpu": "20", "memory": "64Gi", "storage": "1Ti"},
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		},
-		{
-			ID:             "vdc-dev-main",
-			Name:           "Development VDC",
-			Description:    "Development virtual data center",
-			OrgID:          "org-dev",
-			Namespace:      "dev-team",
-			ResourceQuotas: models.StringMap{"cpu": "10", "memory": "32Gi", "storage": "500Gi"},
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		},
-	}
+	// No seed templates - start with empty list
 
-	for _, vdc := range vdcs {
-		if err := s.db.Create(vdc).Error; err != nil {
-			return fmt.Errorf("failed to create VDC %s: %w", vdc.Name, err)
-		}
-	}
-
-	// Seed templates
-	templates := []*models.Template{
-		{
-			ID:          "tmpl-rhel9",
-			Name:        "Red Hat Enterprise Linux 9.2",
-			Description: "Latest RHEL 9.2 with security updates",
-			OSType:      "Linux",
-			OSVersion:   "RHEL 9.2",
-			CPU:         2,
-			Memory:      "4Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "registry.redhat.io/rhel9/rhel:latest",
-			Metadata:    models.StringMap{"vendor": "Red Hat", "certified": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "tmpl-ubuntu22",
-			Name:        "Ubuntu Server 22.04 LTS",
-			Description: "Ubuntu Server 22.04 LTS with cloud-init",
-			OSType:      "Linux",
-			OSVersion:   "Ubuntu 22.04",
-			CPU:         2,
-			Memory:      "2Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "registry.ubuntu.com/ubuntu:22.04",
-			Metadata:    models.StringMap{"vendor": "Canonical", "lts": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "tmpl-centos9",
-			Name:        "CentOS Stream 9",
-			Description: "CentOS Stream 9 development environment",
-			OSType:      "Linux",
-			OSVersion:   "CentOS Stream 9",
-			CPU:         1,
-			Memory:      "2Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "quay.io/centos/centos:stream9",
-			Metadata:    models.StringMap{"vendor": "CentOS", "stream": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-	}
-
-	for _, template := range templates {
-		if err := s.db.Create(template).Error; err != nil {
-			return fmt.Errorf("failed to create template %s: %w", template.Name, err)
-		}
-	}
-
-	klog.Infof("Seeded database with %d users, %d organizations, %d VDCs, %d templates",
-		len(users), len(orgs), len(vdcs), len(templates))
+	klog.Infof("Seeded database with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
 
 	return nil
 }
@@ -468,6 +339,12 @@ func (s *PostgresStorage) DeleteVDC(id string) error {
 func (s *PostgresStorage) ListTemplates() ([]*models.Template, error) {
 	var templates []*models.Template
 	err := s.db.Find(&templates).Error
+	return templates, err
+}
+
+func (s *PostgresStorage) ListTemplatesByOrg(orgID string) ([]*models.Template, error) {
+	var templates []*models.Template
+	err := s.db.Where("org_id = ?", orgID).Find(&templates).Error
 	return templates, err
 }
 

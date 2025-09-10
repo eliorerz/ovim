@@ -78,16 +78,9 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Generate organization ID and namespace
-	orgID, err := util.GenerateID(16)
-	if err != nil {
-		klog.Errorf("Failed to generate organization ID: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate organization ID"})
-		return
-	}
-	orgID = "org-" + orgID
-
-	namespace := util.SanitizeKubernetesName(req.Name)
+	// Use sanitized name as both ID and namespace
+	orgID := util.SanitizeKubernetesName(req.Name)
+	namespace := orgID
 
 	// Create organization
 	org := &models.Organization{
@@ -95,6 +88,7 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		Name:        req.Name,
 		Description: req.Description,
 		Namespace:   namespace,
+		IsEnabled:   req.IsEnabled,
 	}
 
 	if err := h.storage.CreateOrganization(org); err != nil {
@@ -132,7 +126,7 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	var req models.CreateOrganizationRequest
+	var req models.UpdateOrganizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		klog.V(4).Infof("Invalid update organization request: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
@@ -149,6 +143,7 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 	// Update organization
 	org.Name = req.Name
 	org.Description = req.Description
+	org.IsEnabled = req.IsEnabled
 	// Note: We don't update the namespace as it could break existing resources
 
 	if err := h.storage.UpdateOrganization(org); err != nil {

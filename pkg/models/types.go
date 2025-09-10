@@ -79,6 +79,7 @@ type Organization struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Namespace   string    `json:"namespace" gorm:"uniqueIndex"`
+	IsEnabled   bool      `json:"is_enabled" gorm:"default:true"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -106,6 +107,7 @@ type Template struct {
 	Memory      string    `json:"memory"`
 	DiskSize    string    `json:"disk_size"`
 	ImageURL    string    `json:"image_url"`
+	OrgID       string    `json:"org_id" gorm:"index"`
 	Metadata    StringMap `json:"metadata" gorm:"type:jsonb"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -133,6 +135,14 @@ type VirtualMachine struct {
 type CreateOrganizationRequest struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
+	IsEnabled   bool   `json:"is_enabled"`
+}
+
+// UpdateOrganizationRequest represents a request to update an organization
+type UpdateOrganizationRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	IsEnabled   bool   `json:"is_enabled"`
 }
 
 // CreateVDCRequest represents a request to create a virtual data center

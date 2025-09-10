@@ -29,6 +29,7 @@ type Storage interface {
 
 	// Template operations
 	ListTemplates() ([]*models.Template, error)
+	ListTemplatesByOrg(orgID string) ([]*models.Template, error)
 	GetTemplate(id string) (*models.Template, error)
 	CreateTemplate(template *models.Template) error
 	UpdateTemplate(template *models.Template) error

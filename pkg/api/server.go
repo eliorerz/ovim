@@ -163,11 +163,13 @@ func (s *Server) setupRoutes() {
 			orgs.Use(s.authManager.RequireRole("system_admin"))
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage)
+				catalogHandlers := NewCatalogHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
 				orgs.POST("/", orgHandlers.Create)
 				orgs.GET("/:id", orgHandlers.Get)
 				orgs.PUT("/:id", orgHandlers.Update)
 				orgs.DELETE("/:id", orgHandlers.Delete)
+				orgs.GET("/:id/templates", catalogHandlers.ListTemplatesByOrg)
 			}
 
 			// VDC management (system admin and org admin)

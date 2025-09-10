@@ -10,7 +10,6 @@ import (
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
-	"github.com/eliorerz/ovim-updated/pkg/util"
 )
 
 var (
@@ -75,20 +74,18 @@ func (s *MemoryStorage) seedData() error {
 		{
 			ID:           "user-orgadmin",
 			Username:     "orgadmin",
-			Email:        "orgadmin@acme.com",
+			Email:        "orgadmin@ovim.local",
 			PasswordHash: adminHash,
 			Role:         models.RoleOrgAdmin,
-			OrgID:        util.StringPtr("org-acme"),
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
 		{
-			ID:           "user-regular",
+			ID:           "user-user",
 			Username:     "user",
-			Email:        "user@acme.com",
+			Email:        "user@ovim.local",
 			PasswordHash: userHash,
 			Role:         models.RoleOrgUser,
-			OrgID:        util.StringPtr("org-acme"),
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
@@ -98,110 +95,13 @@ func (s *MemoryStorage) seedData() error {
 		s.users[user.ID] = user
 	}
 
-	// Seed organizations
-	orgs := []*models.Organization{
-		{
-			ID:          "org-acme",
-			Name:        "Acme Corporation",
-			Description: "Main corporate organization",
-			Namespace:   "acme-corp",
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "org-dev",
-			Name:        "Development Team",
-			Description: "Development and testing environment",
-			Namespace:   "dev-team",
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-	}
+	// No seed organizations - start with empty list
 
-	for _, org := range orgs {
-		s.organizations[org.ID] = org
-	}
+	// No seed VDCs - start with empty list
 
-	// Seed VDCs
-	vdcs := []*models.VirtualDataCenter{
-		{
-			ID:             "vdc-acme-main",
-			Name:           "Acme Main VDC",
-			Description:    "Main virtual data center for Acme Corp",
-			OrgID:          "org-acme",
-			Namespace:      "acme-corp",
-			ResourceQuotas: models.StringMap{"cpu": "20", "memory": "64Gi", "storage": "1Ti"},
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		},
-		{
-			ID:             "vdc-dev-main",
-			Name:           "Development VDC",
-			Description:    "Development virtual data center",
-			OrgID:          "org-dev",
-			Namespace:      "dev-team",
-			ResourceQuotas: models.StringMap{"cpu": "10", "memory": "32Gi", "storage": "500Gi"},
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		},
-	}
+	// No seed templates - start with empty list
 
-	for _, vdc := range vdcs {
-		s.vdcs[vdc.ID] = vdc
-	}
-
-	// Seed templates
-	templates := []*models.Template{
-		{
-			ID:          "tmpl-rhel9",
-			Name:        "Red Hat Enterprise Linux 9.2",
-			Description: "Latest RHEL 9.2 with security updates",
-			OSType:      "Linux",
-			OSVersion:   "RHEL 9.2",
-			CPU:         2,
-			Memory:      "4Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "registry.redhat.io/rhel9/rhel:latest",
-			Metadata:    models.StringMap{"vendor": "Red Hat", "certified": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "tmpl-ubuntu22",
-			Name:        "Ubuntu Server 22.04 LTS",
-			Description: "Ubuntu Server 22.04 LTS with cloud-init",
-			OSType:      "Linux",
-			OSVersion:   "Ubuntu 22.04",
-			CPU:         2,
-			Memory:      "2Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "registry.ubuntu.com/ubuntu:22.04",
-			Metadata:    models.StringMap{"vendor": "Canonical", "lts": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-		{
-			ID:          "tmpl-centos9",
-			Name:        "CentOS Stream 9",
-			Description: "CentOS Stream 9 development environment",
-			OSType:      "Linux",
-			OSVersion:   "CentOS Stream 9",
-			CPU:         1,
-			Memory:      "2Gi",
-			DiskSize:    "20Gi",
-			ImageURL:    "quay.io/centos/centos:stream9",
-			Metadata:    models.StringMap{"vendor": "CentOS", "stream": "true"},
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		},
-	}
-
-	for _, template := range templates {
-		s.templates[template.ID] = template
-	}
-
-	klog.Infof("Seeded storage with %d users, %d organizations, %d VDCs, %d templates",
-		len(users), len(orgs), len(vdcs), len(templates))
+	klog.Infof("Seeded storage with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
 
 	return nil
 }
@@ -427,6 +327,19 @@ func (s *MemoryStorage) ListTemplates() ([]*models.Template, error) {
 	templates := make([]*models.Template, 0, len(s.templates))
 	for _, tmpl := range s.templates {
 		templates = append(templates, tmpl)
+	}
+	return templates, nil
+}
+
+func (s *MemoryStorage) ListTemplatesByOrg(orgID string) ([]*models.Template, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	templates := make([]*models.Template, 0)
+	for _, tmpl := range s.templates {
+		if tmpl.OrgID == orgID {
+			templates = append(templates, tmpl)
+		}
 	}
 	return templates, nil
 }

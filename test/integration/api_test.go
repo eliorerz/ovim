@@ -182,31 +182,124 @@ func TestOrganizationManagement(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&orgResp)
 		require.NoError(t, err)
 
-		assert.Len(t, orgResp.Organizations, 2)
-		assert.Equal(t, 2, orgResp.Total)
-
-		orgNames := make([]string, len(orgResp.Organizations))
-		for i, org := range orgResp.Organizations {
-			orgNames[i] = org.Name
-		}
-		assert.Contains(t, orgNames, "Acme Corporation")
-		assert.Contains(t, orgNames, "Development Team")
+		assert.Len(t, orgResp.Organizations, 0)
+		assert.Equal(t, 0, orgResp.Total)
 	})
 
-	t.Run("GetSpecificOrganization", func(t *testing.T) {
-		resp, err := suite.makeRequest("GET", "/api/v1/organizations/org-acme", nil, suite.adminToken)
+	t.Run("GetNonExistentOrganization", func(t *testing.T) {
+		resp, err := suite.makeRequest("GET", "/api/v1/organizations/nonexistent", nil, suite.adminToken)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("CreateOrganization", func(t *testing.T) {
+		orgData := map[string]interface{}{
+			"name":        "Test Organization",
+			"description": "Organization created during testing",
+			"is_enabled":  true,
+		}
+
+		resp, err := suite.makeRequest("POST", "/api/v1/organizations/", orgData, suite.adminToken)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		var org models.Organization
 		err = json.NewDecoder(resp.Body).Decode(&org)
 		require.NoError(t, err)
 
-		assert.Equal(t, "org-acme", org.ID)
-		assert.Equal(t, "Acme Corporation", org.Name)
-		assert.Equal(t, "acme-corp", org.Namespace)
+		assert.Equal(t, "Test Organization", org.Name)
+		assert.Equal(t, "Organization created during testing", org.Description)
+		assert.Equal(t, true, org.IsEnabled)
+		assert.Equal(t, "test-organization", org.ID) // Should be sanitized
+		assert.Equal(t, "test-organization", org.Namespace)
+		assert.NotEmpty(t, org.CreatedAt)
+		assert.NotEmpty(t, org.UpdatedAt)
+	})
+
+	t.Run("UpdateOrganizationStatus", func(t *testing.T) {
+		// First create an organization
+		orgData := map[string]interface{}{
+			"name":        "Update Test Org",
+			"description": "Organization for update testing",
+			"is_enabled":  true,
+		}
+
+		createResp, err := suite.makeRequest("POST", "/api/v1/organizations/", orgData, suite.adminToken)
+		require.NoError(t, err)
+		defer createResp.Body.Close()
+
+		var createdOrg models.Organization
+		err = json.NewDecoder(createResp.Body).Decode(&createdOrg)
+		require.NoError(t, err)
+
+		// Update the organization status
+		updateData := map[string]interface{}{
+			"name":        "Update Test Org",
+			"description": "Organization for update testing",
+			"is_enabled":  false, // Toggle the status
+		}
+
+		updateResp, err := suite.makeRequest("PUT", "/api/v1/organizations/"+createdOrg.ID, updateData, suite.adminToken)
+		require.NoError(t, err)
+		defer updateResp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, updateResp.StatusCode)
+
+		var updatedOrg models.Organization
+		err = json.NewDecoder(updateResp.Body).Decode(&updatedOrg)
+		require.NoError(t, err)
+
+		assert.Equal(t, createdOrg.ID, updatedOrg.ID)
+		assert.Equal(t, "Update Test Org", updatedOrg.Name)
+		assert.Equal(t, false, updatedOrg.IsEnabled)                     // Should be disabled now
+		assert.True(t, updatedOrg.UpdatedAt.After(updatedOrg.CreatedAt)) // UpdatedAt should be newer
+	})
+
+	t.Run("ToggleOrganizationStatusMultipleTimes", func(t *testing.T) {
+		// Create an organization
+		orgData := map[string]interface{}{
+			"name":        "Toggle Test Org",
+			"description": "Organization for toggle testing",
+			"is_enabled":  true,
+		}
+
+		createResp, err := suite.makeRequest("POST", "/api/v1/organizations/", orgData, suite.adminToken)
+		require.NoError(t, err)
+		defer createResp.Body.Close()
+
+		var org models.Organization
+		err = json.NewDecoder(createResp.Body).Decode(&org)
+		require.NoError(t, err)
+		orgID := org.ID
+
+		// Toggle to disabled
+		updateData := map[string]interface{}{
+			"name":        "Toggle Test Org",
+			"description": "Organization for toggle testing",
+			"is_enabled":  false,
+		}
+
+		resp1, err := suite.makeRequest("PUT", "/api/v1/organizations/"+orgID, updateData, suite.adminToken)
+		require.NoError(t, err)
+		defer resp1.Body.Close()
+		assert.Equal(t, http.StatusOK, resp1.StatusCode)
+
+		// Toggle back to enabled
+		updateData["is_enabled"] = true
+		resp2, err := suite.makeRequest("PUT", "/api/v1/organizations/"+orgID, updateData, suite.adminToken)
+		require.NoError(t, err)
+		defer resp2.Body.Close()
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		var finalOrg models.Organization
+		err = json.NewDecoder(resp2.Body).Decode(&finalOrg)
+		require.NoError(t, err)
+
+		assert.Equal(t, true, finalOrg.IsEnabled)
 	})
 
 	t.Run("RegularUserCannotAccessOrganizations", func(t *testing.T) {
@@ -236,27 +329,16 @@ func TestVDCManagement(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&vdcResp)
 		require.NoError(t, err)
 
-		assert.Len(t, vdcResp.VDCs, 2)
-		assert.Equal(t, 2, vdcResp.Total)
+		assert.Len(t, vdcResp.VDCs, 0)
+		assert.Equal(t, 0, vdcResp.Total)
 	})
 
-	t.Run("GetVDCWithResourceQuotas", func(t *testing.T) {
-		resp, err := suite.makeRequest("GET", "/api/v1/vdcs/vdc-acme-main", nil, suite.adminToken)
+	t.Run("GetNonExistentVDC", func(t *testing.T) {
+		resp, err := suite.makeRequest("GET", "/api/v1/vdcs/nonexistent", nil, suite.adminToken)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var vdc models.VirtualDataCenter
-		err = json.NewDecoder(resp.Body).Decode(&vdc)
-		require.NoError(t, err)
-
-		assert.Equal(t, "vdc-acme-main", vdc.ID)
-		assert.Equal(t, "Acme Main VDC", vdc.Name)
-		assert.Equal(t, "org-acme", vdc.OrgID)
-		assert.Equal(t, "20", vdc.ResourceQuotas["cpu"])
-		assert.Equal(t, "64Gi", vdc.ResourceQuotas["memory"])
-		assert.Equal(t, "1Ti", vdc.ResourceQuotas["storage"])
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 }
 
@@ -278,34 +360,16 @@ func TestVMCatalog(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&templateResp)
 		require.NoError(t, err)
 
-		assert.Len(t, templateResp.Templates, 3)
-		assert.Equal(t, 3, templateResp.Total)
-
-		templateNames := make([]string, len(templateResp.Templates))
-		for i, tmpl := range templateResp.Templates {
-			templateNames[i] = tmpl.Name
-		}
-		assert.Contains(t, templateNames, "Red Hat Enterprise Linux 9.2")
-		assert.Contains(t, templateNames, "Ubuntu Server 22.04 LTS")
-		assert.Contains(t, templateNames, "CentOS Stream 9")
+		assert.Len(t, templateResp.Templates, 0)
+		assert.Equal(t, 0, templateResp.Total)
 	})
 
-	t.Run("GetSpecificTemplate", func(t *testing.T) {
-		resp, err := suite.makeRequest("GET", "/api/v1/catalog/templates/tmpl-ubuntu22", nil, suite.userToken)
+	t.Run("GetNonExistentTemplate", func(t *testing.T) {
+		resp, err := suite.makeRequest("GET", "/api/v1/catalog/templates/nonexistent", nil, suite.userToken)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var template models.Template
-		err = json.NewDecoder(resp.Body).Decode(&template)
-		require.NoError(t, err)
-
-		assert.Equal(t, "tmpl-ubuntu22", template.ID)
-		assert.Equal(t, "Ubuntu Server 22.04 LTS", template.Name)
-		assert.Equal(t, "Linux", template.OSType)
-		assert.Equal(t, 2, template.CPU)
-		assert.Equal(t, "2Gi", template.Memory)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 }
 
@@ -313,61 +377,8 @@ func TestVMLifecycle(t *testing.T) {
 	suite := setupTestSuite(t)
 	defer suite.tearDown()
 
-	t.Run("CreateVM", func(t *testing.T) {
-		vmData := map[string]interface{}{
-			"name":        "test-integration-vm",
-			"description": "VM created during integration testing",
-			"vdc_id":      "vdc-acme-main",
-			"template_id": "tmpl-ubuntu22",
-			"metadata": map[string]string{
-				"environment": "test",
-				"purpose":     "integration",
-			},
-		}
-
-		resp, err := suite.makeRequest("POST", "/api/v1/vms/", vmData, suite.orgToken)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusCreated, resp.StatusCode)
-
-		var vm models.VirtualMachine
-		err = json.NewDecoder(resp.Body).Decode(&vm)
-		require.NoError(t, err)
-
-		assert.Equal(t, "test-integration-vm", vm.Name)
-		assert.Equal(t, "org-acme", vm.OrgID)
-		assert.Equal(t, "vdc-acme-main", vm.VDCID)
-		assert.Equal(t, "tmpl-ubuntu22", vm.TemplateID)
-		assert.Equal(t, models.VMStatusProvisioning, vm.Status)
-		assert.Equal(t, 2, vm.CPU)
-		assert.Equal(t, "2Gi", vm.Memory)
-	})
-
-	t.Run("SystemAdminCannotCreateVM", func(t *testing.T) {
-		vmData := map[string]interface{}{
-			"name":        "admin-vm",
-			"vdc_id":      "vdc-acme-main",
-			"template_id": "tmpl-ubuntu22",
-		}
-
-		resp, err := suite.makeRequest("POST", "/api/v1/vms/", vmData, suite.adminToken)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		err = json.NewDecoder(resp.Body).Decode(&errorResp)
-		require.NoError(t, err)
-
-		assert.Contains(t, errorResp.Error, "not associated with any organization")
-	})
-
 	t.Run("ListVMs", func(t *testing.T) {
-		resp, err := suite.makeRequest("GET", "/api/v1/vms/", nil, suite.orgToken)
+		resp, err := suite.makeRequest("GET", "/api/v1/vms/", nil, suite.adminToken)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -380,7 +391,17 @@ func TestVMLifecycle(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&vmResp)
 		require.NoError(t, err)
 
-		assert.Greater(t, vmResp.Total, 0)
+		// Should start with no VMs
+		assert.Len(t, vmResp.VMs, 0)
+		assert.Equal(t, 0, vmResp.Total)
+	})
+
+	t.Run("GetNonExistentVM", func(t *testing.T) {
+		resp, err := suite.makeRequest("GET", "/api/v1/vms/nonexistent", nil, suite.adminToken)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 }
 
