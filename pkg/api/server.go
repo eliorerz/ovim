@@ -164,12 +164,37 @@ func (s *Server) setupRoutes() {
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage)
 				catalogHandlers := NewCatalogHandlers(s.storage)
+				userHandlers := NewUserHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
 				orgs.POST("/", orgHandlers.Create)
 				orgs.GET("/:id", orgHandlers.Get)
 				orgs.PUT("/:id", orgHandlers.Update)
 				orgs.DELETE("/:id", orgHandlers.Delete)
 				orgs.GET("/:id/templates", catalogHandlers.ListTemplatesByOrg)
+				orgs.GET("/:id/users", userHandlers.ListByOrganization)
+				orgs.POST("/:id/users/:userId", userHandlers.AssignToOrganization)
+				orgs.DELETE("/:id/users/:userId", userHandlers.RemoveFromOrganization)
+			}
+
+			// User management (system admin only)
+			users := protected.Group("/users")
+			users.Use(s.authManager.RequireRole("system_admin"))
+			{
+				userHandlers := NewUserHandlers(s.storage)
+				users.GET("/", userHandlers.List)
+				users.POST("/", userHandlers.Create)
+				users.GET("/:id", userHandlers.Get)
+				users.PUT("/:id", userHandlers.Update)
+				users.DELETE("/:id", userHandlers.Delete)
+			}
+
+			// User profile and organization access (all authenticated users)
+			userProfile := protected.Group("/profile")
+			{
+				orgHandlers := NewOrganizationHandlers(s.storage)
+				vdcHandlers := NewVDCHandlers(s.storage)
+				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
+				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 			}
 
 			// VDC management (system admin and org admin)

@@ -7,6 +7,8 @@ import (
 // Storage defines the interface for data storage operations
 type Storage interface {
 	// User operations
+	ListUsers() ([]*models.User, error)
+	ListUsersByOrg(orgID string) ([]*models.User, error)
 	GetUserByUsername(username string) (*models.User, error)
 	GetUserByID(id string) (*models.User, error)
 	CreateUser(user *models.User) error

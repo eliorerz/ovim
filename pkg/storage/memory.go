@@ -191,6 +191,30 @@ func (s *MemoryStorage) DeleteUser(id string) error {
 	return nil
 }
 
+func (s *MemoryStorage) ListUsers() ([]*models.User, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	users := make([]*models.User, 0, len(s.users))
+	for _, user := range s.users {
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (s *MemoryStorage) ListUsersByOrg(orgID string) ([]*models.User, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	users := make([]*models.User, 0)
+	for _, user := range s.users {
+		if user.OrgID != nil && *user.OrgID == orgID {
+			users = append(users, user)
+		}
+	}
+	return users, nil
+}
+
 // Organization operations
 func (s *MemoryStorage) ListOrganizations() ([]*models.Organization, error) {
 	s.mutex.RLock()

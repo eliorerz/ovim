@@ -203,6 +203,18 @@ func (s *PostgresStorage) DeleteUser(id string) error {
 	return nil
 }
 
+func (s *PostgresStorage) ListUsers() ([]*models.User, error) {
+	var users []*models.User
+	err := s.db.Find(&users).Error
+	return users, err
+}
+
+func (s *PostgresStorage) ListUsersByOrg(orgID string) ([]*models.User, error) {
+	var users []*models.User
+	err := s.db.Where("org_id = ?", orgID).Find(&users).Error
+	return users, err
+}
+
 // Organization operations
 func (s *PostgresStorage) ListOrganizations() ([]*models.Organization, error) {
 	var orgs []*models.Organization

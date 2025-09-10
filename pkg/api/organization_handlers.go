@@ -199,3 +199,34 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 		"message": "Organization deleted successfully",
 	})
 }
+
+// GetUserOrganization handles getting the current user's organization
+func (h *OrganizationHandlers) GetUserOrganization(c *gin.Context) {
+	// Get user info from context
+	userID, username, _, orgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check if user has an organization
+	if orgID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User is not assigned to any organization"})
+		return
+	}
+
+	// Get the organization
+	org, err := h.storage.GetOrganization(orgID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User's organization not found"})
+			return
+		}
+		klog.Errorf("Failed to get organization %s for user %s (%s): %v", orgID, username, userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
+		return
+	}
+
+	klog.V(6).Infof("Retrieved organization %s for user %s", org.Name, username)
+	c.JSON(http.StatusOK, org)
+}

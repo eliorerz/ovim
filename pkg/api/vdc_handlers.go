@@ -313,3 +313,39 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 		"message": "VDC deleted successfully",
 	})
 }
+
+// ListUserVDCs handles listing VDCs for the current user's organization
+func (h *VDCHandlers) ListUserVDCs(c *gin.Context) {
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Only org users and org admins can use this endpoint
+	if role != models.RoleOrgAdmin && role != models.RoleOrgUser {
+		c.JSON(http.StatusForbidden, gin.H{"error": "This endpoint is for organization users only"})
+		return
+	}
+
+	// Check if user has an organization
+	if userOrgID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User is not assigned to any organization"})
+		return
+	}
+
+	// Get VDCs for the user's organization
+	vdcs, err := h.storage.ListVDCs(userOrgID)
+	if err != nil {
+		klog.Errorf("Failed to list VDCs for user %s (%s) in org %s: %v", username, userID, userOrgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list VDCs"})
+		return
+	}
+
+	klog.V(6).Infof("Listed %d VDCs for user %s (%s) in org %s", len(vdcs), username, userID, userOrgID)
+	c.JSON(http.StatusOK, gin.H{
+		"vdcs":  vdcs,
+		"total": len(vdcs),
+	})
+}
