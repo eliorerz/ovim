@@ -60,6 +60,18 @@ func (s *MemoryStorage) seedData() error {
 
 	now := time.Now()
 
+	// Create a test organization for org users
+	testOrg := &models.Organization{
+		ID:          "org-test",
+		Name:        "Test Organization",
+		Description: "Test organization for development and testing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// Seed organizations
+	s.organizations[testOrg.ID] = testOrg
+
 	// Seed users
 	users := []*models.User{
 		{
@@ -77,6 +89,7 @@ func (s *MemoryStorage) seedData() error {
 			Email:        "orgadmin@ovim.local",
 			PasswordHash: adminHash,
 			Role:         models.RoleOrgAdmin,
+			OrgID:        &testOrg.ID,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
@@ -86,6 +99,7 @@ func (s *MemoryStorage) seedData() error {
 			Email:        "user@ovim.local",
 			PasswordHash: userHash,
 			Role:         models.RoleOrgUser,
+			OrgID:        &testOrg.ID,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
@@ -95,13 +109,13 @@ func (s *MemoryStorage) seedData() error {
 		s.users[user.ID] = user
 	}
 
-	// No seed organizations - start with empty list
+	// Organization seeded above
 
 	// No seed VDCs - start with empty list
 
 	// No seed templates - start with empty list
 
-	klog.Infof("Seeded storage with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
+	klog.Infof("Seeded storage with %d users, 1 organizations, 0 VDCs, 0 templates", len(users))
 
 	return nil
 }
@@ -492,4 +506,19 @@ func (s *MemoryStorage) Close() error {
 
 	klog.Info("Memory storage closed")
 	return nil
+}
+
+// NewMemoryStorageForTest creates a new in-memory storage instance for testing
+// This version doesn't seed any initial data, providing a clean slate for tests
+func NewMemoryStorageForTest() (Storage, error) {
+	storage := &MemoryStorage{
+		users:         make(map[string]*models.User),
+		organizations: make(map[string]*models.Organization),
+		vdcs:          make(map[string]*models.VirtualDataCenter),
+		templates:     make(map[string]*models.Template),
+		vms:           make(map[string]*models.VirtualMachine),
+	}
+
+	klog.Info("Initialized in-memory storage for testing with clean state")
+	return storage, nil
 }

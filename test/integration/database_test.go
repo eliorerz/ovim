@@ -2,6 +2,7 @@ package integration
 
 import (
 	"testing"
+	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -11,7 +12,7 @@ import (
 
 func TestMemoryStorageIntegration(t *testing.T) {
 	testStorageIntegration(t, func() (storage.Storage, error) {
-		return storage.NewMemoryStorage()
+		return storage.NewMemoryStorageForTest()
 	})
 }
 
@@ -22,7 +23,9 @@ func TestPostgreSQLStorageIntegration(t *testing.T) {
 
 	dsn := "postgres://ovim:ovim123@localhost:5432/ovim_test?sslmode=disable"
 	testStorageIntegration(t, func() (storage.Storage, error) {
-		return storage.NewPostgresStorage(dsn)
+		// Create storage instance without going through the normal constructor
+		// to avoid automatic seeding for tests
+		return storage.NewPostgresStorageForTest(dsn)
 	})
 }
 
@@ -53,17 +56,39 @@ func testStorageIntegration(t *testing.T, storageFactory func() (storage.Storage
 }
 
 func testUserOperations(t *testing.T, s storage.Storage) {
-	// Test that only admin user exists
-	adminUser, err := s.GetUserByUsername("admin")
-	require.NoError(t, err)
-	assert.NotNil(t, adminUser)
-	assert.Equal(t, "admin", adminUser.Username)
-	assert.Equal(t, models.RoleSystemAdmin, adminUser.Role)
-	assert.Nil(t, adminUser.OrgID)
+	// Test that initially no users exist in clean test storage
+	_, err := s.GetUserByUsername("admin")
+	assert.Equal(t, storage.ErrNotFound, err)
 
 	// Test that non-existent users return error
 	_, err = s.GetUserByUsername("nonexistent")
 	assert.Equal(t, storage.ErrNotFound, err)
+
+	// Test creating a user
+	now := time.Now()
+	testUser := &models.User{
+		ID:        "test-user-1",
+		Username:  "testuser",
+		Email:     "test@example.com",
+		Role:      models.RoleOrgUser,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	err = s.CreateUser(testUser)
+	require.NoError(t, err)
+
+	// Test retrieving the created user
+	retrievedUser, err := s.GetUserByUsername("testuser")
+	require.NoError(t, err)
+	assert.Equal(t, "testuser", retrievedUser.Username)
+	assert.Equal(t, "test@example.com", retrievedUser.Email)
+	assert.Equal(t, models.RoleOrgUser, retrievedUser.Role)
+
+	// Test retrieving by ID
+	retrievedByID, err := s.GetUserByID("test-user-1")
+	require.NoError(t, err)
+	assert.Equal(t, testUser.Username, retrievedByID.Username)
 }
 
 func testOrganizationOperations(t *testing.T, s storage.Storage) {

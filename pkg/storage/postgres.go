@@ -516,3 +516,71 @@ func indexOfSubstring(s, substr string) int {
 	}
 	return -1
 }
+
+// NewPostgresStorageForTest creates a PostgreSQL storage instance for testing
+// This version clears all data and doesn't seed initial data, providing a clean slate for tests
+func NewPostgresStorageForTest(dsn string) (Storage, error) {
+	// Configure GORM logger to use klog
+	gormLogger := logger.New(
+		&klogWriter{},
+		logger.Config{
+			SlowThreshold:             time.Second,
+			LogLevel:                  logger.Info,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: gormLogger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	storage := &PostgresStorage{db: db}
+
+	// Clear all existing data for a clean test environment
+	if err := storage.clearAllData(); err != nil {
+		return nil, fmt.Errorf("failed to clear test data: %w", err)
+	}
+
+	// Run migrations
+	if err := storage.migrate(); err != nil {
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	klog.Info("Initialized PostgreSQL storage for testing with clean database")
+	return storage, nil
+}
+
+// clearAllData removes all data from the database for testing
+func (s *PostgresStorage) clearAllData() error {
+	// Delete all data in reverse order to respect foreign key constraints
+	tables := []string{
+		"virtual_machines",
+		"templates",
+		"virtual_data_centers",
+		"organizations",
+		"users",
+	}
+
+	for _, table := range tables {
+		if err := s.db.Exec(fmt.Sprintf("DELETE FROM %s", table)).Error; err != nil {
+			return fmt.Errorf("failed to clear table %s: %w", table, err)
+		}
+	}
+
+	klog.Info("Cleared all test data from PostgreSQL database")
+	return nil
+}
