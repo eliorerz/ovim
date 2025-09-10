@@ -105,13 +105,14 @@ build: deps fmt
 
 run: server-stop build
 	@echo "Starting OVIM backend server with HTTPS..."
-	@OVIM_ENVIRONMENT=development \
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" \
+	 OVIM_ENVIRONMENT=development \
 	 OVIM_LOG_LEVEL=info \
 	 ./$(BINARY_NAME)
 
 ## dev: Run in development mode with hot reload
 dev: server-stop deps
-	@$(MAKE) _dev-server
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" $(MAKE) _dev-server
 
 dev-with-db: server-stop db-start
 	@OVIM_DATABASE_URL="$(DATABASE_URL)" $(MAKE) _dev-server
