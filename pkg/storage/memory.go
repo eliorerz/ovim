@@ -53,24 +53,7 @@ func (s *MemoryStorage) seedData() error {
 		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	userHash, err := auth.HashPassword("userpassword")
-	if err != nil {
-		return fmt.Errorf("failed to hash user password: %w", err)
-	}
-
 	now := time.Now()
-
-	// Create a test organization for org users
-	testOrg := &models.Organization{
-		ID:          "org-test",
-		Name:        "Test Organization",
-		Description: "Test organization for development and testing",
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	// Seed organizations
-	s.organizations[testOrg.ID] = testOrg
 
 	// Seed users
 	users := []*models.User{
@@ -83,39 +66,19 @@ func (s *MemoryStorage) seedData() error {
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
-		{
-			ID:           "user-orgadmin",
-			Username:     "orgadmin",
-			Email:        "orgadmin@ovim.local",
-			PasswordHash: adminHash,
-			Role:         models.RoleOrgAdmin,
-			OrgID:        &testOrg.ID,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ID:           "user-user",
-			Username:     "user",
-			Email:        "user@ovim.local",
-			PasswordHash: userHash,
-			Role:         models.RoleOrgUser,
-			OrgID:        &testOrg.ID,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
 	}
 
 	for _, user := range users {
 		s.users[user.ID] = user
 	}
 
-	// Organization seeded above
+	// No seed organizations - start with empty list
 
 	// No seed VDCs - start with empty list
 
 	// No seed templates - start with empty list
 
-	klog.Infof("Seeded storage with %d users, 1 organizations, 0 VDCs, 0 templates", len(users))
+	klog.Infof("Seeded storage with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
 
 	return nil
 }
