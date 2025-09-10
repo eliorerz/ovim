@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -90,9 +91,27 @@ func (h *UserHandlers) Create(c *gin.Context) {
 		return
 	}
 
+	// Validate username
+	req.Username = strings.TrimSpace(req.Username)
+	if len(req.Username) < 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username must be at least 3 characters long"})
+		return
+	}
+	if len(req.Username) > 50 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username must be less than 50 characters long"})
+		return
+	}
+
+	// Validate email
+	req.Email = strings.TrimSpace(req.Email)
+	if !isValidEmail(req.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email format"})
+		return
+	}
+
 	// Validate role
 	if req.Role != models.RoleSystemAdmin && req.Role != models.RoleOrgAdmin && req.Role != models.RoleOrgUser {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be 'system_admin', 'org_admin', or 'org_user'"})
 		return
 	}
 
@@ -106,6 +125,16 @@ func (h *UserHandlers) Create(c *gin.Context) {
 	hashedPassword, err := auth.HashPassword(req.Password)
 	if err != nil {
 		klog.Errorf("Failed to hash password: %v", err)
+		// Check for specific password validation errors
+		if err == auth.ErrPasswordTooShort {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters long"})
+			return
+		}
+		if err == auth.ErrPasswordTooLong {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be less than 128 characters long"})
+			return
+		}
+		// Generic error for other cases (salt generation, etc.)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
 		return
 	}
@@ -366,4 +395,10 @@ func (h *UserHandlers) RemoveFromOrganization(c *gin.Context) {
 
 	klog.Infof("Removed user %s from organization %s", user.Username, orgID)
 	c.JSON(http.StatusOK, user)
+}
+
+// isValidEmail validates email format using a regular expression
+func isValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
 }
