@@ -298,44 +298,8 @@ func (c *Client) extractImageURL(tmpl *templatev1.Template) string {
 		}
 	}
 
-	// Fallback to OS-based icons using template name and OS info
-	templateName := strings.ToLower(tmpl.Name)
-	
-	// Check template name for common patterns - return SimpleIcons URLs
-	if strings.Contains(templateName, "cache") || strings.Contains(templateName, "redis") {
-		return "https://cdn.simpleicons.org/redis"
-	} else if strings.Contains(templateName, "mysql") || strings.Contains(templateName, "mariadb") {
-		return "https://cdn.simpleicons.org/mysql"
-	} else if strings.Contains(templateName, "postgresql") || strings.Contains(templateName, "postgres") {
-		return "https://cdn.simpleicons.org/postgresql"
-	} else if strings.Contains(templateName, "mongodb") || strings.Contains(templateName, "mongo") {
-		return "https://cdn.simpleicons.org/mongodb"
-	} else if strings.Contains(templateName, "php") || strings.Contains(templateName, "cake") {
-		return "https://cdn.simpleicons.org/php"
-	} else if strings.Contains(templateName, "java") || strings.Contains(templateName, "spring") {
-		return "https://cdn.simpleicons.org/openjdk"
-	} else if strings.Contains(templateName, "nodejs") || strings.Contains(templateName, "node") {
-		return "https://cdn.simpleicons.org/nodedotjs"
-	} else if strings.Contains(templateName, "python") || strings.Contains(templateName, "django") {
-		return "https://cdn.simpleicons.org/python"
-	} else if strings.Contains(templateName, "rhel") || strings.Contains(templateName, "red-hat") {
-		return "https://cdn.simpleicons.org/redhat"
-	} else if strings.Contains(templateName, "centos") {
-		return "https://cdn.simpleicons.org/centos"
-	} else if strings.Contains(templateName, "ubuntu") {
-		return "https://cdn.simpleicons.org/ubuntu"
-	} else if strings.Contains(templateName, "fedora") {
-		return "https://cdn.simpleicons.org/fedora"
-	} else if strings.Contains(templateName, "windows") {
-		return "https://cdn.simpleicons.org/windows"
-	}
-	
-	// Final fallback based on general category
-	if strings.Contains(templateName, "vm") {
-		return "https://cdn.simpleicons.org/virtualbox"
-	}
-	
-	return "https://cdn.simpleicons.org/kubernetes" // Default for applications
+	// Fallback to empty string - let UI handle icon selection
+	return ""
 }
 
 // extractResourceInfo determines CPU and memory from template flavor labels
