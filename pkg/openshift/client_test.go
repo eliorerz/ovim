@@ -32,11 +32,11 @@ func TestConvertTemplate(t *testing.T) {
 	result := client.convertTemplate(osTemplate)
 
 	assert.Equal(t, "test-uid-123", result.ID)
-	assert.Equal(t, "rhel9-server-small", result.Name)
+	assert.Equal(t, "Rhel9 Server Small VM", result.Name) // Cleaned up template name
 	assert.Equal(t, "openshift", result.Namespace)
 	assert.Equal(t, "Red Hat Enterprise Linux 9 Server Template", result.Description)
-	assert.Equal(t, "Rhel9", result.OSType)
-	assert.Equal(t, "Rhel9", result.OSVersion)
+	assert.Equal(t, "Rhel9", result.OSType) // From OS label
+	assert.Equal(t, "", result.OSVersion) // No specific version annotation
 	assert.Equal(t, 1, result.CPU)
 	assert.Equal(t, "2Gi", result.Memory)
 	assert.Equal(t, "20Gi", result.DiskSize)
@@ -82,6 +82,39 @@ func TestConvertTemplate_DisplayNameFallback(t *testing.T) {
 	assert.Equal(t, "Display Name Description", result.Description)
 }
 
+func TestConvertTemplate_ProperAnnotations(t *testing.T) {
+	client := &Client{}
+
+	// Test with proper OpenShift annotations (this is the ideal case)
+	osTemplate := &templatev1.Template{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       types.UID("proper-uid"),
+			Name:      "rhel9-highperformance-medium",
+			Namespace: "openshift",
+			Annotations: map[string]string{
+				"openshift.io/display-name":        "Red Hat Enterprise Linux 9 High Performance VM",
+				"openshift.io/description":         "RHEL 9 optimized for high performance workloads",
+				"os.template.kubevirt.io/name":     "Red Hat Enterprise Linux",
+				"os.template.kubevirt.io/version":  "9.2",
+			},
+			Labels: map[string]string{
+				"flavor.template.kubevirt.io/medium": "true",
+			},
+		},
+	}
+
+	result := client.convertTemplate(osTemplate)
+
+	assert.Equal(t, "proper-uid", result.ID)
+	assert.Equal(t, "Red Hat Enterprise Linux 9 High Performance VM", result.Name) // Uses display-name annotation
+	assert.Equal(t, "openshift", result.Namespace)
+	assert.Equal(t, "RHEL 9 optimized for high performance workloads", result.Description)
+	assert.Equal(t, "Red Hat Enterprise Linux", result.OSType) // From OS annotation
+	assert.Equal(t, "9.2", result.OSVersion) // From OS version annotation
+	assert.Equal(t, 1, result.CPU)
+	assert.Equal(t, "4Gi", result.Memory)
+}
+
 func TestConvertTemplate_OSTypeDetection(t *testing.T) {
 	client := &Client{}
 
@@ -114,7 +147,7 @@ func TestConvertTemplate_OSTypeDetection(t *testing.T) {
 		{
 			name:     "Unknown OS (default)",
 			labels:   map[string]string{},
-			expected: "Unknown",
+			expected: "Linux", // Falls back to Linux when no OS info found
 		},
 		{
 			name: "Multiple OS labels (first match wins)",
@@ -122,7 +155,7 @@ func TestConvertTemplate_OSTypeDetection(t *testing.T) {
 				"os.template.kubevirt.io/rhel9":  "true",
 				"os.template.kubevirt.io/ubuntu": "true",
 			},
-			expected: "Rhel9", // Should match the first one found (map iteration)
+			expected: "Rhel9", // Simple label-based extraction
 		},
 	}
 
@@ -139,12 +172,7 @@ func TestConvertTemplate_OSTypeDetection(t *testing.T) {
 
 			result := client.convertTemplate(osTemplate)
 
-			if tt.expected == "Unknown" {
-				assert.Equal(t, tt.expected, result.OSType)
-			} else {
-				// For specific OS types, we expect either the specific type or one of the multiple types
-				assert.Contains(t, []string{tt.expected, "Rhel9", "Ubuntu"}, result.OSType)
-			}
+			assert.Equal(t, tt.expected, result.OSType)
 		})
 	}
 }
@@ -339,10 +367,10 @@ func TestConvertTemplate_EmptyTemplate(t *testing.T) {
 	result := client.convertTemplate(osTemplate)
 
 	assert.Equal(t, "minimal-uid", result.ID)
-	assert.Equal(t, "minimal-template", result.Name)
+	assert.Equal(t, "Minimal Template VM", result.Name) // Cleaned up template name (dashes become spaces)
 	assert.Equal(t, "minimal-ns", result.Namespace)
-	assert.Equal(t, "", result.Description)
-	assert.Equal(t, "Unknown", result.OSType)
+	assert.Equal(t, "Virtual Machine template", result.Description) // Now provides default description
+	assert.Equal(t, "Linux", result.OSType) // Now defaults to Linux
 	assert.Equal(t, 1, result.CPU)           // Default values
 	assert.Equal(t, "2Gi", result.Memory)    // Default values
 	assert.Equal(t, "20Gi", result.DiskSize) // Default values
@@ -367,7 +395,7 @@ func TestConvertTemplate_PartialLabels(t *testing.T) {
 	result := client.convertTemplate(osTemplate)
 
 	assert.Equal(t, "Fedora", result.OSType)
-	assert.Equal(t, "Fedora", result.OSVersion)
+	assert.Equal(t, "", result.OSVersion) // No specific version for fedora without version number
 	assert.Equal(t, 1, result.CPU)        // Default flavor
 	assert.Equal(t, "2Gi", result.Memory) // Default flavor
 }
@@ -391,7 +419,377 @@ func TestConvertTemplate_InvalidLabels(t *testing.T) {
 
 	result := client.convertTemplate(osTemplate)
 
-	assert.Equal(t, "Unknown", result.OSType) // Should remain unknown
+	assert.Equal(t, "Linux", result.OSType) // Now defaults to Linux
 	assert.Equal(t, 1, result.CPU)            // Should use defaults
 	assert.Equal(t, "2Gi", result.Memory)     // Should use defaults
+}
+
+// Comprehensive unit tests for template display name extraction
+func TestExtractDisplayName(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name        string
+		template    *templatev1.Template
+		expected    string
+		description string
+	}{
+		{
+			name: "Primary: openshift.io/display-name annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "rhel9-server-small",
+					Annotations: map[string]string{
+						"openshift.io/display-name": "Red Hat Enterprise Linux 9 VM",
+					},
+				},
+			},
+			expected:    "Red Hat Enterprise Linux 9 VM",
+			description: "Should use the primary display-name annotation",
+		},
+		{
+			name: "Secondary: name.os.template.kubevirt.io annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "ubuntu-server-medium",
+					Annotations: map[string]string{
+						"name.os.template.kubevirt.io": "Ubuntu 22.04 LTS Server VM",
+					},
+				},
+			},
+			expected:    "Ubuntu 22.04 LTS Server VM",
+			description: "Should use KubeVirt name annotation when display-name is missing",
+		},
+		{
+			name: "Tertiary: short long-description annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "centos-workstation",
+					Annotations: map[string]string{
+						"template.openshift.io/long-description": "CentOS Stream 9 Workstation",
+					},
+				},
+			},
+			expected:    "CentOS Stream 9 Workstation",
+			description: "Should use short long-description when other annotations are missing",
+		},
+		{
+			name: "Skip long long-description annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fedora-desktop",
+					Annotations: map[string]string{
+						"template.openshift.io/long-description": "This is a very long description that exceeds the 80 character limit and should be ignored in favor of template name cleanup",
+					},
+				},
+			},
+			expected:    "Fedora Desktop VM",
+			description: "Should skip long descriptions and fallback to name cleanup",
+		},
+		{
+			name: "Complex template name: high performance variant",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "rhel9-highperformance-medium",
+				},
+			},
+			expected:    "Rhel9 Highperformance Medium VM",
+			description: "Should handle complex template names with multiple components",
+		},
+		{
+			name: "Template name with numbers and versions",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "windows2k22-datacenter-large",
+				},
+			},
+			expected:    "Windows2k22 Datacenter Large VM",
+			description: "Should preserve version numbers and capitalize appropriately",
+		},
+		{
+			name: "Template name with special prefixes",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "custom-v2-app-server",
+				},
+			},
+			expected:    "Custom V2 APP Server VM",
+			description: "Should handle version prefixes correctly",
+		},
+		{
+			name: "Simple template name",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "database",
+				},
+			},
+			expected:    "Database VM",
+			description: "Should handle simple names and add VM suffix",
+		},
+		{
+			name: "Template name already containing VM",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "custom-vm-template",
+				},
+			},
+			expected:    "Custom VM Template",
+			description: "Should not add VM suffix if already present",
+		},
+		{
+			name: "Empty template name",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "",
+				},
+			},
+			expected:    "VM",
+			description: "Should handle empty names gracefully",
+		},
+		{
+			name: "Priority test: display-name overrides others",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "some-template",
+					Annotations: map[string]string{
+						"openshift.io/display-name":               "Primary Display Name",
+						"name.os.template.kubevirt.io":            "Secondary Name",
+						"template.openshift.io/long-description":  "Tertiary Description",
+					},
+				},
+			},
+			expected:    "Primary Display Name",
+			description: "Should always prefer display-name annotation over others",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := client.extractDisplayName(tt.template)
+			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
+}
+
+// Unit tests for OS information extraction
+func TestExtractOSInfo(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name            string
+		template        *templatev1.Template
+		expectedOS      string
+		expectedVersion string
+		description     string
+	}{
+		{
+			name: "Primary: OS annotations with name and version",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"os.template.kubevirt.io/name":    "Red Hat Enterprise Linux",
+						"os.template.kubevirt.io/version": "9.2",
+					},
+				},
+			},
+			expectedOS:      "Red Hat Enterprise Linux",
+			expectedVersion: "9.2",
+			description:     "Should extract OS name and version from dedicated annotations",
+		},
+		{
+			name: "Primary: OS annotation with name only",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"os.template.kubevirt.io/name": "Ubuntu",
+					},
+				},
+			},
+			expectedOS:      "Ubuntu",
+			expectedVersion: "",
+			description:     "Should extract OS name even without version annotation",
+		},
+		{
+			name: "Secondary: template operating-system annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"template.kubevirt.io/operating-system": "Microsoft Windows Server",
+					},
+				},
+			},
+			expectedOS:      "Microsoft Windows Server",
+			expectedVersion: "",
+			description:     "Should use operating-system annotation as fallback",
+		},
+		{
+			name: "Tertiary: OS labels",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"os.template.kubevirt.io/fedora39": "true",
+					},
+				},
+			},
+			expectedOS:      "Fedora39",
+			expectedVersion: "",
+			description:     "Should extract OS from labels when annotations are missing",
+		},
+		{
+			name: "Label with underscores",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"os.template.kubevirt.io/centos_stream_9": "true",
+					},
+				},
+			},
+			expectedOS:      "Centos Stream 9",
+			expectedVersion: "",
+			description:     "Should replace underscores with spaces in OS labels",
+		},
+		{
+			name: "Template name fallback: RHEL",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "rhel9-server-small",
+				},
+			},
+			expectedOS:      "Red Hat Enterprise Linux",
+			expectedVersion: "",
+			description:     "Should detect RHEL from template name as last resort",
+		},
+		{
+			name: "Template name fallback: CentOS",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "centos-stream-medium",
+				},
+			},
+			expectedOS:      "CentOS Stream",
+			expectedVersion: "",
+			description:     "Should detect CentOS from template name",
+		},
+		{
+			name: "Template name fallback: Windows",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "windows2k22-datacenter",
+				},
+			},
+			expectedOS:      "Microsoft Windows",
+			expectedVersion: "",
+			description:     "Should detect Windows from template name",
+		},
+		{
+			name: "Default fallback",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "unknown-custom-template",
+				},
+			},
+			expectedOS:      "Linux",
+			expectedVersion: "",
+			description:     "Should default to Linux when no OS information is found",
+		},
+		{
+			name: "Priority test: annotations override labels",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-template",
+					Annotations: map[string]string{
+						"os.template.kubevirt.io/name": "Annotation OS",
+					},
+					Labels: map[string]string{
+						"os.template.kubevirt.io/different": "true",
+					},
+				},
+			},
+			expectedOS:      "Annotation OS",
+			expectedVersion: "",
+			description:     "Should prefer annotations over labels",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			osType, osVersion := client.extractOSInfo(tt.template)
+			assert.Equal(t, tt.expectedOS, osType, tt.description+" (OS type)")
+			assert.Equal(t, tt.expectedVersion, osVersion, tt.description+" (OS version)")
+		})
+	}
+}
+
+// Unit tests for template name cleanup
+func TestCleanupTemplateName(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name        string
+		input       string
+		expected    string
+		description string
+	}{
+		{
+			name:        "Simple dash replacement",
+			input:       "rhel9-server-small",
+			expected:    "Rhel9 Server Small VM",
+			description: "Should replace dashes with spaces and title case",
+		},
+		{
+			name:        "Complex high performance template",
+			input:       "rhel9-highperformance-gpu-large",
+			expected:    "Rhel9 Highperformance GPU Large VM",
+			description: "Should handle complex multi-component names",
+		},
+		{
+			name:        "Version preservation",
+			input:       "windows2k22-datacenter-v2",
+			expected:    "Windows2k22 Datacenter V2 VM",
+			description: "Should preserve version numbers and version prefixes",
+		},
+		{
+			name:        "Short words capitalization",
+			input:       "app-db-api-v3",
+			expected:    "APP DB API V3 VM",
+			description: "Should capitalize common acronyms",
+		},
+		{
+			name:        "Already contains VM",
+			input:       "custom-vm-template",
+			expected:    "Custom VM Template",
+			description: "Should not add VM suffix if already present",
+		},
+		{
+			name:        "Single word",
+			input:       "database",
+			expected:    "Database VM",
+			description: "Should handle single words and add VM suffix",
+		},
+		{
+			name:        "Empty string",
+			input:       "",
+			expected:    "VM",
+			description: "Should handle empty input gracefully",
+		},
+		{
+			name:        "Multiple consecutive dashes",
+			input:       "test--template---name",
+			expected:    "Test Template Name VM",
+			description: "Should handle multiple consecutive dashes",
+		},
+		{
+			name:        "Mixed case preservation",
+			input:       "mySQL-db-server",
+			expected:    "MySQL DB Server VM",
+			description: "Should title case each word appropriately",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := client.cleanupTemplateName(tt.input)
+			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
 }

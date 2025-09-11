@@ -118,52 +118,173 @@ func (c *Client) GetTemplatesFromNamespace(ctx context.Context, namespace string
 // convertTemplate converts an OpenShift Template to our Template struct
 func (c *Client) convertTemplate(tmpl *templatev1.Template) Template {
 	template := Template{
-		ID:          string(tmpl.UID),
-		Name:        tmpl.Name,
-		Namespace:   tmpl.Namespace,
-		Description: tmpl.Annotations["openshift.io/description"],
-		OSType:      "Unknown",
-		CPU:         1,
-		Memory:      "2Gi",
-		DiskSize:    "20Gi",
-		ImageURL:    "",
+		ID:        string(tmpl.UID),
+		Name:      c.extractDisplayName(tmpl),
+		Namespace: tmpl.Namespace,
+		OSType:    "Unknown",
+		CPU:       1,
+		Memory:    "2Gi",
+		DiskSize:  "20Gi",
+		ImageURL:  "",
 	}
 
 	// Extract description from various annotation keys
-	if template.Description == "" {
-		if desc := tmpl.Annotations["description"]; desc != "" {
-			template.Description = desc
-		} else if desc := tmpl.Annotations["openshift.io/display-name"]; desc != "" {
-			template.Description = desc
+	template.Description = c.extractDescription(tmpl)
+
+	// Determine OS type and version
+	template.OSType, template.OSVersion = c.extractOSInfo(tmpl)
+
+	// Determine flavor (CPU/Memory) from labels
+	template.CPU, template.Memory = c.extractResourceInfo(tmpl)
+
+	return template
+}
+
+// extractDisplayName extracts the proper display name from template annotations
+func (c *Client) extractDisplayName(tmpl *templatev1.Template) string {
+	// Try display-name annotation first (this is what OpenShift Console uses)
+	if displayName := tmpl.Annotations["openshift.io/display-name"]; displayName != "" {
+		return displayName
+	}
+
+	// Try name.os.template.kubevirt.io annotation
+	if osName := tmpl.Annotations["name.os.template.kubevirt.io"]; osName != "" {
+		return osName
+	}
+
+	// Try template.openshift.io/long-description for shorter descriptive names
+	if longDesc := tmpl.Annotations["template.openshift.io/long-description"]; longDesc != "" && len(longDesc) < 80 {
+		return longDesc
+	}
+
+	// Fallback: clean up the template name
+	return c.cleanupTemplateName(tmpl.Name)
+}
+
+// cleanupTemplateName provides basic cleanup of template names as fallback
+func (c *Client) cleanupTemplateName(name string) string {
+	// Handle empty string
+	if name == "" {
+		return "VM"
+	}
+	
+	// Simple cleanup: replace dashes with spaces and title case each word
+	cleaned := strings.ReplaceAll(name, "-", " ")
+	words := strings.Fields(cleaned)
+	
+	for i, word := range words {
+		// Capitalize each word but preserve common acronyms/versions
+		lowerWord := strings.ToLower(word)
+		if len(word) <= 3 && (lowerWord == "vm" || lowerWord == "db" || lowerWord == "api" || lowerWord == "cpu" || lowerWord == "gpu" || lowerWord == "app") {
+			// Common acronyms - keep uppercase
+			words[i] = strings.ToUpper(word)
+		} else if strings.Contains(word, "2k") {
+			// Version numbers like "2k22" - keep as-is but title case
+			words[i] = strings.Title(word)
+		} else if strings.HasPrefix(strings.ToLower(word), "v") && len(word) <= 3 {
+			// Version prefixes like "v2", "v3" - uppercase
+			words[i] = strings.ToUpper(word)
+		} else {
+			// Regular words - title case
+			words[i] = strings.Title(word)
+		}
+	}
+	
+	result := strings.Join(words, " ")
+	
+	// Ensure it ends with "VM" if it doesn't already contain it
+	if !strings.Contains(strings.ToLower(result), "vm") {
+		result += " VM"
+	}
+	
+	return result
+}
+
+// extractDescription extracts description from template annotations
+func (c *Client) extractDescription(tmpl *templatev1.Template) string {
+	// Try various description annotation keys in order of preference
+	descKeys := []string{
+		"openshift.io/description",
+		"description", 
+		"template.openshift.io/long-description",
+		"openshift.io/display-name",
+	}
+
+	for _, key := range descKeys {
+		if desc := tmpl.Annotations[key]; desc != "" {
+			return desc
 		}
 	}
 
-	// Determine OS type from labels
+	return "Virtual Machine template"
+}
+
+// extractOSInfo determines OS type and version from template metadata
+func (c *Client) extractOSInfo(tmpl *templatev1.Template) (string, string) {
+	// Try to get OS info from annotations first
+	if osType := tmpl.Annotations["os.template.kubevirt.io/name"]; osType != "" {
+		osVersion := tmpl.Annotations["os.template.kubevirt.io/version"]
+		return osType, osVersion
+	}
+
+	// Check template annotations for OS information
+	if osInfo := tmpl.Annotations["template.kubevirt.io/operating-system"]; osInfo != "" {
+		return osInfo, ""
+	}
+
+	// Check for OS labels as fallback
 	for label, val := range tmpl.Labels {
 		if strings.HasPrefix(label, "os.template.kubevirt.io/") && val == "true" {
 			osName := strings.TrimPrefix(label, "os.template.kubevirt.io/")
-			template.OSType = strings.Title(osName)
-			template.OSVersion = template.OSType // Simple mapping for now
-			break
+			// Keep it simple - just clean up the label name
+			return strings.Title(strings.ReplaceAll(osName, "_", " ")), ""
 		}
 	}
 
-	// Determine flavor (CPU/Memory) from labels
-	if tmpl.Labels["flavor.template.kubevirt.io/tiny"] == "true" {
-		template.CPU = 1
-		template.Memory = "1Gi"
-	} else if tmpl.Labels["flavor.template.kubevirt.io/small"] == "true" {
-		template.CPU = 1
-		template.Memory = "2Gi"
-	} else if tmpl.Labels["flavor.template.kubevirt.io/medium"] == "true" {
-		template.CPU = 1
-		template.Memory = "4Gi"
-	} else if tmpl.Labels["flavor.template.kubevirt.io/large"] == "true" {
-		template.CPU = 2
-		template.Memory = "8Gi"
+	// Final fallback: try to extract from template name
+	name := strings.ToLower(tmpl.Name)
+	if strings.Contains(name, "rhel") {
+		return "Red Hat Enterprise Linux", ""
+	} else if strings.Contains(name, "centos") {
+		return "CentOS Stream", ""
+	} else if strings.Contains(name, "fedora") {
+		return "Fedora", ""
+	} else if strings.Contains(name, "ubuntu") {
+		return "Ubuntu", ""
+	} else if strings.Contains(name, "windows") {
+		return "Microsoft Windows", ""
 	}
 
-	return template
+	return "Linux", ""
+}
+
+// extractResourceInfo determines CPU and memory from template flavor labels
+func (c *Client) extractResourceInfo(tmpl *templatev1.Template) (int, string) {
+	// Check flavor labels
+	if tmpl.Labels["flavor.template.kubevirt.io/tiny"] == "true" {
+		return 1, "1Gi"
+	} else if tmpl.Labels["flavor.template.kubevirt.io/small"] == "true" {
+		return 1, "2Gi"
+	} else if tmpl.Labels["flavor.template.kubevirt.io/medium"] == "true" {
+		return 1, "4Gi"
+	} else if tmpl.Labels["flavor.template.kubevirt.io/large"] == "true" {
+		return 2, "8Gi"
+	}
+
+	// Try to extract from template name
+	name := strings.ToLower(tmpl.Name)
+	if strings.Contains(name, "tiny") {
+		return 1, "1Gi"
+	} else if strings.Contains(name, "small") {
+		return 1, "2Gi"
+	} else if strings.Contains(name, "medium") {
+		return 1, "4Gi"
+	} else if strings.Contains(name, "large") {
+		return 2, "8Gi"
+	}
+
+	// Default values
+	return 1, "2Gi"
 }
 
 // DeployVM deploys a new VM from a template
