@@ -194,6 +194,7 @@ type Template struct {
 	Memory       string    `json:"memory"`
 	DiskSize     string    `json:"disk_size"`
 	ImageURL     string    `json:"image_url"`
+	IconClass    string    `json:"icon_class"`
 	OrgID        string    `json:"org_id" gorm:"index"`
 	Source       string    `json:"source" gorm:"default:'global'"`         // global, organization, external
 	SourceVendor string    `json:"source_vendor" gorm:"default:'Red Hat'"` // Red Hat, Organization, Community, etc.

@@ -29,6 +29,7 @@ type Template struct {
 	DiskSize    string `json:"diskSize"`
 	Namespace   string `json:"namespace"`
 	ImageURL    string `json:"imageUrl"`
+	IconClass   string `json:"iconClass"`
 }
 
 // VirtualMachine represents a VM instance
@@ -140,8 +141,8 @@ func (c *Client) convertTemplate(tmpl *templatev1.Template) Template {
 	// Determine flavor (CPU/Memory) from labels
 	template.CPU, template.Memory = c.extractResourceInfo(tmpl)
 
-	// Extract image URL from annotations
-	template.ImageURL = c.extractImageURL(tmpl)
+	// Extract image URL and icon class separately
+	template.ImageURL, template.IconClass = c.extractImageInfo(tmpl)
 
 	return template
 }
@@ -264,81 +265,90 @@ func (c *Client) extractOSInfo(tmpl *templatev1.Template) (string, string) {
 	return "Linux", ""
 }
 
-// extractImageURL extracts image URL from template annotations
-func (c *Client) extractImageURL(tmpl *templatev1.Template) string {
+// extractImageInfo extracts both image URL and icon class from template annotations
+func (c *Client) extractImageInfo(tmpl *templatev1.Template) (string, string) {
+	var imageURL, iconClass string
 
-	// Check for icon class annotation (commonly used for FontAwesome icons)
-	if iconClass := tmpl.Annotations["iconClass"]; iconClass != "" {
-		// Convert FontAwesome icons to image URLs or return the class for CSS
-		return iconClass
-	}
-
-	// Check for template images annotation
+	// Check for actual image URLs first (these are real image URLs)
 	if images := tmpl.Annotations["template.kubevirt.io/images"]; images != "" {
-		// This might contain JSON with image references
-		return images
+		// This contains actual image references
+		imageURL = images
 	}
 
-	// Check for container disk images
-	if containerDisks := tmpl.Annotations["template.kubevirt.io/containerdisks"]; containerDisks != "" {
-		return containerDisks
+	// Check for container disk images (these are also real image URLs)
+	if containerDisks := tmpl.Annotations["template.kubevirt.io/containerdisks"]; containerDisks != "" && imageURL == "" {
+		imageURL = containerDisks
 	}
 
-	// Look for tag-based image information
+	// Check for icon class annotation (FontAwesome icons go to iconClass)
+	if iconClassValue := tmpl.Annotations["iconClass"]; iconClassValue != "" {
+		iconClass = iconClassValue
+	}
+
+	// If no icon class found, determine from tags or template name
+	if iconClass == "" {
+		iconClass = c.determineIconClass(tmpl)
+	}
+
+	return imageURL, iconClass
+}
+
+// determineIconClass determines appropriate icon class based on template metadata
+func (c *Client) determineIconClass(tmpl *templatev1.Template) string {
+	// Look for tag-based icon information
 	if tags := tmpl.Annotations["tags"]; tags != "" {
-		// Tags might contain OS information we can use to infer icons
 		lowerTags := strings.ToLower(tags)
 		if strings.Contains(lowerTags, "rhel") || strings.Contains(lowerTags, "red hat") {
-			return "redhat-icon"
+			return "fa fa-redhat"
 		} else if strings.Contains(lowerTags, "ubuntu") {
-			return "ubuntu-icon"
+			return "fa fa-ubuntu"
 		} else if strings.Contains(lowerTags, "centos") {
-			return "centos-icon"
+			return "fa fa-centos"
 		} else if strings.Contains(lowerTags, "fedora") {
-			return "fedora-icon"
+			return "fa fa-fedora"
 		} else if strings.Contains(lowerTags, "windows") {
-			return "windows-icon"
+			return "fa fa-windows"
 		}
 	}
 
-	// Fallback to OS-based icons using template name and OS info
+	// Fallback to template name-based icon determination
 	templateName := strings.ToLower(tmpl.Name)
 
-	// Check template name for common patterns - return SimpleIcons URLs
+	// Check template name for common patterns
 	if strings.Contains(templateName, "cache") || strings.Contains(templateName, "redis") {
-		return "https://cdn.simpleicons.org/redis"
+		return "fa fa-database"
 	} else if strings.Contains(templateName, "mysql") || strings.Contains(templateName, "mariadb") {
-		return "https://cdn.simpleicons.org/mysql"
+		return "fa fa-database"
 	} else if strings.Contains(templateName, "postgresql") || strings.Contains(templateName, "postgres") {
-		return "https://cdn.simpleicons.org/postgresql"
+		return "fa fa-database"
 	} else if strings.Contains(templateName, "mongodb") || strings.Contains(templateName, "mongo") {
-		return "https://cdn.simpleicons.org/mongodb"
+		return "fa fa-database"
 	} else if strings.Contains(templateName, "php") || strings.Contains(templateName, "cake") {
-		return "https://cdn.simpleicons.org/php"
+		return "fa fa-code"
 	} else if strings.Contains(templateName, "java") || strings.Contains(templateName, "spring") {
-		return "https://cdn.simpleicons.org/openjdk"
+		return "fa fa-code"
 	} else if strings.Contains(templateName, "nodejs") || strings.Contains(templateName, "node") {
-		return "https://cdn.simpleicons.org/nodedotjs"
+		return "fa fa-code"
 	} else if strings.Contains(templateName, "python") || strings.Contains(templateName, "django") {
-		return "https://cdn.simpleicons.org/python"
+		return "fa fa-code"
 	} else if strings.Contains(templateName, "rhel") || strings.Contains(templateName, "red-hat") {
-		return "https://cdn.simpleicons.org/redhat"
+		return "fa fa-redhat"
 	} else if strings.Contains(templateName, "centos") {
-		return "https://cdn.simpleicons.org/centos"
+		return "fa fa-centos"
 	} else if strings.Contains(templateName, "ubuntu") {
-		return "https://cdn.simpleicons.org/ubuntu"
+		return "fa fa-ubuntu"
 	} else if strings.Contains(templateName, "fedora") {
-		return "https://cdn.simpleicons.org/fedora"
+		return "fa fa-fedora"
 	} else if strings.Contains(templateName, "windows") {
-		return "https://cdn.simpleicons.org/windows"
+		return "fa fa-windows"
 	}
 
 	// Final fallback based on general category
 	if strings.Contains(templateName, "vm") {
-		return "https://cdn.simpleicons.org/virtualbox"
+		return "fa fa-desktop"
 	}
 
-	return "https://cdn.simpleicons.org/kubernetes" // Default for applications
+	return "fa fa-cube" // Default for applications
 }
 
 // extractResourceInfo determines CPU and memory from template flavor labels

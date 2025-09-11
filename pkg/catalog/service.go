@@ -164,6 +164,7 @@ func (s *Service) convertOpenShiftTemplate(osTemplate openshift.Template, source
 		Memory:       osTemplate.Memory,
 		DiskSize:     osTemplate.DiskSize,
 		ImageURL:     osTemplate.ImageURL,
+		IconClass:    osTemplate.IconClass,
 		Source:       source,
 		SourceVendor: sourceVendor,
 		Category:     category,
