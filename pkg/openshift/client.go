@@ -8,6 +8,9 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	templatev1 "github.com/openshift/api/template/v1"
 	templateclient "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -298,8 +301,44 @@ func (c *Client) extractImageURL(tmpl *templatev1.Template) string {
 		}
 	}
 
-	// Fallback to empty string - let UI handle icon selection
-	return ""
+	// Fallback to OS-based icons using template name and OS info
+	templateName := strings.ToLower(tmpl.Name)
+
+	// Check template name for common patterns - return SimpleIcons URLs
+	if strings.Contains(templateName, "cache") || strings.Contains(templateName, "redis") {
+		return "https://cdn.simpleicons.org/redis"
+	} else if strings.Contains(templateName, "mysql") || strings.Contains(templateName, "mariadb") {
+		return "https://cdn.simpleicons.org/mysql"
+	} else if strings.Contains(templateName, "postgresql") || strings.Contains(templateName, "postgres") {
+		return "https://cdn.simpleicons.org/postgresql"
+	} else if strings.Contains(templateName, "mongodb") || strings.Contains(templateName, "mongo") {
+		return "https://cdn.simpleicons.org/mongodb"
+	} else if strings.Contains(templateName, "php") || strings.Contains(templateName, "cake") {
+		return "https://cdn.simpleicons.org/php"
+	} else if strings.Contains(templateName, "java") || strings.Contains(templateName, "spring") {
+		return "https://cdn.simpleicons.org/openjdk"
+	} else if strings.Contains(templateName, "nodejs") || strings.Contains(templateName, "node") {
+		return "https://cdn.simpleicons.org/nodedotjs"
+	} else if strings.Contains(templateName, "python") || strings.Contains(templateName, "django") {
+		return "https://cdn.simpleicons.org/python"
+	} else if strings.Contains(templateName, "rhel") || strings.Contains(templateName, "red-hat") {
+		return "https://cdn.simpleicons.org/redhat"
+	} else if strings.Contains(templateName, "centos") {
+		return "https://cdn.simpleicons.org/centos"
+	} else if strings.Contains(templateName, "ubuntu") {
+		return "https://cdn.simpleicons.org/ubuntu"
+	} else if strings.Contains(templateName, "fedora") {
+		return "https://cdn.simpleicons.org/fedora"
+	} else if strings.Contains(templateName, "windows") {
+		return "https://cdn.simpleicons.org/windows"
+	}
+
+	// Final fallback based on general category
+	if strings.Contains(templateName, "vm") {
+		return "https://cdn.simpleicons.org/virtualbox"
+	}
+
+	return "https://cdn.simpleicons.org/kubernetes" // Default for applications
 }
 
 // extractResourceInfo determines CPU and memory from template flavor labels
@@ -382,4 +421,109 @@ func (c *Client) IsConnected(ctx context.Context) bool {
 	// Try to list namespaces as a connectivity test
 	_, err := c.kubeClient.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1})
 	return err == nil
+}
+
+// CreateNamespace creates a new namespace with optional resource quotas
+func (c *Client) CreateNamespace(ctx context.Context, name string, labels map[string]string, annotations map[string]string) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	// Create namespace object
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+	}
+
+	// Create the namespace
+	_, err := c.kubeClient.CoreV1().Namespaces().Create(ctx, namespace, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create namespace %s: %w", name, err)
+	}
+
+	return nil
+}
+
+// CreateResourceQuota creates a resource quota for a namespace
+func (c *Client) CreateResourceQuota(ctx context.Context, namespace string, cpuQuota, memoryQuota, storageQuota int) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	// Create resource quota object
+	resourceQuota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "organization-quota",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "resource-quota",
+				"app.kubernetes.io/managed-by": "ovim",
+			},
+		},
+		Spec: corev1.ResourceQuotaSpec{
+			Hard: corev1.ResourceList{},
+		},
+	}
+
+	// Set CPU quota if specified
+	if cpuQuota > 0 {
+		resourceQuota.Spec.Hard["requests.cpu"] = resource.MustParse(fmt.Sprintf("%d", cpuQuota))
+		resourceQuota.Spec.Hard["limits.cpu"] = resource.MustParse(fmt.Sprintf("%d", cpuQuota))
+	}
+
+	// Set memory quota if specified (convert from GiB to bytes)
+	if memoryQuota > 0 {
+		resourceQuota.Spec.Hard["requests.memory"] = resource.MustParse(fmt.Sprintf("%dGi", memoryQuota))
+		resourceQuota.Spec.Hard["limits.memory"] = resource.MustParse(fmt.Sprintf("%dGi", memoryQuota))
+	}
+
+	// Set storage quota if specified
+	if storageQuota > 0 {
+		resourceQuota.Spec.Hard["requests.storage"] = resource.MustParse(fmt.Sprintf("%dGi", storageQuota))
+		resourceQuota.Spec.Hard["persistentvolumeclaims"] = resource.MustParse("10") // Allow up to 10 PVCs
+	}
+
+	// Create the resource quota
+	_, err := c.kubeClient.CoreV1().ResourceQuotas(namespace).Create(ctx, resourceQuota, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create resource quota for namespace %s: %w", namespace, err)
+	}
+
+	return nil
+}
+
+// DeleteNamespace deletes a namespace and all its resources
+func (c *Client) DeleteNamespace(ctx context.Context, name string) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	// Delete the namespace (this cascades to all resources within it)
+	err := c.kubeClient.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete namespace %s: %w", name, err)
+	}
+
+	return nil
+}
+
+// NamespaceExists checks if a namespace exists
+func (c *Client) NamespaceExists(ctx context.Context, name string) (bool, error) {
+	if c.kubeClient == nil {
+		return false, fmt.Errorf("kubernetes client not initialized")
+	}
+
+	_, err := c.kubeClient.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check if namespace %s exists: %w", name, err)
+	}
+
+	return true, nil
 }

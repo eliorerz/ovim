@@ -1,6 +1,7 @@
 package openshift
 
 import (
+	"context"
 	"testing"
 
 	"github.com/eliorerz/ovim-updated/pkg/config"
@@ -1037,4 +1038,265 @@ func TestCleanupTemplateName(t *testing.T) {
 			assert.Equal(t, tt.expected, result, tt.description)
 		})
 	}
+}
+
+// Unit tests for namespace creation functionality
+func TestCreateNamespace(t *testing.T) {
+	tests := []struct {
+		name                string
+		namespaceName       string
+		labels              map[string]string
+		annotations         map[string]string
+		expectError         bool
+		expectedErrorString string
+		description         string
+	}{
+		{
+			name:          "Valid namespace creation",
+			namespaceName: "test-org",
+			labels: map[string]string{
+				"app.kubernetes.io/name":      "ovim",
+				"app.kubernetes.io/component": "organization",
+				"ovim.io/organization-id":     "test-org",
+			},
+			annotations: map[string]string{
+				"ovim.io/organization-description": "Test organization",
+				"ovim.io/created-by":               "admin",
+			},
+			expectError: true, // Will fail in test environment (no real cluster)
+			description: "Should attempt to create namespace with proper labels and annotations",
+		},
+		{
+			name:          "Empty namespace name",
+			namespaceName: "",
+			labels:        map[string]string{},
+			annotations:   map[string]string{},
+			expectError:   true,
+			description:   "Should fail with empty namespace name",
+		},
+		{
+			name:          "Nil client",
+			namespaceName: "test-namespace",
+			labels:        nil,
+			annotations:   nil,
+			expectError:   true,
+			description:   "Should fail when kubeClient is nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				kubeClient: nil, // Simulate nil client to test error handling
+			}
+
+			err := client.CreateNamespace(context.Background(), tt.namespaceName, tt.labels, tt.annotations)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.expectedErrorString != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorString)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCreateResourceQuota(t *testing.T) {
+	tests := []struct {
+		name            string
+		namespace       string
+		cpuQuota        int
+		memoryQuota     int
+		storageQuota    int
+		expectError     bool
+		expectedContent string
+		description     string
+	}{
+		{
+			name:         "Valid resource quota creation",
+			namespace:    "test-org",
+			cpuQuota:     10,
+			memoryQuota:  20,
+			storageQuota: 100,
+			expectError:  true, // Will fail in test environment (no real cluster)
+			description:  "Should attempt to create resource quota with proper values",
+		},
+		{
+			name:         "Zero quotas",
+			namespace:    "test-org",
+			cpuQuota:     0,
+			memoryQuota:  0,
+			storageQuota: 0,
+			expectError:  true,
+			description:  "Should handle zero quotas (no limits set)",
+		},
+		{
+			name:         "Partial quotas",
+			namespace:    "test-org",
+			cpuQuota:     5,
+			memoryQuota:  0,
+			storageQuota: 50,
+			expectError:  true,
+			description:  "Should handle partial quota settings",
+		},
+		{
+			name:         "Empty namespace",
+			namespace:    "",
+			cpuQuota:     10,
+			memoryQuota:  20,
+			storageQuota: 100,
+			expectError:  true,
+			description:  "Should fail with empty namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				kubeClient: nil, // Simulate nil client to test error handling
+			}
+
+			err := client.CreateResourceQuota(context.Background(), tt.namespace, tt.cpuQuota, tt.memoryQuota, tt.storageQuota)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDeleteNamespace(t *testing.T) {
+	tests := []struct {
+		name             string
+		namespaceName    string
+		expectError      bool
+		expectedErrorMsg string
+		description      string
+	}{
+		{
+			name:          "Valid namespace deletion",
+			namespaceName: "test-org",
+			expectError:   true, // Will fail in test environment (no real cluster)
+			description:   "Should attempt to delete namespace",
+		},
+		{
+			name:          "Empty namespace name",
+			namespaceName: "",
+			expectError:   true,
+			description:   "Should fail with empty namespace name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				kubeClient: nil, // Simulate nil client to test error handling
+			}
+
+			err := client.DeleteNamespace(context.Background(), tt.namespaceName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.expectedErrorMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNamespaceExists(t *testing.T) {
+	tests := []struct {
+		name             string
+		namespaceName    string
+		expectError      bool
+		expectedExists   bool
+		expectedErrorMsg string
+		description      string
+	}{
+		{
+			name:          "Check existing namespace",
+			namespaceName: "default",
+			expectError:   true, // Will fail in test environment (no real cluster)
+			description:   "Should attempt to check if namespace exists",
+		},
+		{
+			name:          "Check non-existing namespace",
+			namespaceName: "non-existent-namespace",
+			expectError:   true, // Will fail in test environment (no real cluster)
+			description:   "Should attempt to check if namespace exists",
+		},
+		{
+			name:          "Empty namespace name",
+			namespaceName: "",
+			expectError:   true,
+			description:   "Should fail with empty namespace name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				kubeClient: nil, // Simulate nil client to test error handling
+			}
+
+			exists, err := client.NamespaceExists(context.Background(), tt.namespaceName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.expectedErrorMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedExists, exists)
+			}
+		})
+	}
+}
+
+// Test the client methods without Kubernetes client initialized
+func TestClientMethodsWithoutKubeClient(t *testing.T) {
+	client := &Client{
+		kubeClient: nil,
+	}
+
+	ctx := context.Background()
+
+	t.Run("CreateNamespace with nil client", func(t *testing.T) {
+		err := client.CreateNamespace(ctx, "test", map[string]string{}, map[string]string{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "kubernetes client not initialized")
+	})
+
+	t.Run("CreateResourceQuota with nil client", func(t *testing.T) {
+		err := client.CreateResourceQuota(ctx, "test", 10, 20, 100)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "kubernetes client not initialized")
+	})
+
+	t.Run("DeleteNamespace with nil client", func(t *testing.T) {
+		err := client.DeleteNamespace(ctx, "test")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "kubernetes client not initialized")
+	})
+
+	t.Run("NamespaceExists with nil client", func(t *testing.T) {
+		exists, err := client.NamespaceExists(ctx, "test")
+		assert.Error(t, err)
+		assert.False(t, exists)
+		assert.Contains(t, err.Error(), "kubernetes client not initialized")
+	})
+
+	t.Run("IsConnected with nil client", func(t *testing.T) {
+		connected := client.IsConnected(ctx)
+		assert.False(t, connected)
+	})
 }

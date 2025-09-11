@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
@@ -12,15 +15,25 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/util"
 )
 
+// OpenShiftClient interface defines the methods needed for namespace operations
+type OpenShiftClient interface {
+	CreateNamespace(ctx context.Context, name string, labels map[string]string, annotations map[string]string) error
+	CreateResourceQuota(ctx context.Context, namespace string, cpuQuota, memoryQuota, storageQuota int) error
+	DeleteNamespace(ctx context.Context, name string) error
+	NamespaceExists(ctx context.Context, name string) (bool, error)
+}
+
 // OrganizationHandlers handles organization-related requests
 type OrganizationHandlers struct {
-	storage storage.Storage
+	storage         storage.Storage
+	openshiftClient OpenShiftClient
 }
 
 // NewOrganizationHandlers creates a new organization handlers instance
-func NewOrganizationHandlers(storage storage.Storage) *OrganizationHandlers {
+func NewOrganizationHandlers(storage storage.Storage, openshiftClient OpenShiftClient) *OrganizationHandlers {
 	return &OrganizationHandlers{
-		storage: storage,
+		storage:         storage,
+		openshiftClient: openshiftClient,
 	}
 }
 
@@ -89,8 +102,13 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		Description: req.Description,
 		Namespace:   namespace,
 		IsEnabled:   req.IsEnabled,
+		// Set default resource quotas (can be adjusted later via admin API)
+		CPUQuota:     10,  // 10 CPU cores
+		MemoryQuota:  20,  // 20 GiB RAM
+		StorageQuota: 100, // 100 GiB storage
 	}
 
+	// Create organization in database first
 	if err := h.storage.CreateOrganization(org); err != nil {
 		if err == storage.ErrAlreadyExists {
 			c.JSON(http.StatusConflict, gin.H{"error": "Organization already exists"})
@@ -99,6 +117,60 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		klog.Errorf("Failed to create organization: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization"})
 		return
+	}
+
+	// Create namespace in OpenShift cluster if client is available
+	if h.openshiftClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Check if namespace already exists
+		exists, err := h.openshiftClient.NamespaceExists(ctx, namespace)
+		if err != nil {
+			klog.Errorf("Failed to check if namespace %s exists: %v", namespace, err)
+			// Don't fail the organization creation if we can't check namespace
+		} else if !exists {
+			// Create namespace with appropriate labels and annotations
+			labels := map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "organization",
+				"app.kubernetes.io/managed-by": "ovim",
+				"ovim.io/organization-id":      orgID,
+				"ovim.io/organization-name":    util.SanitizeKubernetesName(req.Name),
+			}
+
+			annotations := map[string]string{
+				"ovim.io/organization-description": req.Description,
+				"ovim.io/created-by":               username,
+				"ovim.io/created-at":               time.Now().Format(time.RFC3339),
+			}
+
+			// Create the namespace
+			if err := h.openshiftClient.CreateNamespace(ctx, namespace, labels, annotations); err != nil {
+				klog.Errorf("Failed to create namespace %s for organization %s: %v", namespace, orgID, err)
+				// Try to rollback - delete the organization from database
+				if rollbackErr := h.storage.DeleteOrganization(orgID); rollbackErr != nil {
+					klog.Errorf("Failed to rollback organization creation after namespace failure: %v", rollbackErr)
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization namespace"})
+				return
+			}
+
+			// Create resource quota for the namespace
+			if err := h.openshiftClient.CreateResourceQuota(ctx, namespace, org.CPUQuota, org.MemoryQuota, org.StorageQuota); err != nil {
+				klog.Errorf("Failed to create resource quota for namespace %s: %v", namespace, err)
+				// Log error but don't fail the organization creation - quota can be created later
+			} else {
+				klog.Infof("Created resource quota for organization %s namespace %s (CPU: %d, Memory: %dGi, Storage: %dGi)",
+					orgID, namespace, org.CPUQuota, org.MemoryQuota, org.StorageQuota)
+			}
+
+			klog.Infof("Created namespace %s for organization %s", namespace, orgID)
+		} else {
+			klog.Infof("Namespace %s already exists for organization %s", namespace, orgID)
+		}
+	} else {
+		klog.Warningf("OpenShift client not available - namespace %s not created for organization %s", namespace, orgID)
 	}
 
 	klog.Infof("Organization %s (%s) created by user %s (%s)", org.Name, org.ID, username, userID)
@@ -184,13 +256,44 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 		return
 	}
 
-	// TODO: Check if organization has any VMs or other resources before deletion
-	// For now, we'll allow deletion
+	// Delete all attached resources before deleting the organization
+	if err := h.deleteOrganizationResources(id, username, userID); err != nil {
+		klog.Errorf("Failed to delete organization resources for %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization resources"})
+		return
+	}
 
+	// Delete from database last
 	if err := h.storage.DeleteOrganization(id); err != nil {
 		klog.Errorf("Failed to delete organization %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization"})
 		return
+	}
+
+	// Delete namespace from OpenShift cluster if client is available
+	if h.openshiftClient != nil && org.Namespace != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // More time for namespace deletion
+		defer cancel()
+
+		// Check if namespace exists before trying to delete
+		exists, err := h.openshiftClient.NamespaceExists(ctx, org.Namespace)
+		if err != nil {
+			klog.Errorf("Failed to check if namespace %s exists for organization %s: %v", org.Namespace, id, err)
+		} else if exists {
+			// Delete the namespace (this will delete all resources within it)
+			if err := h.openshiftClient.DeleteNamespace(ctx, org.Namespace); err != nil {
+				klog.Errorf("Failed to delete namespace %s for organization %s: %v", org.Namespace, id, err)
+				// Don't fail the API call - organization is already deleted from database
+			} else {
+				klog.Infof("Deleted namespace %s for organization %s", org.Namespace, id)
+			}
+		} else {
+			klog.Infof("Namespace %s for organization %s does not exist (already deleted)", org.Namespace, id)
+		}
+	} else {
+		if h.openshiftClient == nil {
+			klog.Warningf("OpenShift client not available - namespace %s not deleted for organization %s", org.Namespace, id)
+		}
 	}
 
 	klog.Infof("Organization %s (%s) deleted by user %s (%s)", org.Name, org.ID, username, userID)
@@ -434,4 +537,80 @@ func (h *OrganizationHandlers) ValidateResourceAllocation(c *gin.Context) {
 		org.Name, req.CPURequest, req.MemoryRequest, req.StorageRequest, canAllocate)
 
 	c.JSON(http.StatusOK, response)
+}
+
+// deleteOrganizationResources handles the cascade deletion of all resources belonging to an organization
+func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, userID string) error {
+	klog.V(4).Infof("Starting cascade deletion of resources for organization %s by user %s (%s)", orgID, username, userID)
+
+	// 1. Delete all VMs in the organization
+	vms, err := h.storage.ListVMs(orgID)
+	if err != nil {
+		return fmt.Errorf("failed to list VMs for organization %s: %v", orgID, err)
+	}
+
+	for _, vm := range vms {
+		klog.V(6).Infof("Deleting VM %s (%s) in organization %s", vm.Name, vm.ID, orgID)
+		if err := h.storage.DeleteVM(vm.ID); err != nil {
+			klog.Errorf("Failed to delete VM %s in organization %s: %v", vm.ID, orgID, err)
+			// Continue with other VMs even if one fails
+		} else {
+			klog.Infof("Deleted VM %s (%s) from organization %s", vm.Name, vm.ID, orgID)
+		}
+	}
+
+	// 2. Delete all VDCs in the organization
+	vdcs, err := h.storage.ListVDCs(orgID)
+	if err != nil {
+		return fmt.Errorf("failed to list VDCs for organization %s: %v", orgID, err)
+	}
+
+	for _, vdc := range vdcs {
+		klog.V(6).Infof("Deleting VDC %s (%s) in organization %s", vdc.Name, vdc.ID, orgID)
+		if err := h.storage.DeleteVDC(vdc.ID); err != nil {
+			klog.Errorf("Failed to delete VDC %s in organization %s: %v", vdc.ID, orgID, err)
+			// Continue with other VDCs even if one fails
+		} else {
+			klog.Infof("Deleted VDC %s (%s) from organization %s", vdc.Name, vdc.ID, orgID)
+		}
+	}
+
+	// 3. Delete organization-specific templates
+	templates, err := h.storage.ListTemplatesByOrg(orgID)
+	if err != nil {
+		return fmt.Errorf("failed to list templates for organization %s: %v", orgID, err)
+	}
+
+	for _, template := range templates {
+		klog.V(6).Infof("Deleting template %s (%s) in organization %s", template.Name, template.ID, orgID)
+		if err := h.storage.DeleteTemplate(template.ID); err != nil {
+			klog.Errorf("Failed to delete template %s in organization %s: %v", template.ID, orgID, err)
+			// Continue with other templates even if one fails
+		} else {
+			klog.Infof("Deleted template %s (%s) from organization %s", template.Name, template.ID, orgID)
+		}
+	}
+
+	// 4. Update users to remove their organization assignment
+	// Note: We don't delete users, just remove their organization assignment
+	users, err := h.storage.ListUsersByOrg(orgID)
+	if err != nil {
+		return fmt.Errorf("failed to list users for organization %s: %v", orgID, err)
+	}
+
+	for _, user := range users {
+		klog.V(6).Infof("Removing organization assignment for user %s (%s)", user.Username, user.ID)
+		user.OrgID = nil // Remove organization assignment
+		if err := h.storage.UpdateUser(user); err != nil {
+			klog.Errorf("Failed to remove organization assignment for user %s: %v", user.ID, err)
+			// Continue with other users even if one fails
+		} else {
+			klog.Infof("Removed organization assignment for user %s (%s)", user.Username, user.ID)
+		}
+	}
+
+	klog.Infof("Completed cascade deletion of resources for organization %s: %d VMs, %d VDCs, %d templates, %d users updated",
+		orgID, len(vms), len(vdcs), len(templates), len(users))
+
+	return nil
 }
