@@ -96,9 +96,14 @@ func NewClient(cfg *config.OpenShiftConfig) (*Client, error) {
 
 // GetTemplates retrieves available VM templates from OpenShift
 func (c *Client) GetTemplates(ctx context.Context) ([]Template, error) {
-	tmplList, err := c.templateClient.Templates(c.config.TemplateNamespace).List(ctx, metav1.ListOptions{})
+	return c.GetTemplatesFromNamespace(ctx, c.config.TemplateNamespace)
+}
+
+// GetTemplatesFromNamespace retrieves templates from a specific namespace
+func (c *Client) GetTemplatesFromNamespace(ctx context.Context, namespace string) ([]Template, error) {
+	tmplList, err := c.templateClient.Templates(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list templates: %w", err)
+		return nil, fmt.Errorf("failed to list templates from namespace %s: %w", namespace, err)
 	}
 
 	var templates []Template

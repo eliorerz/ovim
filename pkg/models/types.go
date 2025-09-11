@@ -96,21 +96,42 @@ type VirtualDataCenter struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// Template source types
+const (
+	TemplateSourceGlobal       = "global"
+	TemplateSourceOrganization = "organization"
+	TemplateSourceExternal     = "external"
+)
+
+// Template categories
+const (
+	TemplateCategoryOS          = "Operating System"
+	TemplateCategoryDatabase    = "Database"
+	TemplateCategoryApplication = "Application"
+	TemplateCategoryMiddleware  = "Middleware"
+	TemplateCategoryOther       = "Other"
+)
+
 // Template represents a VM template available in the catalog
 type Template struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	OSType      string    `json:"os_type"`
-	OSVersion   string    `json:"os_version"`
-	CPU         int       `json:"cpu"`
-	Memory      string    `json:"memory"`
-	DiskSize    string    `json:"disk_size"`
-	ImageURL    string    `json:"image_url"`
-	OrgID       string    `json:"org_id" gorm:"index"`
-	Metadata    StringMap `json:"metadata" gorm:"type:jsonb"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id" gorm:"primaryKey"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	OSType       string    `json:"os_type"`
+	OSVersion    string    `json:"os_version"`
+	CPU          int       `json:"cpu"`
+	Memory       string    `json:"memory"`
+	DiskSize     string    `json:"disk_size"`
+	ImageURL     string    `json:"image_url"`
+	OrgID        string    `json:"org_id" gorm:"index"`
+	Source       string    `json:"source" gorm:"default:'global'"`         // global, organization, external
+	SourceVendor string    `json:"source_vendor" gorm:"default:'Red Hat'"` // Red Hat, Organization, Community, etc.
+	Category     string    `json:"category" gorm:"default:'Operating System'"`
+	Namespace    string    `json:"namespace"` // OpenShift namespace where template resides
+	Featured     bool      `json:"featured"`  // Whether this template is featured/recommended
+	Metadata     StringMap `json:"metadata" gorm:"type:jsonb"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // VirtualMachine represents a deployed virtual machine

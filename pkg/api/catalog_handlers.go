@@ -6,34 +6,69 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/eliorerz/ovim-updated/pkg/catalog"
+	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 )
 
 // CatalogHandlers handles VM catalog-related requests
 type CatalogHandlers struct {
-	storage storage.Storage
+	storage        storage.Storage
+	catalogService *catalog.Service
 }
 
 // NewCatalogHandlers creates a new catalog handlers instance
-func NewCatalogHandlers(storage storage.Storage) *CatalogHandlers {
+func NewCatalogHandlers(storage storage.Storage, catalogService *catalog.Service) *CatalogHandlers {
 	return &CatalogHandlers{
-		storage: storage,
+		storage:        storage,
+		catalogService: catalogService,
 	}
 }
 
-// ListTemplates handles listing all VM templates
+// ListTemplates handles listing all VM templates with multi-source support
 func (h *CatalogHandlers) ListTemplates(c *gin.Context) {
-	templates, err := h.storage.ListTemplates()
+	// Get query parameters for filtering
+	source := c.Query("source")     // global, organization, external
+	category := c.Query("category") // Operating System, Database, Application, etc.
+
+	// Get user organization ID from context (would be set by auth middleware)
+	userOrgID := ""
+	if orgID, exists := c.Get("user_org_id"); exists {
+		if str, ok := orgID.(string); ok {
+			userOrgID = str
+		}
+	}
+
+	var templates []*models.Template
+	var err error
+
+	// Use catalog service if available, fallback to direct storage
+	if h.catalogService != nil {
+		templates, err = h.catalogService.GetTemplates(c.Request.Context(), userOrgID, source, category)
+	} else {
+		// Fallback to legacy direct storage access
+		allTemplates, storageErr := h.storage.ListTemplates()
+		if storageErr != nil {
+			err = storageErr
+		} else {
+			templates = allTemplates
+		}
+	}
+
 	if err != nil {
 		klog.Errorf("Failed to list templates: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list templates"})
 		return
 	}
 
-	klog.V(6).Infof("Listed %d templates", len(templates))
+	klog.V(6).Infof("Listed %d templates (source: %s, category: %s)", len(templates), source, category)
 	c.JSON(http.StatusOK, gin.H{
 		"templates": templates,
 		"total":     len(templates),
+		"filters": gin.H{
+			"source":   source,
+			"category": category,
+		},
 	})
 }
 
@@ -79,5 +114,35 @@ func (h *CatalogHandlers) ListTemplatesByOrg(c *gin.Context) {
 		"templates": templates,
 		"total":     len(templates),
 		"org_id":    orgID,
+	})
+}
+
+// GetCatalogSources handles retrieving available catalog sources for the user
+func (h *CatalogHandlers) GetCatalogSources(c *gin.Context) {
+	// Get user organization ID from context (would be set by auth middleware)
+	userOrgID := ""
+	if orgID, exists := c.Get("user_org_id"); exists {
+		if str, ok := orgID.(string); ok {
+			userOrgID = str
+		}
+	}
+
+	if h.catalogService == nil {
+		klog.Error("Catalog service not available")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Catalog service not available"})
+		return
+	}
+
+	sources, err := h.catalogService.GetCatalogSources(c.Request.Context(), userOrgID)
+	if err != nil {
+		klog.Errorf("Failed to get catalog sources: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get catalog sources"})
+		return
+	}
+
+	klog.V(6).Infof("Retrieved %d catalog sources for user org %s", len(sources), userOrgID)
+	c.JSON(http.StatusOK, gin.H{
+		"sources": sources,
+		"total":   len(sources),
 	})
 }

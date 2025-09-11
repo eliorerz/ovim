@@ -7,6 +7,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
+	"github.com/eliorerz/ovim-updated/pkg/catalog"
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/openshift"
@@ -29,6 +30,7 @@ type Server struct {
 	tokenManager    *auth.TokenManager
 	oidcProvider    *auth.OIDCProvider
 	openshiftClient *openshift.Client
+	catalogService  *catalog.Service
 	router          *gin.Engine
 }
 
@@ -83,6 +85,15 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		}
 	}
 
+	// Create catalog service
+	var catalogService *catalog.Service
+	if openshiftClient != nil {
+		catalogService = catalog.NewService(storage, openshiftClient, cfg.OpenShift.TemplateNamespace)
+		klog.Infof("Catalog service initialized with OpenShift integration")
+	} else {
+		klog.Infof("Catalog service will use database-only mode (OpenShift not available)")
+	}
+
 	server := &Server{
 		config:          cfg,
 		storage:         storage,
@@ -91,6 +102,7 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		tokenManager:    tokenManager,
 		oidcProvider:    oidcProvider,
 		openshiftClient: openshiftClient,
+		catalogService:  catalogService,
 		router:          gin.New(),
 	}
 
@@ -163,7 +175,7 @@ func (s *Server) setupRoutes() {
 			orgs.Use(s.authManager.RequireRole("system_admin"))
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage)
-				catalogHandlers := NewCatalogHandlers(s.storage)
+				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				userHandlers := NewUserHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
 				orgs.POST("/", orgHandlers.Create)
@@ -212,9 +224,10 @@ func (s *Server) setupRoutes() {
 			// VM catalog (all authenticated users)
 			catalog := protected.Group("/catalog")
 			{
-				catalogHandlers := NewCatalogHandlers(s.storage)
+				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				catalog.GET("/templates", catalogHandlers.ListTemplates)
 				catalog.GET("/templates/:id", catalogHandlers.GetTemplate)
+				catalog.GET("/sources", catalogHandlers.GetCatalogSources)
 			}
 
 			// VM management (all authenticated users, filtered by role)
