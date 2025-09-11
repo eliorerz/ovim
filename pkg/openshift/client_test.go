@@ -803,16 +803,157 @@ func TestExtractImageURL(t *testing.T) {
 			description: "Should return windows-icon for Windows tags",
 		},
 		{
-			name: "No image information",
+			name: "Template name with cache pattern",
 			template: &templatev1.Template{
 				ObjectMeta: metav1.ObjectMeta{
+					Name: "redis-cache-service",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/redis",
+			description: "Should return SimpleIcons Redis URL for cache templates",
+		},
+		{
+			name: "Template name with MySQL pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cakephp-mysql-example",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/mysql",
+			description: "Should return SimpleIcons MySQL URL for MySQL templates",
+		},
+		{
+			name: "Template name with PHP pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cakephp-example",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/php",
+			description: "Should return SimpleIcons PHP URL for PHP templates",
+		},
+		{
+			name: "Template name with CentOS pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "centos-stream-9-vm",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/centos",
+			description: "Should return SimpleIcons CentOS URL for CentOS templates",
+		},
+		{
+			name: "Template name with VM pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "custom-vm-template",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/virtualbox",
+			description: "Should return SimpleIcons VirtualBox URL for VM templates",
+		},
+		{
+			name: "Template name with PostgreSQL pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "postgresql-persistent",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/postgresql",
+			description: "Should return SimpleIcons PostgreSQL URL for PostgreSQL templates",
+		},
+		{
+			name: "Template name with MongoDB pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "mongodb-replica-set",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/mongodb",
+			description: "Should return SimpleIcons MongoDB URL for MongoDB templates",
+		},
+		{
+			name: "Template name with Java/Spring pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "spring-boot-example",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/openjdk",
+			description: "Should return SimpleIcons OpenJDK URL for Java/Spring templates",
+		},
+		{
+			name: "Template name with Node.js pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "nodejs-app-template",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/nodedotjs",
+			description: "Should return SimpleIcons Node.js URL for Node.js templates",
+		},
+		{
+			name: "Template name with Python pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "python-django-app",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/python",
+			description: "Should return SimpleIcons Python URL for Python templates",
+		},
+		{
+			name: "Template name with RHEL pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "rhel9-server-small",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/redhat",
+			description: "Should return SimpleIcons RedHat URL for RHEL templates",
+		},
+		{
+			name: "Template name with Ubuntu pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "ubuntu-22-04-server",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/ubuntu",
+			description: "Should return SimpleIcons Ubuntu URL for Ubuntu templates",
+		},
+		{
+			name: "Template name with Fedora pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fedora-workstation-39",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/fedora",
+			description: "Should return SimpleIcons Fedora URL for Fedora templates",
+		},
+		{
+			name: "Template name with Windows pattern",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "windows-server-2022",
+				},
+			},
+			expected:    "https://cdn.simpleicons.org/windows",
+			description: "Should return SimpleIcons Windows URL for Windows templates",
+		},
+		{
+			name: "Generic application template",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "some-application",
 					Annotations: map[string]string{
 						"description": "Just a description",
 					},
 				},
 			},
-			expected:    "",
-			description: "Should return empty string when no image info available",
+			expected:    "https://cdn.simpleicons.org/kubernetes",
+			description: "Should return SimpleIcons Kubernetes URL as final fallback",
 		},
 	}
 
