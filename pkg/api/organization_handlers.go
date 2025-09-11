@@ -139,6 +139,9 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		return
 	}
 
+	// DEBUG: Log the organization object after database save to see what was actually stored
+	klog.Infof("DEBUG: Organization object after DB save - CPU: %d, Memory: %d, Storage: %d", org.CPUQuota, org.MemoryQuota, org.StorageQuota)
+
 	// Create namespace in OpenShift cluster if client is available
 	if h.openshiftClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

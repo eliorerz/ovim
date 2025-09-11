@@ -249,6 +249,7 @@ func (s *PostgresStorage) CreateOrganization(org *models.Organization) error {
 		}
 		return err
 	}
+
 	return nil
 }
 

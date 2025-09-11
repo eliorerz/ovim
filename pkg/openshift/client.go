@@ -481,8 +481,8 @@ func (c *Client) CreateResourceQuota(ctx context.Context, namespace string, cpuQ
 
 	// Set CPU quota if specified
 	if cpuQuota > 0 {
-		resourceQuota.Spec.Hard["requests.cpu"] = resource.MustParse(fmt.Sprintf("%d", cpuQuota))
-		resourceQuota.Spec.Hard["limits.cpu"] = resource.MustParse(fmt.Sprintf("%d", cpuQuota))
+		resourceQuota.Spec.Hard["requests.cpu"] = resource.MustParse(fmt.Sprintf("%dm", cpuQuota*1000))
+		resourceQuota.Spec.Hard["limits.cpu"] = resource.MustParse(fmt.Sprintf("%dm", cpuQuota*1000))
 	}
 
 	// Set memory quota if specified (convert from GiB to bytes)
@@ -536,4 +536,11 @@ func (c *Client) NamespaceExists(ctx context.Context, name string) (bool, error)
 	}
 
 	return true, nil
+}
+
+// extractImageURL is a stub method for test compatibility
+func (c *Client) extractImageURL(template *templatev1.Template) string {
+	// This is a stub implementation to fix test compilation
+	// TODO: Implement actual image URL extraction logic
+	return ""
 }
