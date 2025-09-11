@@ -95,17 +95,31 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	orgID := util.SanitizeKubernetesName(req.Name)
 	namespace := orgID
 
+	// Set resource quotas - use provided values or defaults
+	cpuQuota := 10      // Default: 10 CPU cores
+	memoryQuota := 20   // Default: 20 GiB RAM
+	storageQuota := 100 // Default: 100 GiB storage
+
+	if req.CPUQuota != nil && *req.CPUQuota > 0 {
+		cpuQuota = *req.CPUQuota
+	}
+	if req.MemoryQuota != nil && *req.MemoryQuota > 0 {
+		memoryQuota = *req.MemoryQuota
+	}
+	if req.StorageQuota != nil && *req.StorageQuota > 0 {
+		storageQuota = *req.StorageQuota
+	}
+
 	// Create organization
 	org := &models.Organization{
-		ID:          orgID,
-		Name:        req.Name,
-		Description: req.Description,
-		Namespace:   namespace,
-		IsEnabled:   req.IsEnabled,
-		// Set default resource quotas (can be adjusted later via admin API)
-		CPUQuota:     10,  // 10 CPU cores
-		MemoryQuota:  20,  // 20 GiB RAM
-		StorageQuota: 100, // 100 GiB storage
+		ID:           orgID,
+		Name:         req.Name,
+		Description:  req.Description,
+		Namespace:    namespace,
+		IsEnabled:    req.IsEnabled,
+		CPUQuota:     cpuQuota,
+		MemoryQuota:  memoryQuota,
+		StorageQuota: storageQuota,
 	}
 
 	// Create organization in database first
@@ -173,7 +187,8 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		klog.Warningf("OpenShift client not available - namespace %s not created for organization %s", namespace, orgID)
 	}
 
-	klog.Infof("Organization %s (%s) created by user %s (%s)", org.Name, org.ID, username, userID)
+	klog.Infof("Organization %s (%s) created by user %s (%s) with resource quotas (CPU: %d, Memory: %dGB, Storage: %dGB)",
+		org.Name, org.ID, username, userID, org.CPUQuota, org.MemoryQuota, org.StorageQuota)
 
 	c.JSON(http.StatusCreated, org)
 }
