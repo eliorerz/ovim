@@ -6,18 +6,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/openshift"
+	"github.com/eliorerz/ovim-updated/pkg/storage"
 )
 
 // OpenShiftHandlers provides handlers for OpenShift integration endpoints
 type OpenShiftHandlers struct {
-	client *openshift.Client
+	client  *openshift.Client
+	storage storage.Storage
 }
 
 // NewOpenShiftHandlers creates a new OpenShift handlers instance
-func NewOpenShiftHandlers(client *openshift.Client) *OpenShiftHandlers {
+func NewOpenShiftHandlers(client *openshift.Client, storage storage.Storage) *OpenShiftHandlers {
 	return &OpenShiftHandlers{
-		client: client,
+		client:  client,
+		storage: storage,
 	}
 }
 
@@ -68,7 +72,34 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 		return
 	}
 
-	klog.Infof("Deploying VM %s from template %s", req.VMName, req.TemplateName)
+	// Get user info from context
+	userID, username, _, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		klog.Error("User context not found")
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "User context not found",
+			Message: "Authentication required",
+		})
+		return
+	}
+
+	// If user has an organization, override the target namespace with organization's namespace
+	if userOrgID != "" && h.storage != nil {
+		org, err := h.storage.GetOrganization(userOrgID)
+		if err != nil {
+			klog.Errorf("Failed to get organization %s for user %s (%s): %v", userOrgID, username, userID, err)
+			// Don't fail deployment - use provided namespace as fallback
+		} else {
+			// Override target namespace with organization's namespace
+			originalNamespace := req.TargetNamespace
+			req.TargetNamespace = org.Namespace
+			klog.Infof("Overriding VM deployment namespace from %s to organization namespace %s for user %s",
+				originalNamespace, req.TargetNamespace, username)
+		}
+	}
+
+	klog.Infof("Deploying VM %s from template %s to namespace %s for user %s (%s)",
+		req.VMName, req.TemplateName, req.TargetNamespace, username, userID)
 
 	vm, err := h.client.DeployVM(c.Request.Context(), req)
 	if err != nil {
@@ -80,7 +111,8 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 		return
 	}
 
-	klog.Infof("Successfully deployed VM %s with ID %s", vm.Name, vm.ID)
+	klog.Infof("Successfully deployed VM %s with ID %s in namespace %s for user %s",
+		vm.Name, vm.ID, req.TargetNamespace, username)
 	c.JSON(http.StatusCreated, vm)
 }
 

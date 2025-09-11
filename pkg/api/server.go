@@ -270,7 +270,7 @@ func (s *Server) setupRoutes() {
 			if s.openshiftClient != nil {
 				openshift := protected.Group("/openshift")
 				{
-					osHandlers := NewOpenShiftHandlers(s.openshiftClient)
+					osHandlers := NewOpenShiftHandlers(s.openshiftClient, s.storage)
 					openshift.GET("/status", osHandlers.GetOpenShiftStatus)
 					openshift.GET("/templates", osHandlers.GetOpenShiftTemplates)
 					openshift.GET("/vms", osHandlers.GetOpenShiftVMs)
