@@ -152,17 +152,17 @@ func (s *Server) setupRoutes() {
 	api := s.router.Group(APIPrefix)
 	{
 		// Authentication routes (no auth required)
-		auth := api.Group("/auth")
+		authRoutes := api.Group("/auth")
 		{
 			authHandlers := NewAuthHandlers(s.storage, s.tokenManager, s.oidcProvider)
-			auth.POST("/login", authHandlers.Login)
-			auth.POST("/logout", authHandlers.Logout)
-			auth.GET("/info", authHandlers.GetAuthInfo)
+			authRoutes.POST("/login", authHandlers.Login)
+			authRoutes.POST("/logout", authHandlers.Logout)
+			authRoutes.GET("/info", authHandlers.GetAuthInfo)
 
 			// OIDC endpoints
 			if s.oidcProvider != nil {
-				auth.GET("/oidc/auth-url", authHandlers.GetOIDCAuthURL)
-				auth.POST("/oidc/callback", authHandlers.HandleOIDCCallback)
+				authRoutes.GET("/oidc/auth-url", authHandlers.GetOIDCAuthURL)
+				authRoutes.POST("/oidc/callback", authHandlers.HandleOIDCCallback)
 			}
 		}
 
@@ -186,6 +186,11 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/users", userHandlers.ListByOrganization)
 				orgs.POST("/:id/users/:userId", userHandlers.AssignToOrganization)
 				orgs.DELETE("/:id/users/:userId", userHandlers.RemoveFromOrganization)
+
+				// Resource management endpoints
+				orgs.GET("/:id/resources", orgHandlers.GetResourceUsage)
+				orgs.PUT("/:id/resources", orgHandlers.UpdateResourceQuotas)
+				orgs.POST("/:id/resources/validate", orgHandlers.ValidateResourceAllocation)
 			}
 
 			// User management (system admin only)
@@ -207,6 +212,17 @@ func (s *Server) setupRoutes() {
 				vdcHandlers := NewVDCHandlers(s.storage)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
+				// Allow org admins to view their organization's resource usage
+				userProfile.GET("/organization/resources", s.authManager.RequireRole("org_admin"), func(c *gin.Context) {
+					// Get user org ID from context and set it as the id param for the handler
+					_, _, _, userOrgID, ok := auth.GetUserFromContext(c)
+					if !ok || userOrgID == "" {
+						c.JSON(http.StatusForbidden, gin.H{"error": "User not associated with any organization"})
+						return
+					}
+					c.Params = append(c.Params, gin.Param{Key: "id", Value: userOrgID})
+					orgHandlers.GetResourceUsage(c)
+				})
 			}
 
 			// VDC management (system admin and org admin)

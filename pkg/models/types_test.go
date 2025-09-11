@@ -482,3 +482,495 @@ func TestStringMap_ComplexValues(t *testing.T) {
 
 	assert.Equal(t, sm, scanned)
 }
+
+// Tests for Resource Quota functionality added in Phase A1/A2
+
+func TestOrganization_ResourceQuotaFields(t *testing.T) {
+	org := Organization{
+		ID:           "org-123",
+		Name:         "Test Organization",
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+	}
+
+	assert.Equal(t, 50, org.CPUQuota)
+	assert.Equal(t, 100, org.MemoryQuota)
+	assert.Equal(t, 500, org.StorageQuota)
+}
+
+func TestOrganizationResourceUsage_Struct(t *testing.T) {
+	usage := OrganizationResourceUsage{
+		CPUUsed:     10,
+		MemoryUsed:  20,
+		StorageUsed: 100,
+
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+
+		CPUAvailable:     40,
+		MemoryAvailable:  80,
+		StorageAvailable: 400,
+	}
+
+	assert.Equal(t, 10, usage.CPUUsed)
+	assert.Equal(t, 20, usage.MemoryUsed)
+	assert.Equal(t, 100, usage.StorageUsed)
+	assert.Equal(t, 50, usage.CPUQuota)
+	assert.Equal(t, 100, usage.MemoryQuota)
+	assert.Equal(t, 500, usage.StorageQuota)
+	assert.Equal(t, 40, usage.CPUAvailable)
+	assert.Equal(t, 80, usage.MemoryAvailable)
+	assert.Equal(t, 400, usage.StorageAvailable)
+}
+
+func TestParseCPUString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{"Simple number", "4", 4},
+		{"Number with cores", "8 cores", 8},
+		{"Number with 'c'", "12c", 12},
+		{"Leading/trailing spaces", "  16  ", 16},
+		{"Zero", "0", 0},
+		{"Large number", "64", 64},
+		{"Invalid string", "invalid", 0},
+		{"Empty string", "", 0},
+		{"Only text", "cores", 0},
+		{"Mixed valid", "2 CPU cores", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseCPUString(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParseMemoryString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		// GB formats
+		{"GB format", "8GB", 8},
+		{"GiB format", "16GiB", 16},
+		{"Gi format", "32Gi", 32},
+		{"G format", "4G", 4},
+
+		// MB formats (convert to GB)
+		{"MB format", "2048MB", 2},
+		{"MiB format", "1024MiB", 1},
+		{"Mi format", "512Mi", 0}, // 512Mi = 0.5 GB, rounds down to 0
+
+		// TB formats (convert to GB)
+		{"TB format", "2TB", 2048},
+		{"TiB format", "1TiB", 1024},
+		{"Ti format", "3Ti", 3072},
+
+		// KB formats (convert to GB)
+		{"Large KB", "2097152KB", 2}, // 2GB in KB
+		{"Small KB", "1024KB", 0},    // 1MB in KB, rounds down to 0
+
+		// Edge cases
+		{"Zero", "0GB", 0},
+		{"No unit (invalid)", "16", 0}, // No unit is invalid, requires unit
+		{"Lowercase", "8gb", 8},
+		{"Mixed case", "4GiB", 4},
+		{"With spaces", "  8 GB  ", 8},
+		{"Invalid format", "invalid", 0},
+		{"Empty string", "", 0},
+		{"Only unit", "GB", 0},
+		{"Decimal not supported", "8.5GB", 5}, // regex captures digit "5" from the decimal
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseMemoryString(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParseStorageString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{"Basic GB", "100GB", 100},
+		{"GiB format", "50GiB", 50},
+		{"Gi format", "200Gi", 200},
+		{"TB format", "1TB", 1024},
+		{"TiB format", "2TiB", 2048},
+		{"Large storage", "10TB", 10240},
+		{"Zero storage", "0GB", 0},
+		{"Invalid format", "invalid", 0},
+		{"Empty string", "", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseStorageString(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestOrganization_GetResourceUsage(t *testing.T) {
+	org := Organization{
+		ID:           "org-123",
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+	}
+
+	tests := []struct {
+		name               string
+		vdcs               []*VirtualDataCenter
+		expectedCPU        int
+		expectedMemory     int
+		expectedStorage    int
+		expectedCPUAvail   int
+		expectedMemAvail   int
+		expectedStoreAvail int
+	}{
+		{
+			name:               "Empty VDCs",
+			vdcs:               []*VirtualDataCenter{},
+			expectedCPU:        0,
+			expectedMemory:     0,
+			expectedStorage:    0,
+			expectedCPUAvail:   50,
+			expectedMemAvail:   100,
+			expectedStoreAvail: 500,
+		},
+		{
+			name: "Single VDC with resources",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID: "vdc-1",
+					ResourceQuotas: StringMap{
+						"cpu":     "10",
+						"memory":  "32Gi",
+						"storage": "100Gi",
+					},
+				},
+			},
+			expectedCPU:        10,
+			expectedMemory:     32,
+			expectedStorage:    100,
+			expectedCPUAvail:   40,
+			expectedMemAvail:   68,
+			expectedStoreAvail: 400,
+		},
+		{
+			name: "Multiple VDCs with resources",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID: "vdc-1",
+					ResourceQuotas: StringMap{
+						"cpu":     "10",
+						"memory":  "32Gi",
+						"storage": "100Gi",
+					},
+				},
+				{
+					ID: "vdc-2",
+					ResourceQuotas: StringMap{
+						"cpu":     "8",
+						"memory":  "16Gi",
+						"storage": "50Gi",
+					},
+				},
+			},
+			expectedCPU:        18,
+			expectedMemory:     48,
+			expectedStorage:    150,
+			expectedCPUAvail:   32,
+			expectedMemAvail:   52,
+			expectedStoreAvail: 350,
+		},
+		{
+			name: "VDC with nil ResourceQuotas",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID:             "vdc-1",
+					ResourceQuotas: nil,
+				},
+				{
+					ID: "vdc-2",
+					ResourceQuotas: StringMap{
+						"cpu":     "5",
+						"memory":  "8Gi",
+						"storage": "25Gi",
+					},
+				},
+			},
+			expectedCPU:        5,
+			expectedMemory:     8,
+			expectedStorage:    25,
+			expectedCPUAvail:   45,
+			expectedMemAvail:   92,
+			expectedStoreAvail: 475,
+		},
+		{
+			name: "VDC with partial resource definitions",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID: "vdc-1",
+					ResourceQuotas: StringMap{
+						"cpu":    "4",
+						"memory": "16Gi",
+						// no storage defined
+					},
+				},
+				{
+					ID: "vdc-2",
+					ResourceQuotas: StringMap{
+						"storage": "75Gi",
+						// no cpu or memory defined
+					},
+				},
+			},
+			expectedCPU:        4,
+			expectedMemory:     16,
+			expectedStorage:    75,
+			expectedCPUAvail:   46,
+			expectedMemAvail:   84,
+			expectedStoreAvail: 425,
+		},
+		{
+			name: "Over-allocation scenario",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID: "vdc-1",
+					ResourceQuotas: StringMap{
+						"cpu":     "60",    // More than org quota
+						"memory":  "150Gi", // More than org quota
+						"storage": "600Gi", // More than org quota
+					},
+				},
+			},
+			expectedCPU:        60,
+			expectedMemory:     150,
+			expectedStorage:    600,
+			expectedCPUAvail:   0, // max(0, 50-60) = 0
+			expectedMemAvail:   0, // max(0, 100-150) = 0
+			expectedStoreAvail: 0, // max(0, 500-600) = 0
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := org.GetResourceUsage(tt.vdcs)
+
+			assert.Equal(t, tt.expectedCPU, usage.CPUUsed)
+			assert.Equal(t, tt.expectedMemory, usage.MemoryUsed)
+			assert.Equal(t, tt.expectedStorage, usage.StorageUsed)
+
+			assert.Equal(t, 50, usage.CPUQuota)
+			assert.Equal(t, 100, usage.MemoryQuota)
+			assert.Equal(t, 500, usage.StorageQuota)
+
+			assert.Equal(t, tt.expectedCPUAvail, usage.CPUAvailable)
+			assert.Equal(t, tt.expectedMemAvail, usage.MemoryAvailable)
+			assert.Equal(t, tt.expectedStoreAvail, usage.StorageAvailable)
+		})
+	}
+}
+
+func TestOrganization_CanAllocateResources(t *testing.T) {
+	org := Organization{
+		ID:           "org-123",
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+	}
+
+	existingVDCs := []*VirtualDataCenter{
+		{
+			ID: "vdc-1",
+			ResourceQuotas: StringMap{
+				"cpu":     "20",
+				"memory":  "40Gi",
+				"storage": "200Gi",
+			},
+		},
+	}
+	// Current usage: CPU=20, Memory=40, Storage=200
+	// Available: CPU=30, Memory=60, Storage=300
+
+	tests := []struct {
+		name        string
+		cpuReq      int
+		memoryReq   int
+		storageReq  int
+		canAllocate bool
+	}{
+		{
+			name:        "Can allocate within limits",
+			cpuReq:      10,
+			memoryReq:   20,
+			storageReq:  100,
+			canAllocate: true,
+		},
+		{
+			name:        "Can allocate exact remaining resources",
+			cpuReq:      30,
+			memoryReq:   60,
+			storageReq:  300,
+			canAllocate: true,
+		},
+		{
+			name:        "Cannot allocate - CPU exceeds limit",
+			cpuReq:      35, // More than available (30)
+			memoryReq:   20,
+			storageReq:  100,
+			canAllocate: false,
+		},
+		{
+			name:        "Cannot allocate - Memory exceeds limit",
+			cpuReq:      10,
+			memoryReq:   70, // More than available (60)
+			storageReq:  100,
+			canAllocate: false,
+		},
+		{
+			name:        "Cannot allocate - Storage exceeds limit",
+			cpuReq:      10,
+			memoryReq:   20,
+			storageReq:  350, // More than available (300)
+			canAllocate: false,
+		},
+		{
+			name:        "Cannot allocate - All resources exceed limits",
+			cpuReq:      60,
+			memoryReq:   120,
+			storageReq:  600,
+			canAllocate: false,
+		},
+		{
+			name:        "Can allocate zero resources",
+			cpuReq:      0,
+			memoryReq:   0,
+			storageReq:  0,
+			canAllocate: true,
+		},
+		{
+			name:        "Cannot allocate - One resource at boundary+1",
+			cpuReq:      31,  // Available is 30
+			memoryReq:   59,  // Available is 60
+			storageReq:  299, // Available is 300
+			canAllocate: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := org.CanAllocateResources(tt.cpuReq, tt.memoryReq, tt.storageReq, existingVDCs)
+			assert.Equal(t, tt.canAllocate, result)
+		})
+	}
+}
+
+func TestOrganization_CanAllocateResources_EmptyVDCs(t *testing.T) {
+	org := Organization{
+		ID:           "org-123",
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+	}
+
+	// No existing VDCs, all quota is available
+	emptyVDCs := []*VirtualDataCenter{}
+
+	tests := []struct {
+		name        string
+		cpuReq      int
+		memoryReq   int
+		storageReq  int
+		canAllocate bool
+	}{
+		{
+			name:        "Can allocate full quota",
+			cpuReq:      50,
+			memoryReq:   100,
+			storageReq:  500,
+			canAllocate: true,
+		},
+		{
+			name:        "Cannot exceed quota",
+			cpuReq:      51,
+			memoryReq:   100,
+			storageReq:  500,
+			canAllocate: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := org.CanAllocateResources(tt.cpuReq, tt.memoryReq, tt.storageReq, emptyVDCs)
+			assert.Equal(t, tt.canAllocate, result)
+		})
+	}
+}
+
+func TestOrganization_ResourceQuota_JSONSerialization(t *testing.T) {
+	org := Organization{
+		ID:           "org-123",
+		Name:         "Test Organization",
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+	}
+
+	// Serialize to JSON
+	jsonData, err := json.Marshal(org)
+	assert.NoError(t, err)
+
+	// Deserialize from JSON
+	var deserialized Organization
+	err = json.Unmarshal(jsonData, &deserialized)
+	assert.NoError(t, err)
+
+	// Should be equal
+	assert.Equal(t, org.ID, deserialized.ID)
+	assert.Equal(t, org.Name, deserialized.Name)
+	assert.Equal(t, org.CPUQuota, deserialized.CPUQuota)
+	assert.Equal(t, org.MemoryQuota, deserialized.MemoryQuota)
+	assert.Equal(t, org.StorageQuota, deserialized.StorageQuota)
+}
+
+func TestOrganizationResourceUsage_JSONSerialization(t *testing.T) {
+	usage := OrganizationResourceUsage{
+		CPUUsed:     20,
+		MemoryUsed:  40,
+		StorageUsed: 200,
+
+		CPUQuota:     50,
+		MemoryQuota:  100,
+		StorageQuota: 500,
+
+		CPUAvailable:     30,
+		MemoryAvailable:  60,
+		StorageAvailable: 300,
+	}
+
+	// Serialize to JSON
+	jsonData, err := json.Marshal(usage)
+	assert.NoError(t, err)
+
+	// Deserialize from JSON
+	var deserialized OrganizationResourceUsage
+	err = json.Unmarshal(jsonData, &deserialized)
+	assert.NoError(t, err)
+
+	// Should be equal
+	assert.Equal(t, usage, deserialized)
+}

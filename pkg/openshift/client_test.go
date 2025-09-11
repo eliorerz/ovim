@@ -36,7 +36,7 @@ func TestConvertTemplate(t *testing.T) {
 	assert.Equal(t, "openshift", result.Namespace)
 	assert.Equal(t, "Red Hat Enterprise Linux 9 Server Template", result.Description)
 	assert.Equal(t, "Rhel9", result.OSType) // From OS label
-	assert.Equal(t, "", result.OSVersion) // No specific version annotation
+	assert.Equal(t, "", result.OSVersion)   // No specific version annotation
 	assert.Equal(t, 1, result.CPU)
 	assert.Equal(t, "2Gi", result.Memory)
 	assert.Equal(t, "20Gi", result.DiskSize)
@@ -92,10 +92,10 @@ func TestConvertTemplate_ProperAnnotations(t *testing.T) {
 			Name:      "rhel9-highperformance-medium",
 			Namespace: "openshift",
 			Annotations: map[string]string{
-				"openshift.io/display-name":        "Red Hat Enterprise Linux 9 High Performance VM",
-				"openshift.io/description":         "RHEL 9 optimized for high performance workloads",
-				"os.template.kubevirt.io/name":     "Red Hat Enterprise Linux",
-				"os.template.kubevirt.io/version":  "9.2",
+				"openshift.io/display-name":       "Red Hat Enterprise Linux 9 High Performance VM",
+				"openshift.io/description":        "RHEL 9 optimized for high performance workloads",
+				"os.template.kubevirt.io/name":    "Red Hat Enterprise Linux",
+				"os.template.kubevirt.io/version": "9.2",
 			},
 			Labels: map[string]string{
 				"flavor.template.kubevirt.io/medium": "true",
@@ -110,7 +110,7 @@ func TestConvertTemplate_ProperAnnotations(t *testing.T) {
 	assert.Equal(t, "openshift", result.Namespace)
 	assert.Equal(t, "RHEL 9 optimized for high performance workloads", result.Description)
 	assert.Equal(t, "Red Hat Enterprise Linux", result.OSType) // From OS annotation
-	assert.Equal(t, "9.2", result.OSVersion) // From OS version annotation
+	assert.Equal(t, "9.2", result.OSVersion)                   // From OS version annotation
 	assert.Equal(t, 1, result.CPU)
 	assert.Equal(t, "4Gi", result.Memory)
 }
@@ -370,10 +370,10 @@ func TestConvertTemplate_EmptyTemplate(t *testing.T) {
 	assert.Equal(t, "Minimal Template VM", result.Name) // Cleaned up template name (dashes become spaces)
 	assert.Equal(t, "minimal-ns", result.Namespace)
 	assert.Equal(t, "Virtual Machine template", result.Description) // Now provides default description
-	assert.Equal(t, "Linux", result.OSType) // Now defaults to Linux
-	assert.Equal(t, 1, result.CPU)           // Default values
-	assert.Equal(t, "2Gi", result.Memory)    // Default values
-	assert.Equal(t, "20Gi", result.DiskSize) // Default values
+	assert.Equal(t, "Linux", result.OSType)                         // Now defaults to Linux
+	assert.Equal(t, 1, result.CPU)                                  // Default values
+	assert.Equal(t, "2Gi", result.Memory)                           // Default values
+	assert.Equal(t, "20Gi", result.DiskSize)                        // Default values
 }
 
 func TestConvertTemplate_PartialLabels(t *testing.T) {
@@ -420,8 +420,8 @@ func TestConvertTemplate_InvalidLabels(t *testing.T) {
 	result := client.convertTemplate(osTemplate)
 
 	assert.Equal(t, "Linux", result.OSType) // Now defaults to Linux
-	assert.Equal(t, 1, result.CPU)            // Should use defaults
-	assert.Equal(t, "2Gi", result.Memory)     // Should use defaults
+	assert.Equal(t, 1, result.CPU)          // Should use defaults
+	assert.Equal(t, "2Gi", result.Memory)   // Should use defaults
 }
 
 // Comprehensive unit tests for template display name extraction
@@ -552,9 +552,9 @@ func TestExtractDisplayName(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "some-template",
 					Annotations: map[string]string{
-						"openshift.io/display-name":               "Primary Display Name",
-						"name.os.template.kubevirt.io":            "Secondary Name",
-						"template.openshift.io/long-description":  "Tertiary Description",
+						"openshift.io/display-name":              "Primary Display Name",
+						"name.os.template.kubevirt.io":           "Secondary Name",
+						"template.openshift.io/long-description": "Tertiary Description",
 					},
 				},
 			},

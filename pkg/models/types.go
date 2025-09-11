@@ -4,6 +4,9 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -75,13 +78,81 @@ type User struct {
 
 // Organization represents a tenant organization
 type Organization struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Namespace   string    `json:"namespace" gorm:"uniqueIndex"`
-	IsEnabled   bool      `json:"is_enabled" gorm:"default:true"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id" gorm:"primaryKey"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Namespace   string `json:"namespace" gorm:"uniqueIndex"`
+	IsEnabled   bool   `json:"is_enabled" gorm:"default:true"`
+
+	// Resource Quotas - organization-level resource limits
+	CPUQuota     int `json:"cpu_quota" gorm:"default:0"`     // Total CPU cores allocated to organization
+	MemoryQuota  int `json:"memory_quota" gorm:"default:0"`  // Total memory in GB allocated to organization
+	StorageQuota int `json:"storage_quota" gorm:"default:0"` // Total storage in GB allocated to organization
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// OrganizationResourceUsage represents current resource usage for an organization
+type OrganizationResourceUsage struct {
+	CPUUsed     int `json:"cpu_used"`
+	MemoryUsed  int `json:"memory_used"`
+	StorageUsed int `json:"storage_used"`
+
+	CPUQuota     int `json:"cpu_quota"`
+	MemoryQuota  int `json:"memory_quota"`
+	StorageQuota int `json:"storage_quota"`
+
+	CPUAvailable     int `json:"cpu_available"`
+	MemoryAvailable  int `json:"memory_available"`
+	StorageAvailable int `json:"storage_available"`
+}
+
+// GetResourceUsage calculates current resource usage for the organization
+func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter) OrganizationResourceUsage {
+	var cpuUsed, memoryUsed, storageUsed int
+
+	for _, vdc := range vdcs {
+		if vdc.ResourceQuotas != nil {
+			if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
+				// Parse CPU string (e.g., "4" or "4 cores")
+				cpuParsed := ParseCPUString(cpuStr)
+				cpuUsed += cpuParsed
+			}
+			if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
+				// Parse memory string (e.g., "8Gi", "8GB")
+				memParsed := ParseMemoryString(memStr)
+				memoryUsed += memParsed
+			}
+			if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
+				// Parse storage string (e.g., "100Gi", "100GB")
+				storParsed := ParseStorageString(storStr)
+				storageUsed += storParsed
+			}
+		}
+	}
+
+	return OrganizationResourceUsage{
+		CPUUsed:     cpuUsed,
+		MemoryUsed:  memoryUsed,
+		StorageUsed: storageUsed,
+
+		CPUQuota:     o.CPUQuota,
+		MemoryQuota:  o.MemoryQuota,
+		StorageQuota: o.StorageQuota,
+
+		CPUAvailable:     max(0, o.CPUQuota-cpuUsed),
+		MemoryAvailable:  max(0, o.MemoryQuota-memoryUsed),
+		StorageAvailable: max(0, o.StorageQuota-storageUsed),
+	}
+}
+
+// CanAllocateResources checks if the organization can allocate the requested resources
+func (o *Organization) CanAllocateResources(cpuReq, memoryReq, storageReq int, vdcs []*VirtualDataCenter) bool {
+	usage := o.GetResourceUsage(vdcs)
+	return usage.CPUAvailable >= cpuReq &&
+		usage.MemoryAvailable >= memoryReq &&
+		usage.StorageAvailable >= storageReq
 }
 
 // VirtualDataCenter represents a virtual data center within an organization
@@ -193,4 +264,53 @@ type CreateVMRequest struct {
 // UpdateVMPowerRequest represents a request to change VM power state
 type UpdateVMPowerRequest struct {
 	Action string `json:"action" binding:"required"` // "start", "stop", "restart"
+}
+
+// Resource parsing helper functions
+
+// ParseCPUString parses CPU strings like "4", "4 cores", "4c"
+func ParseCPUString(cpuStr string) int {
+	re := regexp.MustCompile(`(\d+)`)
+	matches := re.FindStringSubmatch(cpuStr)
+	if len(matches) > 1 {
+		if val, err := strconv.Atoi(matches[1]); err == nil {
+			return val
+		}
+	}
+	return 0
+}
+
+// ParseMemoryString parses memory strings like "8Gi", "8GB", "8000Mi" and returns GB
+func ParseMemoryString(memStr string) int {
+	memStr = strings.ToUpper(strings.TrimSpace(memStr))
+	re := regexp.MustCompile(`(\d+)\s*(GI?B?|MI?B?|KI?B?|TI?B?)`)
+	matches := re.FindStringSubmatch(memStr)
+	if len(matches) < 2 {
+		return 0
+	}
+
+	val, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0
+	}
+
+	unit := matches[2]
+	switch {
+	case strings.HasPrefix(unit, "T"): // TB, TiB
+		return val * 1024 // Convert TB to GB
+	case strings.HasPrefix(unit, "G"): // GB, GiB, Gi
+		return val
+	case strings.HasPrefix(unit, "M"): // MB, MiB, Mi
+		return val / 1024 // Convert MB to GB
+	case strings.HasPrefix(unit, "K"): // KB, KiB, Ki
+		return val / (1024 * 1024) // Convert KB to GB
+	default:
+		return val // Assume GB if no unit
+	}
+}
+
+// ParseStorageString parses storage strings like "100Gi", "100GB" and returns GB
+func ParseStorageString(storStr string) int {
+	// Storage parsing is same as memory parsing
+	return ParseMemoryString(storStr)
 }

@@ -167,11 +167,11 @@ func (c *Client) cleanupTemplateName(name string) string {
 	if name == "" {
 		return "VM"
 	}
-	
+
 	// Simple cleanup: replace dashes with spaces and title case each word
 	cleaned := strings.ReplaceAll(name, "-", " ")
 	words := strings.Fields(cleaned)
-	
+
 	for i, word := range words {
 		// Capitalize each word but preserve common acronyms/versions
 		lowerWord := strings.ToLower(word)
@@ -189,14 +189,14 @@ func (c *Client) cleanupTemplateName(name string) string {
 			words[i] = strings.Title(word)
 		}
 	}
-	
+
 	result := strings.Join(words, " ")
-	
+
 	// Ensure it ends with "VM" if it doesn't already contain it
 	if !strings.Contains(strings.ToLower(result), "vm") {
 		result += " VM"
 	}
-	
+
 	return result
 }
 
@@ -205,7 +205,7 @@ func (c *Client) extractDescription(tmpl *templatev1.Template) string {
 	// Try various description annotation keys in order of preference
 	descKeys := []string{
 		"openshift.io/description",
-		"description", 
+		"description",
 		"template.openshift.io/long-description",
 		"openshift.io/display-name",
 	}

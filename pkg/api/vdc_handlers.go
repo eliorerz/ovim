@@ -162,6 +162,49 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		}
 	}
 
+	// Parse requested resources for validation
+	var cpuReq, memoryReq, storageReq int
+	if cpuStr, ok := resourceQuotas["cpu"]; ok {
+		cpuReq = models.ParseCPUString(cpuStr)
+	}
+	if memStr, ok := resourceQuotas["memory"]; ok {
+		memoryReq = models.ParseMemoryString(memStr)
+	}
+	if storStr, ok := resourceQuotas["storage"]; ok {
+		storageReq = models.ParseStorageString(storStr)
+	}
+
+	// Check if organization can allocate these resources
+	existingVDCs, err := h.storage.ListVDCs(req.OrgID)
+	if err != nil {
+		klog.Errorf("Failed to list existing VDCs for organization %s: %v", req.OrgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate resource allocation"})
+		return
+	}
+
+	if !org.CanAllocateResources(cpuReq, memoryReq, storageReq, existingVDCs) {
+		usage := org.GetResourceUsage(existingVDCs)
+		klog.Warningf("VDC creation denied for organization %s: insufficient resources. Requested: CPU=%d, Memory=%d, Storage=%d. Available: CPU=%d, Memory=%d, Storage=%d",
+			org.Name, cpuReq, memoryReq, storageReq, usage.CPUAvailable, usage.MemoryAvailable, usage.StorageAvailable)
+
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Insufficient resources available in organization",
+			"details": gin.H{
+				"requested": gin.H{
+					"cpu":     cpuReq,
+					"memory":  memoryReq,
+					"storage": storageReq,
+				},
+				"available": gin.H{
+					"cpu":     usage.CPUAvailable,
+					"memory":  usage.MemoryAvailable,
+					"storage": usage.StorageAvailable,
+				},
+			},
+		})
+		return
+	}
+
 	// Create VDC
 	vdc := &models.VirtualDataCenter{
 		ID:             vdcID,
