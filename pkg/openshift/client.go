@@ -137,6 +137,9 @@ func (c *Client) convertTemplate(tmpl *templatev1.Template) Template {
 	// Determine flavor (CPU/Memory) from labels
 	template.CPU, template.Memory = c.extractResourceInfo(tmpl)
 
+	// Extract image URL from annotations
+	template.ImageURL = c.extractImageURL(tmpl)
+
 	return template
 }
 
@@ -256,6 +259,47 @@ func (c *Client) extractOSInfo(tmpl *templatev1.Template) (string, string) {
 	}
 
 	return "Linux", ""
+}
+
+// extractImageURL extracts image URL from template annotations
+func (c *Client) extractImageURL(tmpl *templatev1.Template) string {
+
+	// Check for icon class annotation (commonly used for FontAwesome icons)
+	if iconClass := tmpl.Annotations["iconClass"]; iconClass != "" {
+		// Convert FontAwesome icons to image URLs or return the class for CSS
+		return iconClass
+	}
+
+	// Check for template images annotation
+	if images := tmpl.Annotations["template.kubevirt.io/images"]; images != "" {
+		// This might contain JSON with image references
+		return images
+	}
+
+	// Check for container disk images
+	if containerDisks := tmpl.Annotations["template.kubevirt.io/containerdisks"]; containerDisks != "" {
+		return containerDisks
+	}
+
+	// Look for tag-based image information
+	if tags := tmpl.Annotations["tags"]; tags != "" {
+		// Tags might contain OS information we can use to infer icons
+		lowerTags := strings.ToLower(tags)
+		if strings.Contains(lowerTags, "rhel") || strings.Contains(lowerTags, "red hat") {
+			return "redhat-icon"
+		} else if strings.Contains(lowerTags, "ubuntu") {
+			return "ubuntu-icon"
+		} else if strings.Contains(lowerTags, "centos") {
+			return "centos-icon"
+		} else if strings.Contains(lowerTags, "fedora") {
+			return "fedora-icon"
+		} else if strings.Contains(lowerTags, "windows") {
+			return "windows-icon"
+		}
+	}
+
+	// Fallback to OS-based icons using the OSType
+	return ""
 }
 
 // extractResourceInfo determines CPU and memory from template flavor labels

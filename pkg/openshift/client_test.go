@@ -720,6 +720,110 @@ func TestExtractOSInfo(t *testing.T) {
 	}
 }
 
+// Unit tests for image URL extraction
+func TestExtractImageURL(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name        string
+		template    *templatev1.Template
+		expected    string
+		description string
+	}{
+		{
+			name: "FontAwesome icon class",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"iconClass": "fa-linux",
+					},
+				},
+			},
+			expected:    "fa-linux",
+			description: "Should return FontAwesome icon class",
+		},
+		{
+			name: "Template images annotation",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"template.kubevirt.io/images": "registry.redhat.io/rhel9/rhel:latest",
+					},
+				},
+			},
+			expected:    "registry.redhat.io/rhel9/rhel:latest",
+			description: "Should return template images annotation",
+		},
+		{
+			name: "Container disk images",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"template.kubevirt.io/containerdisks": "quay.io/kubevirt/fedora-cloud-container-disk-demo",
+					},
+				},
+			},
+			expected:    "quay.io/kubevirt/fedora-cloud-container-disk-demo",
+			description: "Should return container disk images",
+		},
+		{
+			name: "Tags with RHEL",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"tags": "rhel,enterprise,server",
+					},
+				},
+			},
+			expected:    "redhat-icon",
+			description: "Should return redhat-icon for RHEL tags",
+		},
+		{
+			name: "Tags with Ubuntu",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"tags": "ubuntu,desktop,linux",
+					},
+				},
+			},
+			expected:    "ubuntu-icon",
+			description: "Should return ubuntu-icon for Ubuntu tags",
+		},
+		{
+			name: "Tags with Windows",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"tags": "windows,server,microsoft",
+					},
+				},
+			},
+			expected:    "windows-icon",
+			description: "Should return windows-icon for Windows tags",
+		},
+		{
+			name: "No image information",
+			template: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"description": "Just a description",
+					},
+				},
+			},
+			expected:    "",
+			description: "Should return empty string when no image info available",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := client.extractImageURL(tt.template)
+			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
+}
+
 // Unit tests for template name cleanup
 func TestCleanupTemplateName(t *testing.T) {
 	client := &Client{}
