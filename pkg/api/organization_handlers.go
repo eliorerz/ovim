@@ -95,20 +95,26 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	orgID := util.SanitizeKubernetesName(req.Name)
 	namespace := orgID
 
-	// Set resource quotas - use provided values or defaults
-	cpuQuota := 10      // Default: 10 CPU cores
-	memoryQuota := 20   // Default: 20 GiB RAM
-	storageQuota := 100 // Default: 100 GiB storage
+	// Resource quotas are now required - no defaults
+	if req.CPUQuota == nil || *req.CPUQuota <= 0 {
+		klog.V(4).Infof("Invalid CPU quota in create organization request: %v", req.CPUQuota)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "CPU quota is required and must be greater than 0"})
+		return
+	}
+	if req.MemoryQuota == nil || *req.MemoryQuota <= 0 {
+		klog.V(4).Infof("Invalid memory quota in create organization request: %v", req.MemoryQuota)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Memory quota is required and must be greater than 0"})
+		return
+	}
+	if req.StorageQuota == nil || *req.StorageQuota <= 0 {
+		klog.V(4).Infof("Invalid storage quota in create organization request: %v", req.StorageQuota)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Storage quota is required and must be greater than 0"})
+		return
+	}
 
-	if req.CPUQuota != nil && *req.CPUQuota > 0 {
-		cpuQuota = *req.CPUQuota
-	}
-	if req.MemoryQuota != nil && *req.MemoryQuota > 0 {
-		memoryQuota = *req.MemoryQuota
-	}
-	if req.StorageQuota != nil && *req.StorageQuota > 0 {
-		storageQuota = *req.StorageQuota
-	}
+	cpuQuota := *req.CPUQuota
+	memoryQuota := *req.MemoryQuota
+	storageQuota := *req.StorageQuota
 
 	// Create organization
 	org := &models.Organization{

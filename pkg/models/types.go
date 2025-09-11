@@ -230,10 +230,10 @@ type CreateOrganizationRequest struct {
 	Description string `json:"description"`
 	IsEnabled   bool   `json:"is_enabled"`
 
-	// Resource Quotas (optional - will use defaults if not specified)
-	CPUQuota     *int `json:"cpu_quota,omitempty"`     // CPU cores allocated to organization
-	MemoryQuota  *int `json:"memory_quota,omitempty"`  // Memory in GB allocated to organization
-	StorageQuota *int `json:"storage_quota,omitempty"` // Storage in GB allocated to organization
+	// Resource Quotas (required)
+	CPUQuota     *int `json:"cpu_quota" binding:"required"`     // CPU cores allocated to organization
+	MemoryQuota  *int `json:"memory_quota" binding:"required"`  // Memory in GB allocated to organization
+	StorageQuota *int `json:"storage_quota" binding:"required"` // Storage in GB allocated to organization
 }
 
 // UpdateOrganizationRequest represents a request to update an organization
