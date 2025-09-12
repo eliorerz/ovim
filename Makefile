@@ -4,7 +4,9 @@
 # Project configuration
 PROJECT_NAME := ovim-backend
 BINARY_NAME := ovim_server
+CONTROLLER_BINARY_NAME := ovim_controller
 MAIN_PATH := ./cmd/ovim-server
+CONTROLLER_MAIN_PATH := ./cmd/controller
 MODULE_NAME := github.com/eliorerz/ovim-updated
 
 # Container configuration
@@ -45,10 +47,12 @@ CRD_DIR := config/crd
 CRD_DOCS_DIR := docs/crds
 KUBECTL_CMD ?= kubectl
 
-.PHONY: help clean build test test-unit test-integration lint fmt deps run dev dev-with-db server-stop
+.PHONY: help clean build build-controller test test-unit test-integration lint fmt deps run dev dev-with-db server-stop
+.PHONY: controller-run controller-stop controller-build controller-dev
 .PHONY: container-build container-clean
 .PHONY: db-start db-stop db-migrate db-migrate-rollback db-migrate-validate
 .PHONY: crd-install crd-uninstall crd-validate crd-status crd-docs crd-examples crd-test
+.PHONY: generate manifests
 .PHONY: version
 
 help:
@@ -58,6 +62,7 @@ help:
 	@echo ""
 	@echo "Development targets:"
 	@echo "  build              Build the backend binary"
+	@echo "  build-controller   Build the controller binary"
 	@echo "  test               Run all tests"
 	@echo "  test-unit          Run unit tests only"
 	@echo "  test-integration   Run integration tests with coverage"
@@ -65,6 +70,16 @@ help:
 	@echo "  fmt                Format code and run go vet"
 	@echo "  run                Build and run server"
 	@echo "  dev                Run in development mode with hot reload"
+	@echo ""
+	@echo "Controller targets:"
+	@echo "  controller-build   Build the controller binary"
+	@echo "  controller-run     Run the controller"
+	@echo "  controller-stop    Stop running controllers"
+	@echo "  controller-dev     Run controller in development mode"
+	@echo ""
+	@echo "Code generation targets:"
+	@echo "  generate           Generate code (deepcopy, CRDs, etc.)"
+	@echo "  manifests          Generate Kubernetes manifests"
 	@echo ""
 	@echo "Database targets:"
 	@echo "  db-start           Start PostgreSQL database"
@@ -93,11 +108,13 @@ help:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(BINARY_NAME)
+	@rm -f $(BINARY_NAME) $(CONTROLLER_BINARY_NAME)
 	@go clean -cache -testcache -modcache
 	@echo "Stopping and removing containers..."
 	@-podman stop $(BACKEND_CONTAINER_NAME) 2>/dev/null || true
 	@-podman rm $(BACKEND_CONTAINER_NAME) 2>/dev/null || true
+	$(MAKE) controller-stop
+	$(MAKE) server-stop
 
 deps:
 	@echo "Downloading dependencies..."
@@ -153,6 +170,43 @@ build: deps fmt
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		$(GO_BUILD_FLAGS) $(LDFLAGS) \
 		-o $(BINARY_NAME) $(MAIN_PATH)
+
+build-controller: deps fmt
+	@echo "Building $(CONTROLLER_BINARY_NAME)..."
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
+		$(GO_BUILD_FLAGS) $(LDFLAGS) \
+		-o $(CONTROLLER_BINARY_NAME) $(CONTROLLER_MAIN_PATH)
+
+controller-build: build-controller
+
+controller-run: controller-stop controller-build
+	@echo "Starting OVIM controller..."
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" \
+	 OVIM_ENVIRONMENT=development \
+	 OVIM_LOG_LEVEL=info \
+	 ./$(CONTROLLER_BINARY_NAME) \
+		--metrics-bind-address=:8080 \
+		--health-probe-bind-address=:8081 \
+		--database-url="$(DATABASE_URL)" \
+		--leader-elect=false
+
+controller-dev: controller-stop
+	@echo "Starting controller in development mode..."
+	@OVIM_DATABASE_URL="$(DATABASE_URL)" \
+	 OVIM_ENVIRONMENT=development \
+	 OVIM_LOG_LEVEL=debug \
+	 go run $(CONTROLLER_MAIN_PATH) \
+		--metrics-bind-address=:8080 \
+		--health-probe-bind-address=:8081 \
+		--database-url="$(DATABASE_URL)" \
+		--leader-elect=false
+
+controller-stop:
+	@echo "Stopping any running OVIM controller processes..."
+	@-pkill -f "ovim_controller" 2>/dev/null || true
+	@-pkill -f "ovim-controller" 2>/dev/null || true
+	@-pkill -f "go run.*controller" 2>/dev/null || true
+	@echo "Controller processes stopped"
 
 run: server-stop build
 	@echo "Starting OVIM backend server with HTTPS..."
@@ -303,6 +357,27 @@ crd-test: fmt
 	@echo "Running CRD-specific tests..."
 	@go test $(GO_TEST_FLAGS) -run "TestCRD|TestMigration|TestConditions|TestJSONB" ./pkg/models/...
 	@echo "CRD tests completed"
+
+# Code generation targets
+generate: 
+	@echo "Generating code..."
+	@if command -v controller-gen >/dev/null 2>&1; then \
+		controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./pkg/api/v1/..."; \
+	else \
+		echo "controller-gen not found, skipping generation"; \
+		echo "Install with: go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest"; \
+	fi
+
+manifests:
+	@echo "Generating Kubernetes manifests..."
+	@mkdir -p $(CRD_DIR)
+	@if command -v controller-gen >/dev/null 2>&1; then \
+		controller-gen crd:generateEmbeddedObjectMeta=true rbac:roleName=ovim-controller \
+			webhook paths="./..." output:crd:artifacts:config=$(CRD_DIR); \
+	else \
+		echo "controller-gen not found, cannot generate manifests"; \
+		echo "Install with: go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest"; \
+	fi
 
 # Default target
 all: test build
