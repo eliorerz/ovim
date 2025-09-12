@@ -225,10 +225,9 @@ func (r *VirtualDataCenterReconciler) ensureResourceQuota(ctx context.Context, v
 		},
 	}
 
-	// Set owner reference
-	if err := controllerutil.SetControllerReference(vdc, quota, r.Scheme); err != nil {
-		return err
-	}
+	// Note: Cannot set cross-namespace owner references, using labels for tracking
+	quota.Labels["ovim.io/vdc-id"] = vdc.Name
+	quota.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
 
 	// Try to create, if exists, update
 	if err := r.Create(ctx, quota); err != nil {
@@ -284,10 +283,9 @@ func (r *VirtualDataCenterReconciler) ensureLimitRange(ctx context.Context, vdc 
 		},
 	}
 
-	// Set owner reference
-	if err := controllerutil.SetControllerReference(vdc, limitRange, r.Scheme); err != nil {
-		return err
-	}
+	// Note: Cannot set cross-namespace owner references, using labels for tracking
+	limitRange.Labels["ovim.io/vdc-id"] = vdc.Name
+	limitRange.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
 
 	// Try to create, if exists, update
 	if err := r.Create(ctx, limitRange); err != nil {
@@ -356,10 +354,9 @@ func (r *VirtualDataCenterReconciler) setupVDCRBAC(ctx context.Context, vdc *ovi
 			},
 		}
 
-		// Set owner reference
-		if err := controllerutil.SetControllerReference(vdc, roleBinding, r.Scheme); err != nil {
-			return err
-		}
+		// Note: Cannot set cross-namespace owner references, using labels for tracking
+		roleBinding.Labels["ovim.io/vdc-id"] = vdc.Name
+		roleBinding.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
 
 		if err := r.Create(ctx, roleBinding); err != nil && !errors.IsAlreadyExists(err) {
 			return err

@@ -691,7 +691,7 @@ func TestParseStorageString(t *testing.T) {
 }
 
 func TestOrganization_GetResourceUsage(t *testing.T) {
-	_ = Organization{
+	org := Organization{
 		ID:   "org-123",
 		Name: "Test Organization",
 	}
@@ -773,20 +773,18 @@ func TestOrganization_GetResourceUsage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Legacy functionality removed in CRD architecture
-			// usage := org.GetResourceUsage(tt.vdcs, []*VirtualMachine{})
+			// Test the implemented CRD architecture GetResourceUsage method
+			usage := org.GetResourceUsage(tt.vdcs, []*VirtualMachine{})
 
-			// Skip this test for now as it tests legacy functionality
-			t.Skip("Legacy GetResourceUsage functionality not supported in CRD architecture")
-
-			// Commented out legacy assertions
-			// assert.Equal(t, tt.expectedCPU, usage.CPUQuota)
-			// assert.Equal(t, tt.expectedMemory, usage.MemoryQuota)
-			// assert.Equal(t, tt.expectedStorage, usage.StorageQuota)
-			// assert.Equal(t, tt.expectedVDCCount, usage.VDCCount)
-			// assert.Equal(t, 0, usage.CPUUsed)
-			// assert.Equal(t, 0, usage.MemoryUsed)
-			// assert.Equal(t, 0, usage.StorageUsed)
+			// Verify resource quotas are aggregated from VDCs
+			assert.Equal(t, tt.expectedCPU, usage.CPUQuota)
+			assert.Equal(t, tt.expectedMemory, usage.MemoryQuota)
+			assert.Equal(t, tt.expectedStorage, usage.StorageQuota)
+			assert.Equal(t, tt.expectedVDCCount, usage.VDCCount)
+			// Usage should be 0 since no VMs are provided
+			assert.Equal(t, 0, usage.CPUUsed)
+			assert.Equal(t, 0, usage.MemoryUsed)
+			assert.Equal(t, 0, usage.StorageUsed)
 		})
 	}
 }

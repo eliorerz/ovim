@@ -336,36 +336,16 @@ func (h *OrganizationHandlers) GetResourceUsage(c *gin.Context) {
 		return
 	}
 
-	// Get VMs for this organization (temporarily disabled for CRD compatibility)
-	// vms, err := h.storage.ListVMs(id)
-	// if err != nil {
-	//	klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
-	//	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
-	//	return
-	// }
-	vms := []*models.VirtualMachine{} // Empty for now
-	_ = vms                           // Mark as used
-
-	// TODO: Resource usage calculation needs to be reimplemented for CRD architecture
-	// usage := org.GetResourceUsage(vdcs, vms)
-	// For now, return basic quota information
-	usage := struct {
-		CPUQuota     int `json:"cpu_quota"`
-		MemoryQuota  int `json:"memory_quota"`
-		StorageQuota int `json:"storage_quota"`
-		CPUUsed      int `json:"cpu_used"`
-		MemoryUsed   int `json:"memory_used"`
-		StorageUsed  int `json:"storage_used"`
-		VDCCount     int `json:"vdc_count"`
-	}{
-		CPUQuota:     0,
-		MemoryQuota:  0,
-		StorageQuota: 0,
-		CPUUsed:      0,
-		MemoryUsed:   0,
-		StorageUsed:  0,
-		VDCCount:     len(vdcs),
+	// Get VMs for this organization
+	vms, err := h.storage.ListVMs(id)
+	if err != nil {
+		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+		return
 	}
+
+	// Calculate actual resource usage
+	usage := org.GetResourceUsage(vdcs, vms)
 
 	klog.V(6).Infof("Retrieved resource usage for organization %s (CPU: %d/%d, Memory: %d/%d, Storage: %d/%d)",
 		org.Name, usage.CPUUsed, usage.CPUQuota, usage.MemoryUsed, usage.MemoryQuota, usage.StorageUsed, usage.StorageQuota)
@@ -438,39 +418,19 @@ func (h *OrganizationHandlers) ValidateResourceAllocation(c *gin.Context) {
 		return
 	}
 
+	// Get VMs for this organization
+	vms, err := h.storage.ListVMs(id)
+	if err != nil {
+		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+		return
+	}
+
+	// Calculate actual resource usage
+	usage := org.GetResourceUsage(vdcs, vms)
+
 	// Check if allocation is possible
 	canAllocate := org.CanAllocateResources(req.CPURequest, req.MemoryRequest, req.StorageRequest, vdcs)
-
-	// Get VMs for this organization (temporarily disabled for CRD compatibility)
-	// vms, err := h.storage.ListVMs(id)
-	// if err != nil {
-	//	klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
-	//	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
-	//	return
-	// }
-	vms := []*models.VirtualMachine{} // Empty for now
-	_ = vms                           // Mark as used
-
-	// TODO: Resource usage calculation needs to be reimplemented for CRD architecture
-	// usage := org.GetResourceUsage(vdcs, vms)
-	// For now, return basic quota information
-	usage := struct {
-		CPUQuota     int `json:"cpu_quota"`
-		MemoryQuota  int `json:"memory_quota"`
-		StorageQuota int `json:"storage_quota"`
-		CPUUsed      int `json:"cpu_used"`
-		MemoryUsed   int `json:"memory_used"`
-		StorageUsed  int `json:"storage_used"`
-		VDCCount     int `json:"vdc_count"`
-	}{
-		CPUQuota:     0,
-		MemoryQuota:  0,
-		StorageQuota: 0,
-		CPUUsed:      0,
-		MemoryUsed:   0,
-		StorageUsed:  0,
-		VDCCount:     len(vdcs),
-	}
 
 	response := gin.H{
 		"can_allocate": canAllocate,

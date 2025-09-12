@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
@@ -167,10 +166,9 @@ func (r *RBACReconciler) syncVDCRBAC(ctx context.Context, org *ovimv1.Organizati
 			},
 		}
 
-		// Set owner reference to the VDC
-		if err := controllerutil.SetControllerReference(vdc, roleBinding, r.Scheme); err != nil {
-			return err
-		}
+		// Note: Cannot set cross-namespace owner references, using labels for tracking
+		roleBinding.Labels["ovim.io/vdc-id"] = vdc.Name
+		roleBinding.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
 
 		if errors.IsNotFound(err) {
 			// Create new binding

@@ -143,6 +143,36 @@ func (vdc *VirtualDataCenter) GetResourceUsage(vms []*VirtualMachine) VDCResourc
 	}
 }
 
+// GetResourceUsage calculates current resource usage across all VDCs in the organization
+func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter, vms []*VirtualMachine) OrganizationResourceUsage {
+	var totalCPUUsed, totalMemoryUsed, totalStorageUsed int
+	var totalCPUQuota, totalMemoryQuota, totalStorageQuota int
+
+	// Aggregate usage and quotas from all VDCs
+	for _, vdc := range vdcs {
+		// Add up the quotas
+		totalCPUQuota += vdc.CPUQuota
+		totalMemoryQuota += vdc.MemoryQuota
+		totalStorageQuota += vdc.StorageQuota
+
+		// Calculate usage for this VDC
+		vdcUsage := vdc.GetResourceUsage(vms)
+		totalCPUUsed += vdcUsage.CPUUsed
+		totalMemoryUsed += vdcUsage.MemoryUsed
+		totalStorageUsed += vdcUsage.StorageUsed
+	}
+
+	return OrganizationResourceUsage{
+		CPUUsed:      totalCPUUsed,
+		MemoryUsed:   totalMemoryUsed,
+		StorageUsed:  totalStorageUsed,
+		CPUQuota:     totalCPUQuota,
+		MemoryQuota:  totalMemoryQuota,
+		StorageQuota: totalStorageQuota,
+		VDCCount:     len(vdcs),
+	}
+}
+
 // CanAllocateResources checks if the organization can allocate the requested resources
 // Since organizations no longer have quotas, this always returns true
 // Resource allocation is now handled at the VDC level
