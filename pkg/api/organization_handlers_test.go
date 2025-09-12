@@ -341,7 +341,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Organization creation as identity container",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Identity Container Corp",
+				DisplayName: "Identity Container Corp",
 				Description: "Organization as identity container only",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -367,7 +369,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Organization creation with partial custom quotas",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Partial Quota Corp",
+				DisplayName: "Partial Quota Corp",
 				Description: "Organization with some custom quotas",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -392,7 +396,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Organization creation as identity container (no quota validation)",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Identity Corp",
+				DisplayName: "Identity Corp",
 				Description: "Organization as identity container (no quotas needed)",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -414,7 +420,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Another identity container organization",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Second Identity Corp",
+				DisplayName: "Second Identity Corp",
 				Description: "Another organization as identity container",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -436,7 +444,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Successful organization and namespace creation",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Acme Corporation",
+				DisplayName: "Acme Corporation",
 				Description: "Test organization",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -458,7 +468,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Organization creation with existing namespace",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Existing Corp",
+				DisplayName: "Existing Corp",
 				Description: "Organization with existing namespace",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -480,7 +492,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Namespace creation fails with rollback",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Failed Corp",
+				DisplayName: "Failed Corp",
 				Description: "Organization that fails namespace creation",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -503,7 +517,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Organization creation without OpenShift client",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "No Client Corp",
+				DisplayName: "No Client Corp",
 				Description: "Organization created without OpenShift client",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -521,7 +537,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Database creation fails",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "DB Fail Corp",
+				DisplayName: "DB Fail Corp",
 				Description: "Organization that fails database creation",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -541,7 +559,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Resource quota creation fails (non-fatal)",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "Quota Fail Corp",
+				DisplayName: "Quota Fail Corp",
 				Description: "Organization where quota creation fails",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -563,7 +583,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			name: "Invalid request body",
 			requestBody: models.CreateOrganizationRequest{
 				Name:        "", // Empty name
+				DisplayName: "", // Empty display name
 				Description: "Invalid organization",
+				Admins:      []string{"admin"},
 				IsEnabled:   true,
 			},
 			userID:   "user-123",
@@ -861,7 +883,9 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 
 	requestBody := models.CreateOrganizationRequest{
 		Name:        "Test Labels",
+		DisplayName: "Test Labels",
 		Description: "Test organization for labels",
+		Admins:      []string{"admin"},
 		IsEnabled:   true,
 	}
 
@@ -930,8 +954,8 @@ func TestOrganizationHandlers_Delete_WithCascadeResources(t *testing.T) {
 				ms.On("DeleteVM", "vm-2").Return(nil)
 
 				ms.On("ListVDCs", "test-org-cascade").Return([]*models.VirtualDataCenter{
-					{ID: "vdc-1", Name: "Test VDC 1", OrgID: "test-org-cascade", Namespace: "vdc-1-namespace"},
-					{ID: "vdc-2", Name: "Test VDC 2", OrgID: "test-org-cascade", Namespace: "vdc-2-namespace"},
+					{ID: "vdc-1", Name: "Test VDC 1", OrgID: "test-org-cascade", WorkloadNamespace: "vdc-1-namespace"},
+					{ID: "vdc-2", Name: "Test VDC 2", OrgID: "test-org-cascade", WorkloadNamespace: "vdc-2-namespace"},
 				}, nil)
 				ms.On("DeleteVDC", "vdc-1").Return(nil)
 				ms.On("DeleteVDC", "vdc-2").Return(nil)
@@ -1240,7 +1264,7 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 				}
 				ms.On("GetOrganization", "test-org").Return(org, nil)
 				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, nil) // No existing VDCs
-				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)     // No existing VMs
+				// ListVMs call is temporarily disabled for CRD compatibility
 			},
 			expectedStatus:     http.StatusOK,
 			expectedAllocation: boolPtr(true),
@@ -1267,7 +1291,7 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 				}
 				ms.On("GetOrganization", "test-org").Return(org, nil)
 				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, nil) // No existing VDCs
-				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)     // No existing VMs
+				// ListVMs call is temporarily disabled for CRD compatibility
 			},
 			expectedStatus:     http.StatusOK,
 			expectedAllocation: boolPtr(true),
@@ -1312,7 +1336,7 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 				}
 				ms.On("GetOrganization", "other-org").Return(org, nil)
 				ms.On("ListVDCs", "other-org").Return([]*models.VirtualDataCenter{}, nil)
-				ms.On("ListVMs", "other-org").Return([]*models.VirtualMachine{}, nil)
+				// ListVMs call is temporarily disabled for CRD compatibility
 			},
 			expectedStatus:     http.StatusOK,
 			expectedAllocation: boolPtr(true),

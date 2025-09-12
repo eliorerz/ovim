@@ -184,7 +184,7 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		ID:         vmID,
 		Name:       req.Name,
 		OrgID:      userOrgID,
-		VDCID:      vdc.ID,
+		VDCID:      &vdc.ID,
 		TemplateID: req.TemplateID,
 		OwnerID:    userID,
 		Status:     models.VMStatusPending,
@@ -337,9 +337,14 @@ func (h *VMHandlers) GetStatus(c *gin.Context) {
 	}
 
 	// Get VDC to determine namespace
-	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if vm.VDCID == nil {
+		klog.Errorf("VM %s has no VDC ID", vm.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "VM has no VDC association"})
+		return
+	}
+	vdc, err := h.storage.GetVDC(*vm.VDCID)
 	if err != nil {
-		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", *vm.VDCID, vm.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
 		return
 	}
@@ -348,7 +353,7 @@ func (h *VMHandlers) GetStatus(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	status, err := h.provisioner.GetVMStatus(ctx, vm.ID, vdc.Namespace)
+	status, err := h.provisioner.GetVMStatus(ctx, vm.ID, vdc.WorkloadNamespace)
 	if err != nil {
 		klog.Errorf("Failed to get VM %s status from KubeVirt: %v", vm.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VM status from cluster"})
@@ -442,9 +447,14 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 	}
 
 	// Get VDC to determine namespace
-	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if vm.VDCID == nil {
+		klog.Errorf("VM %s has no VDC ID", vm.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "VM has no VDC association"})
+		return
+	}
+	vdc, err := h.storage.GetVDC(*vm.VDCID)
 	if err != nil {
-		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", *vm.VDCID, vm.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
 		return
 	}
@@ -461,7 +471,7 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 			return
 		}
 		// Allow starting VMs in pending or stopped state
-		if err := h.provisioner.StartVM(ctx, vm.ID, vdc.Namespace); err != nil {
+		if err := h.provisioner.StartVM(ctx, vm.ID, vdc.WorkloadNamespace); err != nil {
 			klog.Errorf("Failed to start VM %s in KubeVirt: %v", vm.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start VM in cluster"})
 			return
@@ -473,7 +483,7 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "VM is already stopped"})
 			return
 		}
-		if err := h.provisioner.StopVM(ctx, vm.ID, vdc.Namespace); err != nil {
+		if err := h.provisioner.StopVM(ctx, vm.ID, vdc.WorkloadNamespace); err != nil {
 			klog.Errorf("Failed to stop VM %s in KubeVirt: %v", vm.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stop VM in cluster"})
 			return
@@ -486,7 +496,7 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "VM must be running to restart"})
 			return
 		}
-		if err := h.provisioner.RestartVM(ctx, vm.ID, vdc.Namespace); err != nil {
+		if err := h.provisioner.RestartVM(ctx, vm.ID, vdc.WorkloadNamespace); err != nil {
 			klog.Errorf("Failed to restart VM %s in KubeVirt: %v", vm.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to restart VM in cluster"})
 			return
@@ -559,9 +569,14 @@ func (h *VMHandlers) Delete(c *gin.Context) {
 	}
 
 	// Get VDC to determine namespace
-	vdc, err := h.storage.GetVDC(vm.VDCID)
+	if vm.VDCID == nil {
+		klog.Errorf("VM %s has no VDC ID", vm.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "VM has no VDC association"})
+		return
+	}
+	vdc, err := h.storage.GetVDC(*vm.VDCID)
 	if err != nil {
-		klog.Errorf("Failed to get VDC %s for VM %s: %v", vm.VDCID, vm.ID, err)
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", *vm.VDCID, vm.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
 		return
 	}
@@ -577,7 +592,7 @@ func (h *VMHandlers) Delete(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := h.provisioner.DeleteVM(ctx, vm.ID, vdc.Namespace); err != nil {
+	if err := h.provisioner.DeleteVM(ctx, vm.ID, vdc.WorkloadNamespace); err != nil {
 		klog.Errorf("Failed to delete VM %s from KubeVirt: %v", vm.ID, err)
 		// Update status back to error instead of continuing
 		vm.Status = models.VMStatusError
@@ -636,9 +651,9 @@ func (h *VMHandlers) validateVMLimitRange(vdc *models.VirtualDataCenter, cpu int
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	limitRange, err := h.openshiftClient.GetLimitRange(ctx, vdc.Namespace)
+	limitRange, err := h.openshiftClient.GetLimitRange(ctx, vdc.WorkloadNamespace)
 	if err != nil {
-		klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", vdc.ID, vdc.Namespace, err)
+		klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", vdc.ID, vdc.WorkloadNamespace, err)
 		// Don't fail VM creation if we can't get LimitRange info - might not exist
 		klog.V(4).Infof("LimitRange check failed for VDC %s, allowing VM creation to proceed", vdc.ID)
 		return nil

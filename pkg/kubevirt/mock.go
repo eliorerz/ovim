@@ -38,23 +38,23 @@ func (m *MockClient) CreateVM(ctx context.Context, vm *models.VirtualMachine, vd
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	klog.V(4).Infof("Mock: Creating VM %s in namespace %s", vm.ID, vdc.Namespace)
+	klog.V(4).Infof("Mock: Creating VM %s in namespace %s", vm.ID, vdc.WorkloadNamespace)
 
-	key := fmt.Sprintf("%s/%s", vdc.Namespace, vm.ID)
+	key := fmt.Sprintf("%s/%s", vdc.WorkloadNamespace, vm.ID)
 	if _, exists := m.vms[key]; exists {
-		return fmt.Errorf("VM %s already exists in namespace %s", vm.ID, vdc.Namespace)
+		return fmt.Errorf("VM %s already exists in namespace %s", vm.ID, vdc.WorkloadNamespace)
 	}
 
 	m.vms[key] = &mockVM{
 		ID:        vm.ID,
-		Namespace: vdc.Namespace,
+		Namespace: vdc.WorkloadNamespace,
 		Status:    "Stopped",
 		IP:        "",
 		CreatedAt: time.Now(),
 		Running:   false,
 	}
 
-	klog.Infof("Mock: Successfully created VM %s in namespace %s", vm.ID, vdc.Namespace)
+	klog.Infof("Mock: Successfully created VM %s in namespace %s", vm.ID, vdc.WorkloadNamespace)
 	return nil
 }
 

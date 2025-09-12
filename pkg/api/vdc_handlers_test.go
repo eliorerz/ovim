@@ -37,10 +37,10 @@ func TestVDCHandlers_GetLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -67,10 +67,10 @@ func TestVDCHandlers_GetLimitRange(t *testing.T) {
 			userOrgID: "org-123",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Same as user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Same as user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -97,10 +97,10 @@ func TestVDCHandlers_GetLimitRange(t *testing.T) {
 			userOrgID: "org-456", // Different from VDC's org
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Different from user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Different from user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -135,10 +135,10 @@ func TestVDCHandlers_GetLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -156,10 +156,10 @@ func TestVDCHandlers_GetLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -256,10 +256,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -295,10 +295,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -333,10 +333,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Same as user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Same as user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -392,10 +392,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -420,10 +420,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -448,10 +448,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -474,10 +474,10 @@ func TestVDCHandlers_UpdateLimitRange(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -569,10 +569,10 @@ func TestVDCHandlers_DeleteLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -591,10 +591,10 @@ func TestVDCHandlers_DeleteLimitRange(t *testing.T) {
 			userOrgID: "org-123",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Same as user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Same as user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -613,10 +613,10 @@ func TestVDCHandlers_DeleteLimitRange(t *testing.T) {
 			userOrgID: "org-456", // Different from VDC's org
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Different from user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Different from user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -667,10 +667,10 @@ func TestVDCHandlers_DeleteLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -687,10 +687,10 @@ func TestVDCHandlers_DeleteLimitRange(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -775,18 +775,17 @@ func TestVDCHandlers_CreateWithLimitRange(t *testing.T) {
 		{
 			name: "VDC creation with LimitRange parameters",
 			requestBody: models.CreateVDCRequest{
-				Name:        "Test VDC with LimitRange",
-				Description: "VDC with VM resource constraints",
-				OrgID:       "org-123",
-				ResourceQuotas: map[string]string{
-					"cpu":     "10",
-					"memory":  "32Gi",
-					"storage": "100Gi",
-				},
-				MinCPU:    intPtr(1),
-				MaxCPU:    intPtr(8),
-				MinMemory: intPtr(1),
-				MaxMemory: intPtr(16),
+				Name:         "Test VDC with LimitRange",
+				DisplayName:  "Test VDC with LimitRange",
+				Description:  "VDC with VM resource constraints",
+				OrgID:        "org-123",
+				CPUQuota:     10,
+				MemoryQuota:  32,
+				StorageQuota: 100,
+				MinCPU:       intPtr(1),
+				MaxCPU:       intPtr(8),
+				MinMemory:    intPtr(1),
+				MaxMemory:    intPtr(16),
 			},
 			userID:    "admin-123",
 			username:  "admin",
@@ -814,14 +813,13 @@ func TestVDCHandlers_CreateWithLimitRange(t *testing.T) {
 		{
 			name: "VDC creation without LimitRange parameters",
 			requestBody: models.CreateVDCRequest{
-				Name:        "Test VDC without LimitRange",
-				Description: "VDC without VM resource constraints",
-				OrgID:       "org-123",
-				ResourceQuotas: map[string]string{
-					"cpu":     "10",
-					"memory":  "32Gi",
-					"storage": "100Gi",
-				},
+				Name:         "Test VDC without LimitRange",
+				DisplayName:  "Test VDC without LimitRange",
+				Description:  "VDC without VM resource constraints",
+				OrgID:        "org-123",
+				CPUQuota:     10,
+				MemoryQuota:  32,
+				StorageQuota: 100,
 				// No LimitRange parameters
 			},
 			userID:    "admin-123",
@@ -850,16 +848,15 @@ func TestVDCHandlers_CreateWithLimitRange(t *testing.T) {
 		{
 			name: "VDC creation with partial LimitRange parameters",
 			requestBody: models.CreateVDCRequest{
-				Name:        "Test VDC with partial LimitRange",
-				Description: "VDC with incomplete VM resource constraints",
-				OrgID:       "org-123",
-				ResourceQuotas: map[string]string{
-					"cpu":     "10",
-					"memory":  "32Gi",
-					"storage": "100Gi",
-				},
-				MinCPU: intPtr(1),
-				MaxCPU: intPtr(8),
+				Name:         "Test VDC with partial LimitRange",
+				DisplayName:  "Test VDC with partial LimitRange",
+				Description:  "VDC with incomplete VM resource constraints",
+				OrgID:        "org-123",
+				CPUQuota:     10,
+				MemoryQuota:  32,
+				StorageQuota: 100,
+				MinCPU:       intPtr(1),
+				MaxCPU:       intPtr(8),
 				// Missing MinMemory and MaxMemory
 			},
 			userID:    "admin-123",
@@ -888,18 +885,17 @@ func TestVDCHandlers_CreateWithLimitRange(t *testing.T) {
 		{
 			name: "VDC creation with invalid LimitRange parameters",
 			requestBody: models.CreateVDCRequest{
-				Name:        "Test VDC with invalid LimitRange",
-				Description: "VDC with invalid VM resource constraints",
-				OrgID:       "org-123",
-				ResourceQuotas: map[string]string{
-					"cpu":     "10",
-					"memory":  "32Gi",
-					"storage": "100Gi",
-				},
-				MinCPU:    intPtr(8), // Min greater than max
-				MaxCPU:    intPtr(4),
-				MinMemory: intPtr(1),
-				MaxMemory: intPtr(16),
+				Name:         "Test VDC with invalid LimitRange",
+				DisplayName:  "Test VDC with invalid LimitRange",
+				Description:  "VDC with invalid VM resource constraints",
+				OrgID:        "org-123",
+				CPUQuota:     10,
+				MemoryQuota:  32,
+				StorageQuota: 100,
+				MinCPU:       intPtr(8), // Min greater than max
+				MaxCPU:       intPtr(4),
+				MinMemory:    intPtr(1),
+				MaxMemory:    intPtr(16),
 			},
 			userID:    "admin-123",
 			username:  "admin",
@@ -927,18 +923,17 @@ func TestVDCHandlers_CreateWithLimitRange(t *testing.T) {
 		{
 			name: "VDC creation with LimitRange creation failure",
 			requestBody: models.CreateVDCRequest{
-				Name:        "Test VDC with LimitRange failure",
-				Description: "VDC where LimitRange creation fails",
-				OrgID:       "org-123",
-				ResourceQuotas: map[string]string{
-					"cpu":     "10",
-					"memory":  "32Gi",
-					"storage": "100Gi",
-				},
-				MinCPU:    intPtr(1),
-				MaxCPU:    intPtr(8),
-				MinMemory: intPtr(1),
-				MaxMemory: intPtr(16),
+				Name:         "Test VDC with LimitRange failure",
+				DisplayName:  "Test VDC with LimitRange failure",
+				Description:  "VDC where LimitRange creation fails",
+				OrgID:        "org-123",
+				CPUQuota:     10,
+				MemoryQuota:  32,
+				StorageQuota: 100,
+				MinCPU:       intPtr(1),
+				MaxCPU:       intPtr(8),
+				MinMemory:    intPtr(1),
+				MaxMemory:    intPtr(16),
 			},
 			userID:    "admin-123",
 			username:  "admin",
@@ -1045,10 +1040,10 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 			existingVMs: []*models.VirtualMachine{},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{}, nil)
@@ -1072,23 +1067,23 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "Test VM 1",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusRunning,
 				},
 				{
 					ID:     "vm-2",
 					Name:   "Test VM 2",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusStopped,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1096,14 +1091,14 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "Test VM 1",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusRunning,
 					},
 					{
 						ID:     "vm-2",
 						Name:   "Test VM 2",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusStopped,
 					},
 				}, nil)
@@ -1127,16 +1122,16 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "VM in different VDC",
 					OrgID:  "org-123",
-					VDCID:  "vdc-456", // Different VDC
+					VDCID:  stringPtr("vdc-456"), // Different VDC
 					Status: models.VMStatusRunning,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1144,7 +1139,7 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "VM in different VDC",
 						OrgID:  "org-123",
-						VDCID:  "vdc-456", // Different VDC
+						VDCID:  stringPtr("vdc-456"), // Different VDC
 						Status: models.VMStatusRunning,
 					},
 				}, nil)
@@ -1166,10 +1161,10 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 			existingVMs: []*models.VirtualMachine{},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{}, nil)
@@ -1188,10 +1183,10 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return(nil, errors.New("storage error"))
@@ -1212,10 +1207,10 @@ func TestVDCHandlers_Delete_WithProtection(t *testing.T) {
 			existingVMs: []*models.VirtualMachine{},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{}, nil)
@@ -1331,23 +1326,23 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "Test VM 1",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusRunning,
 				},
 				{
 					ID:     "vm-2",
 					Name:   "Test VM 2",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusStopped,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1355,14 +1350,14 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "Test VM 1",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusRunning,
 					},
 					{
 						ID:     "vm-2",
 						Name:   "Test VM 2",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusStopped,
 					},
 				}, nil)
@@ -1390,16 +1385,16 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "Test VM 1",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusRunning,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1407,7 +1402,7 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "Test VM 1",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusRunning,
 					},
 				}, nil)
@@ -1433,23 +1428,23 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "Test VM 1",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusRunning,
 				},
 				{
 					ID:     "vm-2",
 					Name:   "Test VM 2",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusStopped,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1457,14 +1452,14 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "Test VM 1",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusRunning,
 					},
 					{
 						ID:     "vm-2",
 						Name:   "Test VM 2",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusStopped,
 					},
 				}, nil)
@@ -1490,10 +1485,10 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 			existingVMs: []*models.VirtualMachine{},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{}, nil)
@@ -1519,16 +1514,16 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 					ID:     "vm-1",
 					Name:   "Org VM",
 					OrgID:  "org-123",
-					VDCID:  "vdc-123",
+					VDCID:  stringPtr("vdc-123"),
 					Status: models.VMStatusRunning,
 				},
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Same as user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Same as user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return([]*models.VirtualMachine{
@@ -1536,7 +1531,7 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 						ID:     "vm-1",
 						Name:   "Org VM",
 						OrgID:  "org-123",
-						VDCID:  "vdc-123",
+						VDCID:  stringPtr("vdc-123"),
 						Status: models.VMStatusRunning,
 					},
 				}, nil)
@@ -1561,10 +1556,10 @@ func TestVDCHandlers_Delete_WithCascadeDeletion(t *testing.T) {
 			existingVMs: []*models.VirtualMachine{},
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Different from user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Different from user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				// Should not call other methods due to permission check
@@ -1706,10 +1701,10 @@ func TestVDCHandlers_LimitRangeRequestValidation(t *testing.T) {
 
 			// Setup basic VDC for successful retrieval
 			vdc := &models.VirtualDataCenter{
-				ID:        "vdc-123",
-				Name:      "Test VDC",
-				OrgID:     "org-123",
-				Namespace: "org-test-vdc",
+				ID:                "vdc-123",
+				Name:              "Test VDC",
+				OrgID:             "org-123",
+				WorkloadNamespace: "org-test-vdc",
 			}
 			mockStorage.On("GetVDC", "vdc-123").Return(vdc, nil)
 
@@ -1781,15 +1776,13 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
-					ResourceQuotas: models.StringMap{
-						"cpu":     "20",
-						"memory":  "64Gi",
-						"storage": "500Gi",
-					},
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
+					CPUQuota:          20,
+					MemoryQuota:       64,
+					StorageQuota:      500,
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 
@@ -1797,7 +1790,7 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 					{
 						ID:       "vm-1",
 						Name:     "Test VM 1",
-						VDCID:    "vdc-123",
+						VDCID:    stringPtr("vdc-123"),
 						Status:   "Running",
 						CPU:      4,
 						Memory:   "8Gi",
@@ -1806,7 +1799,7 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 					{
 						ID:       "vm-2",
 						Name:     "Test VM 2",
-						VDCID:    "vdc-123",
+						VDCID:    stringPtr("vdc-123"),
 						Status:   "Stopped",
 						CPU:      2,
 						Memory:   "4Gi",
@@ -1831,15 +1824,13 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			userOrgID: "org-123",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Same as user's org
-					Namespace: "org-test-vdc",
-					ResourceQuotas: models.StringMap{
-						"cpu":     "10",
-						"memory":  "32Gi",
-						"storage": "200Gi",
-					},
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Same as user's org
+					WorkloadNamespace: "org-test-vdc",
+					CPUQuota:          10,
+					MemoryQuota:       32,
+					StorageQuota:      200,
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 
@@ -1847,7 +1838,7 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 					{
 						ID:       "vm-1",
 						Name:     "Test VM 1",
-						VDCID:    "vdc-123",
+						VDCID:    stringPtr("vdc-123"),
 						Status:   "Running",
 						CPU:      2,
 						Memory:   "4Gi",
@@ -1872,10 +1863,10 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			userOrgID: "org-456", // Different from VDC's org
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123", // Different from user's org
-					Namespace: "org-test-vdc",
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123", // Different from user's org
+					WorkloadNamespace: "org-test-vdc",
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 			},
@@ -1917,15 +1908,13 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				vdc := &models.VirtualDataCenter{
-					ID:        "vdc-123",
-					Name:      "Test VDC",
-					OrgID:     "org-123",
-					Namespace: "org-test-vdc",
-					ResourceQuotas: models.StringMap{
-						"cpu":     "20",
-						"memory":  "64Gi",
-						"storage": "500Gi",
-					},
+					ID:                "vdc-123",
+					Name:              "Test VDC",
+					OrgID:             "org-123",
+					WorkloadNamespace: "org-test-vdc",
+					CPUQuota:          20,
+					MemoryQuota:       64,
+					StorageQuota:      500,
 				}
 				ms.On("GetVDC", "vdc-123").Return(vdc, nil)
 				ms.On("ListVMs", "org-123").Return(nil, errors.New("database error"))

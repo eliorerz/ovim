@@ -103,7 +103,7 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	// Create organization
 	org := &models.Organization{
 		ID:          orgID,
-		Name:        req.Name,
+		Name:        req.DisplayName, // Use DisplayName as the human-readable name
 		Description: req.Description,
 		Namespace:   namespace,
 		IsEnabled:   req.IsEnabled,
@@ -208,10 +208,16 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	// Update organization
-	org.Name = req.Name
-	org.Description = req.Description
-	org.IsEnabled = req.IsEnabled
+	// Update organization with CRD-compatible fields
+	if req.DisplayName != nil {
+		org.Name = *req.DisplayName // Map DisplayName to Name for legacy compatibility
+	}
+	if req.Description != nil {
+		org.Description = *req.Description
+	}
+	if req.IsEnabled != nil {
+		org.IsEnabled = *req.IsEnabled
+	}
 	// Note: We don't update the namespace as it could break existing resources
 
 	if err := h.storage.UpdateOrganization(org); err != nil {
@@ -373,16 +379,36 @@ func (h *OrganizationHandlers) GetResourceUsage(c *gin.Context) {
 		return
 	}
 
-	// Get VMs for this organization
-	vms, err := h.storage.ListVMs(id)
-	if err != nil {
-		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
-		return
-	}
+	// Get VMs for this organization (temporarily disabled for CRD compatibility)
+	// vms, err := h.storage.ListVMs(id)
+	// if err != nil {
+	//	klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+	//	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+	//	return
+	// }
+	vms := []*models.VirtualMachine{} // Empty for now
+	_ = vms                           // Mark as used
 
-	// Calculate resource usage
-	usage := org.GetResourceUsage(vdcs, vms)
+	// TODO: Resource usage calculation needs to be reimplemented for CRD architecture
+	// usage := org.GetResourceUsage(vdcs, vms)
+	// For now, return basic quota information
+	usage := struct {
+		CPUQuota     int `json:"cpu_quota"`
+		MemoryQuota  int `json:"memory_quota"`
+		StorageQuota int `json:"storage_quota"`
+		CPUUsed      int `json:"cpu_used"`
+		MemoryUsed   int `json:"memory_used"`
+		StorageUsed  int `json:"storage_used"`
+		VDCCount     int `json:"vdc_count"`
+	}{
+		CPUQuota:     0,
+		MemoryQuota:  0,
+		StorageQuota: 0,
+		CPUUsed:      0,
+		MemoryUsed:   0,
+		StorageUsed:  0,
+		VDCCount:     len(vdcs),
+	}
 
 	klog.V(6).Infof("Retrieved resource usage for organization %s (CPU: %d/%d, Memory: %d/%d, Storage: %d/%d)",
 		org.Name, usage.CPUUsed, usage.CPUQuota, usage.MemoryUsed, usage.MemoryQuota, usage.StorageUsed, usage.StorageQuota)
@@ -458,16 +484,36 @@ func (h *OrganizationHandlers) ValidateResourceAllocation(c *gin.Context) {
 	// Check if allocation is possible
 	canAllocate := org.CanAllocateResources(req.CPURequest, req.MemoryRequest, req.StorageRequest, vdcs)
 
-	// Get VMs for this organization
-	vms, err := h.storage.ListVMs(id)
-	if err != nil {
-		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
-		return
-	}
+	// Get VMs for this organization (temporarily disabled for CRD compatibility)
+	// vms, err := h.storage.ListVMs(id)
+	// if err != nil {
+	//	klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+	//	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+	//	return
+	// }
+	vms := []*models.VirtualMachine{} // Empty for now
+	_ = vms                           // Mark as used
 
-	// Get current usage for detailed response
-	usage := org.GetResourceUsage(vdcs, vms)
+	// TODO: Resource usage calculation needs to be reimplemented for CRD architecture
+	// usage := org.GetResourceUsage(vdcs, vms)
+	// For now, return basic quota information
+	usage := struct {
+		CPUQuota     int `json:"cpu_quota"`
+		MemoryQuota  int `json:"memory_quota"`
+		StorageQuota int `json:"storage_quota"`
+		CPUUsed      int `json:"cpu_used"`
+		MemoryUsed   int `json:"memory_used"`
+		StorageUsed  int `json:"storage_used"`
+		VDCCount     int `json:"vdc_count"`
+	}{
+		CPUQuota:     0,
+		MemoryQuota:  0,
+		StorageQuota: 0,
+		CPUUsed:      0,
+		MemoryUsed:   0,
+		StorageUsed:  0,
+		VDCCount:     len(vdcs),
+	}
 
 	response := gin.H{
 		"can_allocate": canAllocate,
@@ -524,14 +570,14 @@ func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, user
 			defer cancel()
 
 			// Delete VDC namespace (this will delete all resources in it including ResourceQuota and LimitRange)
-			if err := h.openshiftClient.DeleteNamespace(ctx, vdc.Namespace); err != nil {
-				klog.Errorf("Failed to delete VDC namespace %s for VDC %s in organization %s: %v", vdc.Namespace, vdc.ID, orgID, err)
+			if err := h.openshiftClient.DeleteNamespace(ctx, vdc.WorkloadNamespace); err != nil {
+				klog.Errorf("Failed to delete VDC namespace %s for VDC %s in organization %s: %v", vdc.WorkloadNamespace, vdc.ID, orgID, err)
 				// Log error but continue with VDC deletion from database
 			} else {
-				klog.Infof("Deleted VDC namespace %s for VDC %s in organization %s", vdc.Namespace, vdc.ID, orgID)
+				klog.Infof("Deleted VDC namespace %s for VDC %s in organization %s", vdc.WorkloadNamespace, vdc.ID, orgID)
 			}
 		} else {
-			klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.Namespace, vdc.ID)
+			klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.WorkloadNamespace, vdc.ID)
 		}
 
 		// Delete VDC from database

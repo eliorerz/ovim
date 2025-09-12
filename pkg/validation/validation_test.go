@@ -229,14 +229,12 @@ func TestValidateVDC(t *testing.T) {
 		{
 			name: "Valid VDC",
 			vdc: &models.VirtualDataCenter{
-				Name:        "Production VDC",
-				Description: "Production virtual data center",
-				OrgID:       "org-123",
-				ResourceQuotas: models.StringMap{
-					"cpu":     "20",
-					"memory":  "64Gi",
-					"storage": "500Gi",
-				},
+				Name:         "Production VDC",
+				Description:  "Production virtual data center",
+				OrgID:        "org-123",
+				CPUQuota:     20,
+				MemoryQuota:  64,  // 64 GB
+				StorageQuota: 500, // 500 GB
 			},
 			isValid: true,
 			errors:  []string{},
@@ -274,65 +272,57 @@ func TestValidateVDC(t *testing.T) {
 		{
 			name: "Invalid resource quota - CPU",
 			vdc: &models.VirtualDataCenter{
-				Name:        "Production VDC",
-				Description: "Production virtual data center",
-				OrgID:       "org-123",
-				ResourceQuotas: models.StringMap{
-					"cpu":     "invalid",
-					"memory":  "64Gi",
-					"storage": "500Gi",
-				},
+				Name:         "Production VDC",
+				Description:  "Production virtual data center",
+				OrgID:        "org-123",
+				CPUQuota:     -1, // Invalid
+				MemoryQuota:  64,
+				StorageQuota: 500,
 			},
 			isValid: false,
-			errors:  []string{"invalid CPU quota format"},
+			errors:  []string{"CPU quota must be positive"},
 		},
 		{
 			name: "Invalid resource quota - Memory",
 			vdc: &models.VirtualDataCenter{
-				Name:        "Production VDC",
-				Description: "Production virtual data center",
-				OrgID:       "org-123",
-				ResourceQuotas: models.StringMap{
-					"cpu":     "20",
-					"memory":  "invalid",
-					"storage": "500Gi",
-				},
+				Name:         "Production VDC",
+				Description:  "Production virtual data center",
+				OrgID:        "org-123",
+				CPUQuota:     20,
+				MemoryQuota:  -1, // Invalid
+				StorageQuota: 500,
 			},
 			isValid: false,
-			errors:  []string{"invalid memory quota format"},
+			errors:  []string{"Memory quota must be positive"},
 		},
 		{
 			name: "Invalid resource quota - Storage",
 			vdc: &models.VirtualDataCenter{
-				Name:        "Production VDC",
-				Description: "Production virtual data center",
-				OrgID:       "org-123",
-				ResourceQuotas: models.StringMap{
-					"cpu":     "20",
-					"memory":  "64Gi",
-					"storage": "invalid",
-				},
+				Name:         "Production VDC",
+				Description:  "Production virtual data center",
+				OrgID:        "org-123",
+				CPUQuota:     20,
+				MemoryQuota:  64,
+				StorageQuota: -1, // Invalid
 			},
 			isValid: false,
-			errors:  []string{"invalid storage quota format"},
+			errors:  []string{"Storage quota must be positive"},
 		},
 		{
 			name: "Zero resource quotas",
 			vdc: &models.VirtualDataCenter{
-				Name:        "Production VDC",
-				Description: "Production virtual data center",
-				OrgID:       "org-123",
-				ResourceQuotas: models.StringMap{
-					"cpu":     "0",
-					"memory":  "0Gi",
-					"storage": "0Gi",
-				},
+				Name:         "Production VDC",
+				Description:  "Production virtual data center",
+				OrgID:        "org-123",
+				CPUQuota:     0,
+				MemoryQuota:  0,
+				StorageQuota: 0,
 			},
 			isValid: false,
 			errors: []string{
-				"CPU quota must be greater than 0",
-				"memory quota must be greater than 0",
-				"storage quota must be greater than 0",
+				"CPU quota must be positive",
+				"Memory quota must be positive",
+				"Storage quota must be positive",
 			},
 		},
 	}
@@ -788,9 +778,15 @@ func ValidateVDC(vdc *models.VirtualDataCenter) []string {
 		errors = append(errors, "organization ID is required")
 	}
 
-	if vdc.ResourceQuotas != nil {
-		quotaErrors := ValidateResourceQuotas(vdc.ResourceQuotas)
-		errors = append(errors, quotaErrors...)
+	// Validate quota values
+	if vdc.CPUQuota <= 0 {
+		errors = append(errors, "CPU quota must be positive")
+	}
+	if vdc.MemoryQuota <= 0 {
+		errors = append(errors, "Memory quota must be positive")
+	}
+	if vdc.StorageQuota <= 0 {
+		errors = append(errors, "Storage quota must be positive")
 	}
 
 	return errors

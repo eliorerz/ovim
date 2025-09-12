@@ -109,10 +109,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -167,10 +167,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -224,10 +224,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -281,10 +281,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -338,10 +338,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -396,10 +396,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)
@@ -445,10 +445,10 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 
 				vdcs := []*models.VirtualDataCenter{
 					{
-						ID:        "vdc-123",
-						Name:      "Test VDC",
-						OrgID:     "org-123",
-						Namespace: "org-test-vdc",
+						ID:                "vdc-123",
+						Name:              "Test VDC",
+						OrgID:             "org-123",
+						WorkloadNamespace: "org-test-vdc",
 					},
 				}
 				ms.On("ListVDCs", "org-123").Return(vdcs, nil)

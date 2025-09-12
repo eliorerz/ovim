@@ -1,0 +1,252 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: catalogs.ovim.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: crd
+spec:
+  group: ovim.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - organizationRef
+            - displayName
+            - type
+            - source
+            properties:
+              organizationRef:
+                type: string
+                description: "Organization that owns this catalog"
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              displayName:
+                type: string
+                description: "Human-readable catalog name"
+                minLength: 1
+                maxLength: 255
+              description:
+                type: string
+                description: "Catalog description"
+                maxLength: 1000
+              type:
+                type: string
+                description: "Type of content in this catalog"
+                enum: ["vm-template", "application-stack", "mixed"]
+              source:
+                type: object
+                description: "Source configuration for catalog content"
+                required:
+                - type
+                - url
+                properties:
+                  type:
+                    type: string
+                    description: "Source type"
+                    enum: ["git", "oci", "s3", "http", "local"]
+                  url:
+                    type: string
+                    description: "Source URL"
+                    format: uri
+                  branch:
+                    type: string
+                    description: "Git branch (for git sources)"
+                    default: "main"
+                  path:
+                    type: string
+                    description: "Path within source"
+                    default: "/"
+                  credentials:
+                    type: string
+                    description: "Secret name containing authentication credentials"
+                  insecureSkipTLSVerify:
+                    type: boolean
+                    description: "Skip TLS verification for HTTPS sources"
+                    default: false
+                  refreshInterval:
+                    type: string
+                    description: "How often to sync from source"
+                    pattern: '^[0-9]+(h|m|s)$'
+                    default: "1h"
+              filters:
+                type: object
+                description: "Content filtering rules"
+                properties:
+                  includePatterns:
+                    type: array
+                    description: "Glob patterns for files to include"
+                    items:
+                      type: string
+                  excludePatterns:
+                    type: array
+                    description: "Glob patterns for files to exclude"
+                    items:
+                      type: string
+                  tags:
+                    type: array
+                    description: "Required tags for content items"
+                    items:
+                      type: string
+              permissions:
+                type: object
+                description: "Access control for catalog content"
+                properties:
+                  allowedVDCs:
+                    type: array
+                    description: "VDCs allowed to use this catalog (empty = all)"
+                    items:
+                      type: string
+                  allowedGroups:
+                    type: array
+                    description: "User groups allowed to use this catalog"
+                    items:
+                      type: string
+                  readOnly:
+                    type: boolean
+                    description: "Whether catalog is read-only"
+                    default: true
+              isEnabled:
+                type: boolean
+                description: "Whether this catalog is active"
+                default: true
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                description: "Current phase of the catalog"
+                enum: ["Pending", "Syncing", "Ready", "Failed", "Suspended"]
+                default: "Pending"
+              conditions:
+                type: array
+                description: "Conditions represent the latest available observations"
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  properties:
+                    type:
+                      type: string
+                      description: "Type of condition"
+                    status:
+                      type: string
+                      description: "Status of the condition"
+                      enum: ["True", "False", "Unknown"]
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                      description: "Last time the condition transitioned"
+                    reason:
+                      type: string
+                      description: "Reason for the condition's last transition"
+                    message:
+                      type: string
+                      description: "Human readable message indicating details"
+              contentSummary:
+                type: object
+                description: "Summary of catalog content"
+                properties:
+                  totalItems:
+                    type: integer
+                    description: "Total number of catalog items"
+                    minimum: 0
+                    default: 0
+                  vmTemplates:
+                    type: integer
+                    description: "Number of VM templates"
+                    minimum: 0
+                    default: 0
+                  applicationStacks:
+                    type: integer
+                    description: "Number of application stacks"
+                    minimum: 0
+                    default: 0
+                  categories:
+                    type: array
+                    description: "Available content categories"
+                    items:
+                      type: string
+              syncStatus:
+                type: object
+                description: "Source synchronization status"
+                properties:
+                  lastSync:
+                    type: string
+                    format: date-time
+                    description: "Last successful sync from source"
+                  lastSyncAttempt:
+                    type: string
+                    format: date-time
+                    description: "Last sync attempt (successful or failed)"
+                  syncErrors:
+                    type: array
+                    description: "Recent sync errors"
+                    items:
+                      type: object
+                      properties:
+                        timestamp:
+                          type: string
+                          format: date-time
+                        message:
+                          type: string
+                        retryCount:
+                          type: integer
+                  nextSyncScheduled:
+                    type: string
+                    format: date-time
+                    description: "When next sync is scheduled"
+              observedGeneration:
+                type: integer
+                description: "Most recent generation observed by controller"
+                minimum: 0
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Organization
+      type: string
+      description: Parent organization
+      jsonPath: .spec.organizationRef
+    - name: Display Name
+      type: string
+      description: Human readable name
+      jsonPath: .spec.displayName
+    - name: Type
+      type: string
+      description: Catalog content type
+      jsonPath: .spec.type
+    - name: Phase
+      type: string
+      description: Current phase
+      jsonPath: .status.phase
+    - name: Items
+      type: integer
+      description: Total catalog items
+      jsonPath: .status.contentSummary.totalItems
+    - name: Last Sync
+      type: string
+      description: Last successful sync
+      jsonPath: .status.syncStatus.lastSync
+    - name: Source
+      type: string
+      description: Source type
+      jsonPath: .spec.source.type
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced  # Catalog CRs live in Organization namespaces
+  names:
+    plural: catalogs
+    singular: catalog
+    kind: Catalog
+    shortNames: ["cat"]
+    listKind: CatalogList

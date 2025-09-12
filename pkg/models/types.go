@@ -76,17 +76,7 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// Organization represents a tenant organization (identity and catalog container only)
-type Organization struct {
-	ID          string `json:"id" gorm:"primaryKey"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Namespace   string `json:"namespace" gorm:"uniqueIndex"`
-	IsEnabled   bool   `json:"is_enabled" gorm:"default:true"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
+// Legacy types moved to migration_compat.go to avoid duplicates
 
 // OrganizationResourceUsage represents current resource usage across all VDCs in an organization
 type OrganizationResourceUsage struct {
@@ -116,77 +106,20 @@ type VDCResourceUsage struct {
 	VMCount int `json:"vm_count"` // Number of VMs in the VDC
 }
 
-// GetResourceUsage calculates current resource usage across all VDCs in the organization
-func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter, vms []*VirtualMachine) OrganizationResourceUsage {
-	var cpuUsed, memoryUsed, storageUsed int
-	var cpuQuota, memoryQuota, storageQuota int
-
-	// Calculate quota from all VDCs
-	for _, vdc := range vdcs {
-		if vdc.ResourceQuotas != nil {
-			if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
-				// Parse CPU string (e.g., "4" or "4 cores")
-				cpuParsed := ParseCPUString(cpuStr)
-				cpuQuota += cpuParsed
-			}
-			if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
-				// Parse memory string (e.g., "8Gi", "8GB")
-				memParsed := ParseMemoryString(memStr)
-				memoryQuota += memParsed
-			}
-			if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
-				// Parse storage string (e.g., "100Gi", "100GB")
-				storParsed := ParseStorageString(storStr)
-				storageQuota += storParsed
-			}
-		}
-	}
-
-	// Calculate actual usage from all VMs in the organization
-	for _, vm := range vms {
-		// Only count VMs that are deployed (not stopped/failed)
-		if vm.Status == "Running" || vm.Status == "Stopped" || vm.Status == "Paused" {
-			cpuUsed += vm.CPU
-			memoryUsed += ParseMemoryString(vm.Memory)
-			storageUsed += ParseStorageString(vm.DiskSize)
-		}
-	}
-
-	return OrganizationResourceUsage{
-		CPUUsed:     cpuUsed,
-		MemoryUsed:  memoryUsed,
-		StorageUsed: storageUsed,
-
-		CPUQuota:     cpuQuota,
-		MemoryQuota:  memoryQuota,
-		StorageQuota: storageQuota,
-
-		VDCCount: len(vdcs),
-	}
-}
-
 // GetResourceUsage calculates current resource usage for a specific VDC
 func (vdc *VirtualDataCenter) GetResourceUsage(vms []*VirtualMachine) VDCResourceUsage {
 	var cpuUsed, memoryUsed, storageUsed int
 	var cpuQuota, memoryQuota, storageQuota int
 	var vmCount int
 
-	// Get quota from this VDC's resource quotas
-	if vdc.ResourceQuotas != nil {
-		if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
-			cpuQuota = ParseCPUString(cpuStr)
-		}
-		if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
-			memoryQuota = ParseMemoryString(memStr)
-		}
-		if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
-			storageQuota = ParseStorageString(storStr)
-		}
-	}
+	// Get quota from this VDC's CRD fields
+	cpuQuota = vdc.CPUQuota
+	memoryQuota = vdc.MemoryQuota
+	storageQuota = vdc.StorageQuota
 
 	// Calculate actual usage from VMs in this specific VDC
 	for _, vm := range vms {
-		if vm.VDCID == vdc.ID {
+		if vm.VDCID != nil && *vm.VDCID == vdc.ID {
 			// Only count VMs that are deployed (not stopped/failed)
 			if vm.Status == "Running" || vm.Status == "Stopped" || vm.Status == "Paused" {
 				cpuUsed += vm.CPU
@@ -218,50 +151,7 @@ func (o *Organization) CanAllocateResources(cpuReq, memoryReq, storageReq int, v
 	return true
 }
 
-// VirtualDataCenter represents a virtual data center within an organization (resource container)
-type VirtualDataCenter struct {
-	ID             string    `json:"id" gorm:"primaryKey"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	OrgID          string    `json:"org_id"`
-	Namespace      string    `json:"namespace" gorm:"uniqueIndex"` // Unique namespace per VDC
-	ResourceQuotas StringMap `json:"resource_quotas" gorm:"type:jsonb"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-// GetCPUQuota returns the CPU quota for this VDC in cores
-func (vdc *VirtualDataCenter) GetCPUQuota() int {
-	if vdc.ResourceQuotas == nil {
-		return 0
-	}
-	if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
-		return ParseCPUString(cpuStr)
-	}
-	return 0
-}
-
-// GetMemoryQuota returns the memory quota for this VDC in GB
-func (vdc *VirtualDataCenter) GetMemoryQuota() int {
-	if vdc.ResourceQuotas == nil {
-		return 0
-	}
-	if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
-		return ParseMemoryString(memStr)
-	}
-	return 0
-}
-
-// GetStorageQuota returns the storage quota for this VDC in GB
-func (vdc *VirtualDataCenter) GetStorageQuota() int {
-	if vdc.ResourceQuotas == nil {
-		return 0
-	}
-	if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
-		return ParseStorageString(storStr)
-	}
-	return 0
-}
+// Legacy VDC methods moved to migration_compat.go
 
 // Template source types
 const (
@@ -281,17 +171,23 @@ const (
 
 // Template represents a VM template available in the catalog
 type Template struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	OSType       string    `json:"os_type"`
-	OSVersion    string    `json:"os_version"`
-	CPU          int       `json:"cpu"`
-	Memory       string    `json:"memory"`
-	DiskSize     string    `json:"disk_size"`
-	ImageURL     string    `json:"image_url"`
-	IconClass    string    `json:"icon_class"`
-	OrgID        string    `json:"org_id" gorm:"index"`
+	ID          string `json:"id" gorm:"primaryKey"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	OSType      string `json:"os_type"`
+	OSVersion   string `json:"os_version"`
+	CPU         int    `json:"cpu"`
+	Memory      string `json:"memory"`
+	DiskSize    string `json:"disk_size"`
+	ImageURL    string `json:"image_url"`
+	IconClass   string `json:"icon_class"`
+	OrgID       string `json:"org_id" gorm:"index"`
+
+	// CRD catalog integration
+	CatalogID   *string `json:"catalog_id,omitempty" gorm:"index"`         // Reference to new Catalog CRD
+	ContentType string  `json:"content_type" gorm:"default:'vm-template'"` // vm-template, application-stack
+
+	// Legacy fields (for backward compatibility)
 	Source       string    `json:"source" gorm:"default:'global'"`         // global, organization, external
 	SourceVendor string    `json:"source_vendor" gorm:"default:'Red Hat'"` // Red Hat, Organization, Community, etc.
 	Category     string    `json:"category" gorm:"default:'Operating System'"`
@@ -306,11 +202,11 @@ type Template struct {
 type VirtualMachine struct {
 	ID         string    `json:"id" gorm:"primaryKey"`
 	Name       string    `json:"name"`
-	OrgID      string    `json:"org_id"`
-	VDCID      string    `json:"vdc_id"`
-	TemplateID string    `json:"template_id"`
-	OwnerID    string    `json:"owner_id"`
-	Status     string    `json:"status"`
+	OrgID      string    `json:"org_id" gorm:"index"`
+	VDCID      *string   `json:"vdc_id,omitempty" gorm:"index"` // Updated for optional VDC association
+	TemplateID string    `json:"template_id" gorm:"index"`
+	OwnerID    string    `json:"owner_id" gorm:"index"`
+	Status     string    `json:"status" gorm:"index"`
 	CPU        int       `json:"cpu"`
 	Memory     string    `json:"memory"`
 	DiskSize   string    `json:"disk_size"`
@@ -328,40 +224,8 @@ type LimitRangeRequest struct {
 	MaxMemory int `json:"max_memory"` // Maximum memory in GB per VM
 }
 
-// CreateOrganizationRequest represents a request to create an organization (identity container only)
-type CreateOrganizationRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
-	IsEnabled   bool   `json:"is_enabled"`
-}
-
-// UpdateOrganizationRequest represents a request to update an organization
-type UpdateOrganizationRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	IsEnabled   bool   `json:"is_enabled"`
-}
-
-// CreateVDCRequest represents a request to create a virtual data center
-type CreateVDCRequest struct {
-	Name           string            `json:"name" binding:"required"`
-	Description    string            `json:"description"`
-	OrgID          string            `json:"org_id" binding:"required"`
-	ResourceQuotas map[string]string `json:"resource_quotas,omitempty"`
-
-	// Optional LimitRange parameters for VM resource constraints
-	MinCPU    *int `json:"min_cpu,omitempty"`    // Minimum CPU cores per VM
-	MaxCPU    *int `json:"max_cpu,omitempty"`    // Maximum CPU cores per VM
-	MinMemory *int `json:"min_memory,omitempty"` // Minimum memory (GB) per VM
-	MaxMemory *int `json:"max_memory,omitempty"` // Maximum memory (GB) per VM
-}
-
-// UpdateVDCRequest represents a request to update a virtual data center
-type UpdateVDCRequest struct {
-	Name           string            `json:"name,omitempty"`
-	Description    string            `json:"description,omitempty"`
-	ResourceQuotas map[string]string `json:"resource_quotas,omitempty"`
-}
+// Legacy CRD request types moved to crd_types.go to avoid conflicts
+// Only VM-specific requests remain here
 
 // CreateVMRequest represents a request to create a virtual machine
 type CreateVMRequest struct {

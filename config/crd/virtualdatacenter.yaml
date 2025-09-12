@@ -1,0 +1,261 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualdatacenters.ovim.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: crd
+spec:
+  group: ovim.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - organizationRef
+            - displayName
+            - quota
+            properties:
+              organizationRef:
+                type: string
+                description: "Reference to parent Organization"
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              displayName:
+                type: string
+                description: "Human-readable VDC name"
+                minLength: 1
+                maxLength: 255
+              description:
+                type: string
+                description: "VDC description"
+                maxLength: 1000
+              quota:
+                type: object
+                description: "Resource quotas for this VDC"
+                required:
+                - cpu
+                - memory
+                - storage
+                properties:
+                  cpu:
+                    type: string
+                    description: "CPU quota (cores)"
+                    pattern: '^[0-9]+$'
+                  memory:
+                    type: string
+                    description: "Memory quota"
+                    pattern: '^[0-9]+Gi$'
+                  storage:
+                    type: string
+                    description: "Storage quota"
+                    pattern: '^[0-9]+Ti$'
+                  pods:
+                    type: integer
+                    description: "Maximum number of pods"
+                    minimum: 1
+                    default: 100
+                  virtualMachines:
+                    type: integer
+                    description: "Maximum number of virtual machines"
+                    minimum: 0
+                    default: 50
+              limitRange:
+                type: object
+                description: "Per-workload resource limits"
+                properties:
+                  minCpu:
+                    type: integer
+                    description: "Minimum CPU per container/VM (millicores)"
+                    minimum: 100
+                    default: 100
+                  maxCpu:
+                    type: integer
+                    description: "Maximum CPU per container/VM (millicores)"
+                    minimum: 100
+                  minMemory:
+                    type: integer
+                    description: "Minimum memory per container/VM (MiB)"
+                    minimum: 128
+                    default: 128
+                  maxMemory:
+                    type: integer
+                    description: "Maximum memory per container/VM (MiB)"
+                    minimum: 128
+              networkPolicy:
+                type: string
+                description: "Network isolation policy"
+                enum: ["default", "isolated", "custom"]
+                default: "default"
+              customNetworkConfig:
+                type: object
+                description: "Custom network configuration when networkPolicy is 'custom'"
+                properties:
+                  allowedNamespaces:
+                    type: array
+                    items:
+                      type: string
+                  allowedPorts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        port:
+                          type: integer
+                        protocol:
+                          type: string
+                          enum: ["TCP", "UDP"]
+              catalogRestrictions:
+                type: array
+                description: "Restrict which org catalogs this VDC can access"
+                items:
+                  type: string
+          status:
+            type: object
+            properties:
+              namespace:
+                type: string
+                description: "Created VDC workload namespace name"
+              phase:
+                type: string
+                description: "Current phase of the VDC"
+                enum: ["Pending", "Active", "Failed", "Suspended", "Terminating"]
+                default: "Pending"
+              conditions:
+                type: array
+                description: "Conditions represent the latest available observations"
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  properties:
+                    type:
+                      type: string
+                      description: "Type of condition"
+                    status:
+                      type: string
+                      description: "Status of the condition"
+                      enum: ["True", "False", "Unknown"]
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                      description: "Last time the condition transitioned"
+                    reason:
+                      type: string
+                      description: "Reason for the condition's last transition"
+                    message:
+                      type: string
+                      description: "Human readable message indicating details"
+              resourceUsage:
+                type: object
+                description: "Current resource usage in this VDC"
+                properties:
+                  cpuUsed:
+                    type: string
+                    description: "Currently used CPU"
+                  memoryUsed:
+                    type: string
+                    description: "Currently used memory"
+                  storageUsed:
+                    type: string
+                    description: "Currently used storage"
+                  cpuPercentage:
+                    type: number
+                    description: "CPU usage percentage"
+                    minimum: 0
+                    maximum: 100
+                  memoryPercentage:
+                    type: number
+                    description: "Memory usage percentage" 
+                    minimum: 0
+                    maximum: 100
+                  storagePercentage:
+                    type: number
+                    description: "Storage usage percentage"
+                    minimum: 0
+                    maximum: 100
+              workloadCounts:
+                type: object
+                description: "Current workload counts"
+                properties:
+                  totalPods:
+                    type: integer
+                    description: "Current number of pods in VDC"
+                    minimum: 0
+                    default: 0
+                  runningPods:
+                    type: integer
+                    description: "Number of running pods"
+                    minimum: 0
+                    default: 0
+                  totalVMs:
+                    type: integer
+                    description: "Current number of VMs in VDC"
+                    minimum: 0
+                    default: 0
+                  runningVMs:
+                    type: integer
+                    description: "Number of running VMs"
+                    minimum: 0
+                    default: 0
+              lastMetricsUpdate:
+                type: string
+                format: date-time
+                description: "Last time metrics were collected"
+              observedGeneration:
+                type: integer
+                description: "Most recent generation observed by controller"
+                minimum: 0
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Organization
+      type: string
+      description: Parent organization
+      jsonPath: .spec.organizationRef
+    - name: Display Name
+      type: string
+      description: Human readable name
+      jsonPath: .spec.displayName
+    - name: Phase
+      type: string
+      description: Current phase
+      jsonPath: .status.phase
+    - name: CPU Usage
+      type: string
+      description: CPU usage percentage
+      jsonPath: .status.resourceUsage.cpuPercentage
+    - name: Memory Usage
+      type: string
+      description: Memory usage percentage
+      jsonPath: .status.resourceUsage.memoryPercentage
+    - name: Pods
+      type: integer
+      description: Running pods
+      jsonPath: .status.workloadCounts.runningPods
+    - name: VMs
+      type: integer
+      description: Running VMs
+      jsonPath: .status.workloadCounts.runningVMs
+    - name: Namespace
+      type: string
+      description: VDC workload namespace
+      jsonPath: .status.namespace
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced  # VDC CRs live in Organization namespaces
+  names:
+    plural: virtualdatacenters
+    singular: virtualdatacenter
+    kind: VirtualDataCenter
+    shortNames: ["vdc"]
+    listKind: VirtualDataCenterList

@@ -157,27 +157,26 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 	}
 	vdcID = "vdc-" + vdcID
 
-	// Set default resource quotas if not provided
-	resourceQuotas := req.ResourceQuotas
-	if resourceQuotas == nil {
-		resourceQuotas = map[string]string{
-			"cpu":     "10",
-			"memory":  "32Gi",
-			"storage": "500Gi",
-		}
+	// Set default resource quotas if not provided (using CRD fields)
+	cpuQuota := req.CPUQuota
+	memoryQuota := req.MemoryQuota
+	storageQuota := req.StorageQuota
+
+	if cpuQuota == 0 {
+		cpuQuota = 10
+	}
+	if memoryQuota == 0 {
+		memoryQuota = 32
+	}
+	if storageQuota == 0 {
+		storageQuota = 500
 	}
 
-	// Parse requested resources for validation
-	var cpuReq, memoryReq, storageReq int
-	if cpuStr, ok := resourceQuotas["cpu"]; ok {
-		cpuReq = models.ParseCPUString(cpuStr)
-	}
-	if memStr, ok := resourceQuotas["memory"]; ok {
-		memoryReq = models.ParseMemoryString(memStr)
-	}
-	if storStr, ok := resourceQuotas["storage"]; ok {
-		storageReq = models.ParseStorageString(storStr)
-	}
+	// Use the CRD quota values directly
+	cpuReq := cpuQuota
+	memoryReq := memoryQuota
+	storageReq := storageQuota
+	// Storage quota already set above from CRD fields
 
 	// Organizations are identity containers - no need to validate resource allocation
 
@@ -186,17 +185,19 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 	klog.Infof("Creating VDC %s in organization %s (identity container) with requested resources: CPU=%d, Memory=%d, Storage=%d",
 		vdcID, org.Name, cpuReq, memoryReq, storageReq)
 
-	// Generate VDC namespace name: org-<orgname>-<vdcname>
-	vdcNamespace := fmt.Sprintf("%s-%s", org.Namespace, util.SanitizeKubernetesName(req.Name))
+	// Generate VDC workload namespace name: vdc-<orgname>-<vdcname>
+	vdcNamespace := fmt.Sprintf("vdc-%s-%s", org.Name, util.SanitizeKubernetesName(req.Name))
 
-	// Create VDC
+	// Create VDC with CRD fields
 	vdc := &models.VirtualDataCenter{
-		ID:             vdcID,
-		Name:           req.Name,
-		Description:    req.Description,
-		OrgID:          req.OrgID,
-		Namespace:      vdcNamespace, // Use VDC-specific namespace
-		ResourceQuotas: resourceQuotas,
+		ID:                vdcID,
+		Name:              req.Name,
+		Description:       req.Description,
+		OrgID:             req.OrgID,
+		WorkloadNamespace: vdcNamespace,
+		CPUQuota:          cpuQuota,
+		MemoryQuota:       memoryQuota,
+		StorageQuota:      storageQuota,
 	}
 
 	if err := h.storage.CreateVDC(vdc); err != nil {
@@ -338,16 +339,23 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	// Update VDC fields if provided
-	if req.Name != "" {
-		vdc.Name = req.Name
+	// Update VDC fields if provided (CRD structure)
+	if req.DisplayName != nil {
+		vdc.Name = *req.DisplayName
 	}
-	if req.Description != "" {
-		vdc.Description = req.Description
+	if req.Description != nil {
+		vdc.Description = *req.Description
 	}
-	if req.ResourceQuotas != nil {
-		vdc.ResourceQuotas = req.ResourceQuotas
+	if req.CPUQuota != nil {
+		vdc.CPUQuota = *req.CPUQuota
 	}
+	if req.MemoryQuota != nil {
+		vdc.MemoryQuota = *req.MemoryQuota
+	}
+	if req.StorageQuota != nil {
+		vdc.StorageQuota = *req.StorageQuota
+	}
+	// ResourceQuotas field removed in CRD architecture - quotas now stored as individual fields
 
 	if err := h.storage.UpdateVDC(vdc); err != nil {
 		klog.Errorf("Failed to update VDC %s: %v", id, err)
@@ -415,7 +423,7 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 	// Filter VMs that belong to this VDC
 	var vdcVMs []*models.VirtualMachine
 	for _, vm := range vms {
-		if vm.VDCID == id {
+		if vm.VDCID != nil && *vm.VDCID == id {
 			vdcVMs = append(vdcVMs, vm)
 		}
 	}
@@ -483,15 +491,15 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 		defer cancel()
 
 		// Delete namespace (this will delete all resources in it including ResourceQuota and LimitRange)
-		if err := h.openshiftClient.DeleteNamespace(ctx, vdc.Namespace); err != nil {
-			klog.Errorf("Failed to delete VDC namespace %s: %v", vdc.Namespace, err)
+		if err := h.openshiftClient.DeleteNamespace(ctx, vdc.WorkloadNamespace); err != nil {
+			klog.Errorf("Failed to delete VDC namespace %s: %v", vdc.WorkloadNamespace, err)
 			// Log error but continue with VDC deletion from database
 			// The namespace can be cleaned up manually if needed
 		} else {
-			klog.Infof("Deleted VDC namespace %s for VDC %s", vdc.Namespace, vdc.Name)
+			klog.Infof("Deleted VDC namespace %s for VDC %s", vdc.WorkloadNamespace, vdc.Name)
 		}
 	} else {
-		klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.Namespace, vdc.Name)
+		klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.WorkloadNamespace, vdc.Name)
 	}
 
 	// Delete VDC from database
@@ -597,9 +605,9 @@ func (h *VDCHandlers) GetLimitRange(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, vdc.Namespace)
+		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, vdc.WorkloadNamespace)
 		if err != nil {
-			klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", id, vdc.Namespace, err)
+			klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", id, vdc.WorkloadNamespace, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get LimitRange information"})
 			return
 		}
@@ -685,25 +693,25 @@ func (h *VDCHandlers) UpdateLimitRange(c *gin.Context) {
 		defer cancel()
 
 		// Try to update first (in case it exists), then create if it doesn't exist
-		err := h.openshiftClient.UpdateLimitRange(ctx, vdc.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
+		err := h.openshiftClient.UpdateLimitRange(ctx, vdc.WorkloadNamespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
 		if err != nil {
 			// If update fails, try to create
 			klog.V(4).Infof("LimitRange update failed for VDC %s, trying to create: %v", id, err)
-			err = h.openshiftClient.CreateLimitRange(ctx, vdc.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
+			err = h.openshiftClient.CreateLimitRange(ctx, vdc.WorkloadNamespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
 			if err != nil {
-				klog.Errorf("Failed to create/update LimitRange for VDC %s namespace %s: %v", id, vdc.Namespace, err)
+				klog.Errorf("Failed to create/update LimitRange for VDC %s namespace %s: %v", id, vdc.WorkloadNamespace, err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create/update LimitRange"})
 				return
 			}
 			klog.Infof("Created LimitRange for VDC %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM) by user %s (%s)",
-				id, vdc.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
+				id, vdc.WorkloadNamespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
 		} else {
 			klog.Infof("Updated LimitRange for VDC %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM) by user %s (%s)",
-				id, vdc.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
+				id, vdc.WorkloadNamespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
 		}
 
 		// Get the updated LimitRange info to return
-		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, vdc.Namespace)
+		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, vdc.WorkloadNamespace)
 		if err != nil {
 			klog.Errorf("Failed to get updated LimitRange for VDC %s: %v", id, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "LimitRange updated but failed to retrieve current state"})
@@ -763,14 +771,14 @@ func (h *VDCHandlers) DeleteLimitRange(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := h.openshiftClient.DeleteLimitRange(ctx, vdc.Namespace)
+		err := h.openshiftClient.DeleteLimitRange(ctx, vdc.WorkloadNamespace)
 		if err != nil {
-			klog.Errorf("Failed to delete LimitRange for VDC %s namespace %s: %v", id, vdc.Namespace, err)
+			klog.Errorf("Failed to delete LimitRange for VDC %s namespace %s: %v", id, vdc.WorkloadNamespace, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete LimitRange"})
 			return
 		}
 
-		klog.Infof("Deleted LimitRange for VDC %s namespace %s by user %s (%s)", id, vdc.Namespace, username, userID)
+		klog.Infof("Deleted LimitRange for VDC %s namespace %s by user %s (%s)", id, vdc.WorkloadNamespace, username, userID)
 		c.JSON(http.StatusOK, gin.H{"message": "LimitRange deleted successfully"})
 	} else {
 		klog.Warningf("OpenShift client not available - cannot delete LimitRange for VDC %s", id)

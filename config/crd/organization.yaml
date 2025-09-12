@@ -1,0 +1,147 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: organizations.ovim.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: crd
+spec:
+  group: ovim.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - displayName
+            - admins
+            properties:
+              displayName:
+                type: string
+                description: "Human-readable organization name"
+                minLength: 1
+                maxLength: 255
+              description:
+                type: string
+                description: "Organization description"
+                maxLength: 1000
+              admins:
+                type: array
+                description: "List of admin group names with access to this organization"
+                minItems: 1
+                items:
+                  type: string
+                  pattern: '^[a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9]$'
+              isEnabled:
+                type: boolean
+                description: "Whether this organization is active"
+                default: true
+              catalogs:
+                type: array
+                description: "Catalog resources managed by this organization"
+                items:
+                  type: object
+                  required:
+                  - name
+                  - type
+                  properties:
+                    name:
+                      type: string
+                      description: "Catalog name"
+                    namespace:
+                      type: string
+                      description: "Catalog namespace (defaults to org namespace)"
+                    type:
+                      type: string
+                      description: "Type of catalog content"
+                      enum: ["vm-template", "application-stack", "mixed"]
+                    enabled:
+                      type: boolean
+                      description: "Whether this catalog is active"
+                      default: true
+          status:
+            type: object
+            properties:
+              namespace:
+                type: string
+                description: "Created organization namespace name"
+              phase:
+                type: string
+                description: "Current phase of the organization"
+                enum: ["Pending", "Active", "Failed", "Terminating"]
+                default: "Pending"
+              conditions:
+                type: array
+                description: "Conditions represent the latest available observations"
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  properties:
+                    type:
+                      type: string
+                      description: "Type of condition"
+                    status:
+                      type: string
+                      description: "Status of the condition"
+                      enum: ["True", "False", "Unknown"]
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                      description: "Last time the condition transitioned"
+                    reason:
+                      type: string
+                      description: "Reason for the condition's last transition"
+                    message:
+                      type: string
+                      description: "Human readable message indicating details"
+              vdcCount:
+                type: integer
+                description: "Number of VDCs in this organization"
+                minimum: 0
+                default: 0
+              lastRBACSync:
+                type: string
+                format: date-time
+                description: "Last time RBAC was synced to VDCs"
+              observedGeneration:
+                type: integer
+                description: "Most recent generation observed by controller"
+                minimum: 0
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Display Name
+      type: string
+      description: Human readable name
+      jsonPath: .spec.displayName
+    - name: Phase
+      type: string
+      description: Current phase
+      jsonPath: .status.phase
+    - name: VDCs
+      type: integer
+      description: Number of VDCs
+      jsonPath: .status.vdcCount
+    - name: Namespace
+      type: string
+      description: Organization namespace
+      jsonPath: .status.namespace
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Cluster
+  names:
+    plural: organizations
+    singular: organization
+    kind: Organization
+    shortNames: ["org"]
+    listKind: OrganizationList
