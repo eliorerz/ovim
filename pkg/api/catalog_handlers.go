@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/catalog"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -32,12 +33,17 @@ func (h *CatalogHandlers) ListTemplates(c *gin.Context) {
 	source := c.Query("source")     // global, organization, external
 	category := c.Query("category") // Operating System, Database, Application, etc.
 
-	// Get user organization ID from context (would be set by auth middleware)
-	userOrgID := ""
-	if orgID, exists := c.Get("user_org_id"); exists {
-		if str, ok := orgID.(string); ok {
-			userOrgID = str
-		}
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions based on role
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin && role != models.RoleOrgUser {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+		return
 	}
 
 	var templates []*models.Template
@@ -103,6 +109,21 @@ func (h *CatalogHandlers) ListTemplatesByOrg(c *gin.Context) {
 		return
 	}
 
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can access any org, others can only access their own
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only access templates for your own organization"})
+			return
+		}
+	}
+
 	templates, err := h.storage.ListTemplatesByOrg(orgID)
 	if err != nil {
 		klog.Errorf("Failed to list templates for organization %s: %v", orgID, err)
@@ -120,12 +141,17 @@ func (h *CatalogHandlers) ListTemplatesByOrg(c *gin.Context) {
 
 // GetCatalogSources handles retrieving available catalog sources for the user
 func (h *CatalogHandlers) GetCatalogSources(c *gin.Context) {
-	// Get user organization ID from context (would be set by auth middleware)
-	userOrgID := ""
-	if orgID, exists := c.Get("user_org_id"); exists {
-		if str, ok := orgID.(string); ok {
-			userOrgID = str
-		}
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions based on role
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin && role != models.RoleOrgUser {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+		return
 	}
 
 	if h.catalogService == nil {
@@ -156,6 +182,21 @@ func (h *CatalogHandlers) GetOrganizationCatalogSources(c *gin.Context) {
 		return
 	}
 
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can access any org, others can only access their own
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only access catalog sources for your own organization"})
+			return
+		}
+	}
+
 	sources, err := h.storage.ListOrganizationCatalogSources(orgID)
 	if err != nil {
 		klog.Errorf("Failed to list organization catalog sources for org %s: %v", orgID, err)
@@ -176,6 +217,27 @@ func (h *CatalogHandlers) AddCatalogSourceToOrganization(c *gin.Context) {
 	if orgID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
 		return
+	}
+
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin and org admin can manage catalog sources
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to manage catalog sources"})
+		return
+	}
+
+	// For org admin, ensure they can only manage sources for their own organization
+	if role == models.RoleOrgAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only manage catalog sources for your own organization"})
+			return
+		}
 	}
 
 	var req models.CreateOrganizationCatalogSourceRequest
@@ -219,6 +281,27 @@ func (h *CatalogHandlers) UpdateOrganizationCatalogSource(c *gin.Context) {
 	if orgID == "" || sourceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID and source ID required"})
 		return
+	}
+
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin and org admin can manage catalog sources
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to manage catalog sources"})
+		return
+	}
+
+	// For org admin, ensure they can only manage sources for their own organization
+	if role == models.RoleOrgAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only manage catalog sources for your own organization"})
+			return
+		}
 	}
 
 	var req models.UpdateOrganizationCatalogSourceRequest
@@ -272,6 +355,27 @@ func (h *CatalogHandlers) RemoveOrganizationCatalogSource(c *gin.Context) {
 		return
 	}
 
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin and org admin can manage catalog sources
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to manage catalog sources"})
+		return
+	}
+
+	// For org admin, ensure they can only manage sources for their own organization
+	if role == models.RoleOrgAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only manage catalog sources for your own organization"})
+			return
+		}
+	}
+
 	// Get existing catalog source to verify it belongs to the organization
 	source, err := h.storage.GetOrganizationCatalogSource(sourceID)
 	if err != nil {
@@ -306,6 +410,21 @@ func (h *CatalogHandlers) GetOrganizationCatalogTemplates(c *gin.Context) {
 	if orgID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
 		return
+	}
+
+	// Get user info from context
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can access any org, others can only access their own
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only access catalog templates for your own organization"})
+			return
+		}
 	}
 
 	// Get query parameters for filtering

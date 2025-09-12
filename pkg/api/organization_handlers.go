@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -30,13 +34,15 @@ type OpenShiftClient interface {
 // OrganizationHandlers handles organization-related requests
 type OrganizationHandlers struct {
 	storage         storage.Storage
-	openshiftClient OpenShiftClient
+	k8sClient       client.Client
+	openshiftClient OpenShiftClient // Legacy support, will be phased out
 }
 
 // NewOrganizationHandlers creates a new organization handlers instance
-func NewOrganizationHandlers(storage storage.Storage, openshiftClient OpenShiftClient) *OrganizationHandlers {
+func NewOrganizationHandlers(storage storage.Storage, k8sClient client.Client, openshiftClient OpenShiftClient) *OrganizationHandlers {
 	return &OrganizationHandlers{
 		storage:         storage,
+		k8sClient:       k8sClient,
 		openshiftClient: openshiftClient,
 	}
 }
@@ -95,83 +101,123 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Use sanitized name as ID and org- prefix for namespace
+	// Use sanitized name as ID
 	orgID := util.SanitizeKubernetesName(req.Name)
-	namespace := "org-" + orgID
 
-	// Organizations are identity containers only - no quotas
-	// Create organization
-	org := &models.Organization{
-		ID:          orgID,
-		Name:        req.DisplayName, // Use DisplayName as the human-readable name
-		Description: req.Description,
-		Namespace:   namespace,
-		IsEnabled:   req.IsEnabled,
-	}
-
-	// Create organization in database first
-	if err := h.storage.CreateOrganization(org); err != nil {
-		if err == storage.ErrAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": "Organization already exists"})
-			return
+	// Create Organization CRD if k8sClient is available
+	if h.k8sClient != nil {
+		orgCR := &ovimv1.Organization{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: orgID,
+				Annotations: map[string]string{
+					"ovim.io/created-by": username,
+					"ovim.io/created-at": time.Now().Format(time.RFC3339),
+				},
+			},
+			Spec: ovimv1.OrganizationSpec{
+				DisplayName: req.DisplayName,
+				Description: req.Description,
+				Admins:      req.Admins,
+				IsEnabled:   req.IsEnabled,
+			},
 		}
-		klog.Errorf("Failed to create organization: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization"})
-		return
-	}
 
-	// Create namespace in OpenShift cluster if client is available
-	if h.openshiftClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Check if namespace already exists
-		exists, err := h.openshiftClient.NamespaceExists(ctx, namespace)
-		if err != nil {
-			klog.Errorf("Failed to check if namespace %s exists: %v", namespace, err)
-			// Don't fail the organization creation if we can't check namespace
-		} else if !exists {
-			// Create namespace with appropriate labels and annotations
-			labels := map[string]string{
-				"app.kubernetes.io/name":       "ovim",
-				"app.kubernetes.io/component":  "organization",
-				"app.kubernetes.io/managed-by": "ovim",
-				"ovim.io/organization-id":      orgID,
-				"ovim.io/organization-name":    util.SanitizeKubernetesName(req.Name),
-			}
+		if err := h.k8sClient.Create(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to create Organization CRD %s: %v", orgID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization CRD"})
+			return
+		}
 
-			annotations := map[string]string{
-				"ovim.io/organization-description": req.Description,
-				"ovim.io/created-by":               username,
-				"ovim.io/created-at":               time.Now().Format(time.RFC3339),
-			}
+		klog.Infof("Created Organization CRD %s by user %s (%s)", orgID, username, userID)
+	} else {
+		klog.Warningf("Kubernetes client not available - Organization CRD not created for %s", orgID)
+		// Fallback to legacy namespace management for backward compatibility
+		if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
+			// Create organization namespace
+			orgNamespace := fmt.Sprintf("org-%s", orgID)
 
-			// Create the namespace
-			if err := h.openshiftClient.CreateNamespace(ctx, namespace, labels, annotations); err != nil {
-				klog.Errorf("Failed to create namespace %s for organization %s: %v", namespace, orgID, err)
-				// Try to rollback - delete the organization from database
-				if rollbackErr := h.storage.DeleteOrganization(orgID); rollbackErr != nil {
-					klog.Errorf("Failed to rollback organization creation after namespace failure: %v", rollbackErr)
-				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization namespace"})
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Check if namespace already exists
+			exists, err := h.openshiftClient.NamespaceExists(ctx, orgNamespace)
+			if err != nil {
+				klog.Errorf("Failed to check if namespace %s exists: %v", orgNamespace, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check namespace existence"})
 				return
 			}
 
-			// Organizations are identity containers only - no ResourceQuota or LimitRange creation
-			// Resource allocation will be handled at the VDC level
+			if !exists {
+				// Create namespace
+				labels := map[string]string{
+					"app.kubernetes.io/name":       "ovim",
+					"app.kubernetes.io/component":  "organization",
+					"app.kubernetes.io/managed-by": "ovim",
+					"ovim.io/organization":         orgID,
+					"type":                         "organization",
+				}
+				annotations := map[string]string{
+					"ovim.io/organization-description": req.Description,
+					"ovim.io/created-by":               username,
+					"ovim.io/created-at":               time.Now().Format(time.RFC3339),
+				}
 
-			klog.Infof("Created namespace %s for organization %s", namespace, orgID)
-		} else {
-			klog.Infof("Namespace %s already exists for organization %s", namespace, orgID)
+				if err := h.openshiftClient.CreateNamespace(ctx, orgNamespace, labels, annotations); err != nil {
+					klog.Errorf("Failed to create namespace %s: %v", orgNamespace, err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization namespace"})
+					return
+				}
+
+				klog.Infof("Created organization namespace %s by user %s (%s)", orgNamespace, username, userID)
+			}
 		}
-	} else {
-		klog.Warningf("OpenShift client not available - namespace %s not created for organization %s", namespace, orgID)
 	}
 
-	klog.Infof("Organization %s (%s) created by user %s (%s) as identity container (namespace: %s)",
-		org.Name, org.ID, username, userID, org.Namespace)
+	// Create organization in database
+	organization := &models.Organization{
+		ID:          orgID,
+		Name:        req.DisplayName,
+		Description: req.Description,
+		Namespace:   fmt.Sprintf("org-%s", orgID),
+		IsEnabled:   req.IsEnabled,
+		DisplayName: &req.DisplayName,
+		CRName:      orgID,
+		CRNamespace: "default",
+	}
 
-	c.JSON(http.StatusCreated, org)
+	// For CRD-based architecture, database sync will be handled by controller
+	// For legacy mode, create directly in database
+	if h.k8sClient == nil && h.storage != nil {
+		if err := h.storage.CreateOrganization(organization); err != nil {
+			klog.Errorf("Failed to create organization %s in storage: %v", orgID, err)
+
+			// Rollback namespace creation if it was created
+			if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
+				orgNamespace := fmt.Sprintf("org-%s", orgID)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+
+				if err := h.openshiftClient.DeleteNamespace(ctx, orgNamespace); err != nil {
+					klog.Errorf("Failed to rollback namespace %s after organization creation failure: %v", orgNamespace, err)
+				} else {
+					klog.Infof("Rolled back namespace %s after organization creation failure", orgNamespace)
+				}
+			}
+
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization"})
+			return
+		}
+	}
+
+	response := organization
+
+	klog.Infof("Organization %s (%s) creation initiated by user %s (%s) - controller will handle resource creation",
+		req.DisplayName, orgID, username, userID)
+
+	c.JSON(http.StatusCreated, response)
 }
 
 // Update handles updating an organization
@@ -179,18 +225,6 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
-		return
-	}
-
-	// Get existing organization
-	org, err := h.storage.GetOrganization(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
-			return
-		}
-		klog.Errorf("Failed to get organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
 		return
 	}
 
@@ -208,27 +242,65 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	// Update organization with CRD-compatible fields
-	if req.DisplayName != nil {
-		org.Name = *req.DisplayName // Map DisplayName to Name for legacy compatibility
-	}
-	if req.Description != nil {
-		org.Description = *req.Description
-	}
-	if req.IsEnabled != nil {
-		org.IsEnabled = *req.IsEnabled
-	}
-	// Note: We don't update the namespace as it could break existing resources
+	// Update Organization CRD
+	if h.k8sClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	if err := h.storage.UpdateOrganization(org); err != nil {
-		klog.Errorf("Failed to update organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update organization"})
-		return
+		// Get existing Organization CRD
+		orgCR := &ovimv1.Organization{}
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+
+		// Update fields
+		if req.DisplayName != nil {
+			orgCR.Spec.DisplayName = *req.DisplayName
+		}
+		if req.Description != nil {
+			orgCR.Spec.Description = *req.Description
+		}
+		if req.Admins != nil {
+			orgCR.Spec.Admins = req.Admins
+		}
+		if req.IsEnabled != nil {
+			orgCR.Spec.IsEnabled = *req.IsEnabled
+		}
+
+		// Add update annotation
+		if orgCR.Annotations == nil {
+			orgCR.Annotations = make(map[string]string)
+		}
+		orgCR.Annotations["ovim.io/updated-by"] = username
+		orgCR.Annotations["ovim.io/updated-at"] = time.Now().Format(time.RFC3339)
+
+		if err := h.k8sClient.Update(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to update Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update organization CRD"})
+			return
+		}
+
+		klog.Infof("Updated Organization CRD %s by user %s (%s)", id, username, userID)
+
+		// Return updated organization data from CRD
+		response := &models.Organization{
+			ID:          orgCR.Name,
+			Name:        orgCR.Spec.DisplayName,
+			Description: orgCR.Spec.Description,
+			Namespace:   orgCR.Status.Namespace,
+			IsEnabled:   orgCR.Spec.IsEnabled,
+			DisplayName: &orgCR.Spec.DisplayName,
+			CRName:      orgCR.Name,
+			CRNamespace: "default",
+		}
+
+		c.JSON(http.StatusOK, response)
+	} else {
+		klog.Warningf("Kubernetes client not available - cannot update Organization CRD %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client not available"})
 	}
-
-	klog.Infof("Organization %s (%s) updated by user %s (%s)", org.Name, org.ID, username, userID)
-
-	c.JSON(http.StatusOK, org)
 }
 
 // Delete handles deleting an organization
@@ -239,18 +311,6 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 		return
 	}
 
-	// Check if organization exists
-	org, err := h.storage.GetOrganization(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
-			return
-		}
-		klog.Errorf("Failed to get organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
-		return
-	}
-
 	// Get user info from context
 	userID, username, _, _, ok := auth.GetUserFromContext(c)
 	if !ok {
@@ -258,51 +318,103 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 		return
 	}
 
-	// Delete all attached resources before deleting the organization
-	if err := h.deleteOrganizationResources(id, username, userID); err != nil {
-		klog.Errorf("Failed to delete organization resources for %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization resources"})
-		return
-	}
-
-	// Delete from database last
-	if err := h.storage.DeleteOrganization(id); err != nil {
-		klog.Errorf("Failed to delete organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization"})
-		return
-	}
-
-	// Delete namespace from OpenShift cluster if client is available
-	if h.openshiftClient != nil && org.Namespace != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // More time for namespace deletion
+	// Delete Organization CRD - controller will handle cleanup
+	if h.k8sClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Check if namespace exists before trying to delete
-		exists, err := h.openshiftClient.NamespaceExists(ctx, org.Namespace)
+		// Get existing Organization CRD
+		orgCR := &ovimv1.Organization{}
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+
+		// Add deletion annotation for audit
+		if orgCR.Annotations == nil {
+			orgCR.Annotations = make(map[string]string)
+		}
+		orgCR.Annotations["ovim.io/deleted-by"] = username
+		orgCR.Annotations["ovim.io/deleted-at"] = time.Now().Format(time.RFC3339)
+
+		if err := h.k8sClient.Update(ctx, orgCR); err != nil {
+			klog.Warningf("Failed to add deletion annotation to Organization CRD %s: %v", id, err)
+		}
+
+		// Delete the Organization CRD
+		if err := h.k8sClient.Delete(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to delete Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization CRD"})
+			return
+		}
+
+		klog.Infof("Deleted Organization CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Organization deletion initiated - resources will be cleaned up by controller",
+		})
+	} else {
+		klog.Warningf("Kubernetes client not available - using legacy Organization deletion for %s", id)
+
+		// Fallback to legacy direct deletion for backward compatibility
+		// Get Organization from storage first
+		org, err := h.storage.GetOrganization(id)
 		if err != nil {
-			klog.Errorf("Failed to check if namespace %s exists for organization %s: %v", org.Namespace, id, err)
-		} else if exists {
-			// Delete the namespace (this will delete all resources within it)
-			if err := h.openshiftClient.DeleteNamespace(ctx, org.Namespace); err != nil {
-				klog.Errorf("Failed to delete namespace %s for organization %s: %v", org.Namespace, id, err)
-				// Don't fail the API call - organization is already deleted from database
+			if err == storage.ErrNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+				return
+			}
+			klog.Errorf("Failed to get organization %s for user %s (%s): %v", id, username, userID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
+			return
+		}
+
+		// Perform cascade deletion of all organization resources
+		if err := h.deleteOrganizationResources(id, username, userID); err != nil {
+			klog.Errorf("Failed to delete organization resources for %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization resources"})
+			return
+		}
+
+		// Delete organization namespace if OpenShift client is available
+		if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Check if namespace exists before trying to delete it
+			exists, err := h.openshiftClient.NamespaceExists(ctx, org.Namespace)
+			if err != nil {
+				klog.Errorf("Failed to check if organization namespace %s exists: %v", org.Namespace, err)
+				// Continue with organization deletion from database
+			} else if exists {
+				// Delete organization namespace
+				if err := h.openshiftClient.DeleteNamespace(ctx, org.Namespace); err != nil {
+					klog.Errorf("Failed to delete organization namespace %s for organization %s: %v", org.Namespace, id, err)
+					// Log error but continue with organization deletion from database
+				} else {
+					klog.Infof("Deleted organization namespace %s for organization %s", org.Namespace, id)
+				}
 			} else {
-				klog.Infof("Deleted namespace %s for organization %s", org.Namespace, id)
+				klog.Infof("Organization namespace %s does not exist, skipping deletion", org.Namespace)
 			}
 		} else {
-			klog.Infof("Namespace %s for organization %s does not exist (already deleted)", org.Namespace, id)
+			klog.Warningf("OpenShift client not available - organization namespace %s not deleted for organization %s", org.Namespace, id)
 		}
-	} else {
-		if h.openshiftClient == nil {
-			klog.Warningf("OpenShift client not available - namespace %s not deleted for organization %s", org.Namespace, id)
+
+		// Delete organization from storage
+		if err := h.storage.DeleteOrganization(id); err != nil {
+			klog.Errorf("Failed to delete organization %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization"})
+			return
 		}
+
+		klog.Infof("Deleted organization %s (%s) by user %s (%s)", org.Name, id, username, userID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Organization deleted successfully",
+		})
 	}
-
-	klog.Infof("Organization %s (%s) deleted by user %s (%s)", org.Name, org.ID, username, userID)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Organization deleted successfully",
-	})
 }
 
 // GetUserOrganization handles getting the current user's organization
@@ -565,7 +677,7 @@ func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, user
 		klog.V(6).Infof("Deleting VDC %s (%s) in organization %s", vdc.Name, vdc.ID, orgID)
 
 		// Delete VDC namespace and resources if OpenShift client is available
-		if h.openshiftClient != nil {
+		if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -665,7 +777,7 @@ func (h *OrganizationHandlers) GetLimitRange(c *gin.Context) {
 	}
 
 	// Get LimitRange from OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -744,7 +856,7 @@ func (h *OrganizationHandlers) UpdateLimitRange(c *gin.Context) {
 	}
 
 	// Update LimitRange in OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -815,7 +927,7 @@ func (h *OrganizationHandlers) DeleteLimitRange(c *gin.Context) {
 	}
 
 	// Delete LimitRange from OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 

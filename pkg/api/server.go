@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/catalog"
@@ -29,6 +30,7 @@ type Server struct {
 	authManager     *auth.Middleware
 	tokenManager    *auth.TokenManager
 	oidcProvider    *auth.OIDCProvider
+	k8sClient       client.Client
 	openshiftClient *openshift.Client
 	catalogService  *catalog.Service
 	router          *gin.Engine
@@ -178,7 +180,7 @@ func (s *Server) setupRoutes() {
 				if s.openshiftClient != nil {
 					osClient = s.openshiftClient
 				}
-				orgHandlers := NewOrganizationHandlers(s.storage, osClient)
+				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, osClient)
 				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				userHandlers := NewUserHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
@@ -230,8 +232,8 @@ func (s *Server) setupRoutes() {
 				if s.openshiftClient != nil {
 					osClient = s.openshiftClient
 				}
-				orgHandlers := NewOrganizationHandlers(s.storage, osClient)
-				vdcHandlers := NewVDCHandlers(s.storage, osClient)
+				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, osClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, osClient)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -255,7 +257,7 @@ func (s *Server) setupRoutes() {
 				if s.openshiftClient != nil {
 					osClient = s.openshiftClient
 				}
-				vdcHandlers := NewVDCHandlers(s.storage, osClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, osClient)
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
 				vdcs.GET("/:id", vdcHandlers.Get)
@@ -283,7 +285,7 @@ func (s *Server) setupRoutes() {
 			// VM management (all authenticated users, filtered by role)
 			vms := protected.Group("/vms")
 			{
-				vmHandlers := NewVMHandlers(s.storage, s.provisioner, s.openshiftClient)
+				vmHandlers := NewVMHandlers(s.storage, s.provisioner, s.k8sClient, s.openshiftClient)
 				vms.GET("/", vmHandlers.List)
 				vms.POST("/", vmHandlers.Create)
 				vms.GET("/:id", vmHandlers.Get)

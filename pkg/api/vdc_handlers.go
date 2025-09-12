@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -18,13 +22,15 @@ import (
 // VDCHandlers handles VDC-related requests
 type VDCHandlers struct {
 	storage         storage.Storage
-	openshiftClient OpenShiftClient
+	k8sClient       client.Client
+	openshiftClient OpenShiftClient // Legacy support, will be phased out
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
-func NewVDCHandlers(storage storage.Storage, openshiftClient OpenShiftClient) *VDCHandlers {
+func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, openshiftClient OpenShiftClient) *VDCHandlers {
 	return &VDCHandlers{
 		storage:         storage,
+		k8sClient:       k8sClient,
 		openshiftClient: openshiftClient,
 	}
 }
@@ -136,159 +142,174 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		}
 	}
 
-	// Verify the organization exists
-	org, err := h.storage.GetOrganization(req.OrgID)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Organization not found"})
+	// Generate VDC ID (use sanitized name for CRD)
+	vdcID := util.SanitizeKubernetesName(req.Name)
+
+	// Create VirtualDataCenter CRD if k8sClient is available
+	if h.k8sClient != nil {
+		vdcCR := &ovimv1.VirtualDataCenter{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      vdcID,
+				Namespace: fmt.Sprintf("org-%s", req.OrgID), // VDC CRs live in org namespace
+				Annotations: map[string]string{
+					"ovim.io/created-by": username,
+					"ovim.io/created-at": time.Now().Format(time.RFC3339),
+				},
+			},
+			Spec: ovimv1.VirtualDataCenterSpec{
+				OrganizationRef: req.OrgID,
+				DisplayName:     req.DisplayName,
+				Description:     req.Description,
+				Quota: ovimv1.ResourceQuota{
+					CPU:     fmt.Sprintf("%d", req.CPUQuota),
+					Memory:  fmt.Sprintf("%dGi", req.MemoryQuota),
+					Storage: fmt.Sprintf("%dGi", req.StorageQuota),
+				},
+				NetworkPolicy: req.NetworkPolicy,
+			},
+		}
+
+		// Add LimitRange if provided
+		if req.MinCPU != nil || req.MaxCPU != nil || req.MinMemory != nil || req.MaxMemory != nil {
+			vdcCR.Spec.LimitRange = &ovimv1.LimitRange{
+				MinCpu:    *req.MinCPU,
+				MaxCpu:    *req.MaxCPU,
+				MinMemory: *req.MinMemory,
+				MaxMemory: *req.MaxMemory,
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := h.k8sClient.Create(ctx, vdcCR); err != nil {
+			klog.Errorf("Failed to create VirtualDataCenter CRD %s: %v", vdcID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create VDC CRD"})
 			return
 		}
-		klog.Errorf("Failed to verify organization %s: %v", req.OrgID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify organization"})
-		return
+
+		klog.Infof("Created VirtualDataCenter CRD %s in org %s by user %s (%s)", vdcID, req.OrgID, username, userID)
+	} else {
+		klog.Warningf("Kubernetes client not available - VDC CRD not created for %s", vdcID)
+		// Fallback to legacy direct creation for backward compatibility
+		vdc := &models.VirtualDataCenter{
+			ID:                vdcID,
+			Name:              req.Name,
+			Description:       req.Description,
+			OrgID:             req.OrgID,
+			DisplayName:       &req.DisplayName,
+			CRName:            vdcID,
+			CRNamespace:       fmt.Sprintf("org-%s", req.OrgID),
+			WorkloadNamespace: fmt.Sprintf("vdc-%s-%s", req.OrgID, vdcID),
+			CPUQuota:          req.CPUQuota,
+			MemoryQuota:       req.MemoryQuota,
+			StorageQuota:      req.StorageQuota,
+			NetworkPolicy:     req.NetworkPolicy,
+			Phase:             "Active",
+		}
+
+		// Add LimitRange if provided
+		if req.MinCPU != nil {
+			vdc.MinCPU = req.MinCPU
+		}
+		if req.MaxCPU != nil {
+			vdc.MaxCPU = req.MaxCPU
+		}
+		if req.MinMemory != nil {
+			vdc.MinMemory = req.MinMemory
+		}
+		if req.MaxMemory != nil {
+			vdc.MaxMemory = req.MaxMemory
+		}
+
+		// Create VDC in storage
+		if h.storage != nil {
+			if err := h.storage.CreateVDC(vdc); err != nil {
+				klog.Errorf("Failed to create VDC %s in storage: %v", vdcID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create VDC"})
+				return
+			}
+		}
+
+		// Create VDC namespace and resources if OpenShift client is available
+		if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Create VDC namespace
+			vdcNamespace := vdc.WorkloadNamespace
+			exists, err := h.openshiftClient.NamespaceExists(ctx, vdcNamespace)
+			if err != nil {
+				klog.Errorf("Failed to check if VDC namespace %s exists: %v", vdcNamespace, err)
+			} else if !exists {
+				labels := map[string]string{
+					"app.kubernetes.io/name":       "ovim",
+					"app.kubernetes.io/component":  "vdc",
+					"app.kubernetes.io/managed-by": "ovim",
+					"ovim.io/organization":         req.OrgID,
+					"ovim.io/vdc":                  vdcID,
+					"type":                         "vdc",
+					"org":                          req.OrgID,
+					"vdc":                          vdcID,
+				}
+				annotations := map[string]string{
+					"ovim.io/vdc-description": req.Description,
+					"ovim.io/created-by":      username,
+					"ovim.io/created-at":      time.Now().Format(time.RFC3339),
+				}
+
+				if err := h.openshiftClient.CreateNamespace(ctx, vdcNamespace, labels, annotations); err != nil {
+					klog.Errorf("Failed to create VDC namespace %s: %v", vdcNamespace, err)
+				} else {
+					klog.Infof("Created VDC namespace %s by user %s (%s)", vdcNamespace, username, userID)
+
+					// Create ResourceQuota
+					if err := h.openshiftClient.CreateResourceQuota(ctx, vdcNamespace, req.CPUQuota, req.MemoryQuota, req.StorageQuota); err != nil {
+						klog.Errorf("Failed to create ResourceQuota for VDC %s: %v", vdcID, err)
+					}
+
+					// Create LimitRange if specified and valid
+					if req.MinCPU != nil && req.MaxCPU != nil && req.MinMemory != nil && req.MaxMemory != nil {
+						// Validate LimitRange parameters
+						if *req.MinCPU <= *req.MaxCPU && *req.MinMemory <= *req.MaxMemory {
+							if err := h.openshiftClient.CreateLimitRange(ctx, vdcNamespace, *req.MinCPU, *req.MaxCPU, *req.MinMemory, *req.MaxMemory); err != nil {
+								klog.Errorf("Failed to create LimitRange for VDC %s: %v", vdcID, err)
+							}
+						} else {
+							klog.Warningf("Invalid LimitRange parameters for VDC %s: MinCPU=%d > MaxCPU=%d or MinMemory=%d > MaxMemory=%d", vdcID, *req.MinCPU, *req.MaxCPU, *req.MinMemory, *req.MaxMemory)
+						}
+					}
+				}
+			}
+		}
 	}
 
-	// Generate VDC ID
-	vdcID, err := util.GenerateID(16)
-	if err != nil {
-		klog.Errorf("Failed to generate VDC ID: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate VDC ID"})
-		return
-	}
-	vdcID = "vdc-" + vdcID
-
-	// Set default resource quotas if not provided (using CRD fields)
-	cpuQuota := req.CPUQuota
-	memoryQuota := req.MemoryQuota
-	storageQuota := req.StorageQuota
-
-	if cpuQuota == 0 {
-		cpuQuota = 10
-	}
-	if memoryQuota == 0 {
-		memoryQuota = 32
-	}
-	if storageQuota == 0 {
-		storageQuota = 500
-	}
-
-	// Use the CRD quota values directly
-	cpuReq := cpuQuota
-	memoryReq := memoryQuota
-	storageReq := storageQuota
-	// Storage quota already set above from CRD fields
-
-	// Organizations are identity containers - no need to validate resource allocation
-
-	// Organizations are identity containers only - resource allocation is always allowed
-	// Resource constraints will be enforced at the cluster level via ResourceQuota and LimitRange
-	klog.Infof("Creating VDC %s in organization %s (identity container) with requested resources: CPU=%d, Memory=%d, Storage=%d",
-		vdcID, org.Name, cpuReq, memoryReq, storageReq)
-
-	// Generate VDC workload namespace name: vdc-<orgname>-<vdcname>
-	vdcNamespace := fmt.Sprintf("vdc-%s-%s", org.Name, util.SanitizeKubernetesName(req.Name))
-
-	// Create VDC with CRD fields
-	vdc := &models.VirtualDataCenter{
+	// Return appropriate response based on architecture
+	response := &models.VirtualDataCenter{
 		ID:                vdcID,
 		Name:              req.Name,
 		Description:       req.Description,
 		OrgID:             req.OrgID,
-		WorkloadNamespace: vdcNamespace,
-		CPUQuota:          cpuQuota,
-		MemoryQuota:       memoryQuota,
-		StorageQuota:      storageQuota,
+		DisplayName:       &req.DisplayName,
+		CRName:            vdcID,
+		CRNamespace:       fmt.Sprintf("org-%s", req.OrgID),
+		WorkloadNamespace: fmt.Sprintf("vdc-%s-%s", req.OrgID, vdcID),
+		CPUQuota:          req.CPUQuota,
+		MemoryQuota:       req.MemoryQuota,
+		StorageQuota:      req.StorageQuota,
+		NetworkPolicy:     req.NetworkPolicy,
+		Phase:             "Pending", // CRD mode: controller will handle creation
 	}
 
-	if err := h.storage.CreateVDC(vdc); err != nil {
-		if err == storage.ErrAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": "VDC already exists"})
-			return
-		}
-		klog.Errorf("Failed to create VDC: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create VDC"})
-		return
+	// For legacy mode, set phase to Active since resources are created immediately
+	if h.k8sClient == nil {
+		response.Phase = "Active"
 	}
 
-	// Create VDC namespace in OpenShift cluster if client is available
-	if h.openshiftClient != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	klog.Infof("VDC %s (%s) creation initiated in org %s by user %s (%s) - controller will handle resource creation",
+		req.DisplayName, vdcID, req.OrgID, username, userID)
 
-		// Check if namespace already exists
-		exists, err := h.openshiftClient.NamespaceExists(ctx, vdcNamespace)
-		if err != nil {
-			klog.Errorf("Failed to check if VDC namespace %s exists: %v", vdcNamespace, err)
-			// Don't fail the VDC creation if we can't check namespace
-		} else if !exists {
-			// Create VDC namespace with appropriate labels and annotations
-			labels := map[string]string{
-				"app.kubernetes.io/name":       "ovim",
-				"app.kubernetes.io/component":  "vdc",
-				"app.kubernetes.io/managed-by": "ovim",
-				"ovim.io/organization-id":      org.ID,
-				"ovim.io/organization-name":    util.SanitizeKubernetesName(org.Name),
-				"ovim.io/vdc-id":               vdc.ID,
-				"ovim.io/vdc-name":             util.SanitizeKubernetesName(vdc.Name),
-			}
-
-			annotations := map[string]string{
-				"ovim.io/vdc-description":     vdc.Description,
-				"ovim.io/created-by":          username,
-				"ovim.io/created-at":          time.Now().Format(time.RFC3339),
-				"ovim.io/parent-organization": org.Namespace,
-			}
-
-			// Create the VDC namespace
-			if err := h.openshiftClient.CreateNamespace(ctx, vdcNamespace, labels, annotations); err != nil {
-				klog.Errorf("Failed to create VDC namespace %s: %v", vdcNamespace, err)
-				// Try to rollback - delete the VDC from database
-				if rollbackErr := h.storage.DeleteVDC(vdc.ID); rollbackErr != nil {
-					klog.Errorf("Failed to rollback VDC creation after namespace failure: %v", rollbackErr)
-				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create VDC namespace"})
-				return
-			}
-
-			// Create ResourceQuota for the VDC namespace
-			if err := h.openshiftClient.CreateResourceQuota(ctx, vdcNamespace, cpuReq, memoryReq, storageReq); err != nil {
-				klog.Errorf("Failed to create ResourceQuota for VDC namespace %s: %v", vdcNamespace, err)
-				// Log error but don't fail the VDC creation - quota can be created later
-			} else {
-				klog.Infof("Created ResourceQuota for VDC %s namespace %s (CPU: %d, Memory: %dGi, Storage: %dGi)",
-					vdc.Name, vdcNamespace, cpuReq, memoryReq, storageReq)
-			}
-
-			// Create LimitRange for the VDC namespace if parameters are provided
-			if req.MinCPU != nil && req.MaxCPU != nil && req.MinMemory != nil && req.MaxMemory != nil {
-				// Validate LimitRange values
-				if *req.MinCPU >= 0 && *req.MaxCPU >= 0 && *req.MinMemory >= 0 && *req.MaxMemory >= 0 &&
-					*req.MinCPU <= *req.MaxCPU && *req.MinMemory <= *req.MaxMemory {
-
-					if err := h.openshiftClient.CreateLimitRange(ctx, vdcNamespace, *req.MinCPU, *req.MaxCPU, *req.MinMemory, *req.MaxMemory); err != nil {
-						klog.Errorf("Failed to create LimitRange for VDC namespace %s: %v", vdcNamespace, err)
-						// Log error but don't fail the VDC creation - LimitRange can be created later
-					} else {
-						klog.Infof("Created LimitRange for VDC %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM)",
-							vdc.Name, vdcNamespace, *req.MinCPU, *req.MaxCPU, *req.MinMemory, *req.MaxMemory)
-					}
-				} else {
-					klog.Warningf("Invalid LimitRange parameters for VDC %s - skipping LimitRange creation", vdc.Name)
-				}
-			}
-
-			klog.Infof("Created VDC namespace %s for VDC %s in organization %s", vdcNamespace, vdc.Name, org.Name)
-		} else {
-			klog.Infof("VDC namespace %s already exists for VDC %s", vdcNamespace, vdc.Name)
-		}
-	} else {
-		klog.Warningf("OpenShift client not available - VDC namespace %s not created for VDC %s", vdcNamespace, vdc.Name)
-	}
-
-	klog.Infof("VDC %s (%s) created in organization %s by user %s (%s) with namespace %s",
-		vdc.Name, vdc.ID, org.Name, username, userID, vdcNamespace)
-
-	c.JSON(http.StatusCreated, vdc)
+	c.JSON(http.StatusCreated, response)
 }
 
 // Update handles updating a VDC
@@ -306,32 +327,6 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	// Get existing VDC
-	vdc, err := h.storage.GetVDC(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
-			return
-		}
-		klog.Errorf("Failed to get VDC %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
-		return
-	}
-
-	// Check permissions - only system admin and org admin can update VDCs
-	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to update VDC"})
-		return
-	}
-
-	// For org admin, ensure they can only update VDCs in their own organization
-	if role == models.RoleOrgAdmin {
-		if userOrgID == "" || userOrgID != vdc.OrgID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Can only update VDCs in your own organization"})
-			return
-		}
-	}
-
 	var req models.UpdateVDCRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		klog.V(4).Infof("Invalid update VDC request: %v", err)
@@ -339,33 +334,105 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 		return
 	}
 
-	// Update VDC fields if provided (CRD structure)
-	if req.DisplayName != nil {
-		vdc.Name = *req.DisplayName
-	}
-	if req.Description != nil {
-		vdc.Description = *req.Description
-	}
-	if req.CPUQuota != nil {
-		vdc.CPUQuota = *req.CPUQuota
-	}
-	if req.MemoryQuota != nil {
-		vdc.MemoryQuota = *req.MemoryQuota
-	}
-	if req.StorageQuota != nil {
-		vdc.StorageQuota = *req.StorageQuota
-	}
-	// ResourceQuotas field removed in CRD architecture - quotas now stored as individual fields
+	// Update VirtualDataCenter CRD
+	if h.k8sClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	if err := h.storage.UpdateVDC(vdc); err != nil {
-		klog.Errorf("Failed to update VDC %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update VDC"})
-		return
+		// First, find the VDC CRD - we need to check both the org namespace and discover the right one
+		var vdcCR *ovimv1.VirtualDataCenter
+		var orgNamespace string
+
+		// Try to find the VDC by listing all VDCs and finding the one with matching name
+		vdcList := &ovimv1.VirtualDataCenterList{}
+		if err := h.k8sClient.List(ctx, vdcList); err != nil {
+			klog.Errorf("Failed to list VDCs to find %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+			return
+		}
+
+		for _, vdc := range vdcList.Items {
+			if vdc.Name == id {
+				vdcCR = &vdc
+				orgNamespace = vdc.Namespace
+				break
+			}
+		}
+
+		if vdcCR == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+			return
+		}
+
+		// Check permissions - only system admin and org admin can update VDCs
+		if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to update VDC"})
+			return
+		}
+
+		// For org admin, ensure they can only update VDCs in their own organization
+		if role == models.RoleOrgAdmin {
+			expectedOrgNamespace := fmt.Sprintf("org-%s", userOrgID)
+			if userOrgID == "" || orgNamespace != expectedOrgNamespace {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Can only update VDCs in your own organization"})
+				return
+			}
+		}
+
+		// Update fields
+		if req.DisplayName != nil {
+			vdcCR.Spec.DisplayName = *req.DisplayName
+		}
+		if req.Description != nil {
+			vdcCR.Spec.Description = *req.Description
+		}
+		if req.CPUQuota != nil {
+			vdcCR.Spec.Quota.CPU = fmt.Sprintf("%d", *req.CPUQuota)
+		}
+		if req.MemoryQuota != nil {
+			vdcCR.Spec.Quota.Memory = fmt.Sprintf("%dGi", *req.MemoryQuota)
+		}
+		if req.StorageQuota != nil {
+			vdcCR.Spec.Quota.Storage = fmt.Sprintf("%dGi", *req.StorageQuota)
+		}
+		if req.NetworkPolicy != nil {
+			vdcCR.Spec.NetworkPolicy = *req.NetworkPolicy
+		}
+
+		// Add update annotation
+		if vdcCR.Annotations == nil {
+			vdcCR.Annotations = make(map[string]string)
+		}
+		vdcCR.Annotations["ovim.io/updated-by"] = username
+		vdcCR.Annotations["ovim.io/updated-at"] = time.Now().Format(time.RFC3339)
+
+		if err := h.k8sClient.Update(ctx, vdcCR); err != nil {
+			klog.Errorf("Failed to update VirtualDataCenter CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update VDC CRD"})
+			return
+		}
+
+		klog.Infof("Updated VirtualDataCenter CRD %s by user %s (%s)", id, username, userID)
+
+		// Return updated VDC data from CRD
+		response := &models.VirtualDataCenter{
+			ID:                vdcCR.Name,
+			Name:              vdcCR.Spec.DisplayName,
+			Description:       vdcCR.Spec.Description,
+			OrgID:             vdcCR.Spec.OrganizationRef,
+			DisplayName:       &vdcCR.Spec.DisplayName,
+			CRName:            vdcCR.Name,
+			CRNamespace:       vdcCR.Namespace,
+			WorkloadNamespace: vdcCR.Status.Namespace,
+			NetworkPolicy:     vdcCR.Spec.NetworkPolicy,
+			Phase:             string(vdcCR.Status.Phase),
+		}
+
+		c.JSON(http.StatusOK, response)
+	} else {
+		klog.Warningf("Kubernetes client not available - cannot update VDC CRD %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client not available"})
 	}
-
-	klog.Infof("VDC %s (%s) updated by user %s (%s)", vdc.Name, vdc.ID, username, userID)
-
-	c.JSON(http.StatusOK, vdc)
 }
 
 // Delete handles deleting a VDC
@@ -383,150 +450,190 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 		return
 	}
 
-	// Get existing VDC
-	vdc, err := h.storage.GetVDC(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
-			return
-		}
-		klog.Errorf("Failed to get VDC %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
-		return
-	}
-
-	// Check permissions - only system admin and org admin can delete VDCs
-	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to delete VDC"})
-		return
-	}
-
-	// For org admin, ensure they can only delete VDCs in their own organization
-	if role == models.RoleOrgAdmin {
-		if userOrgID == "" || userOrgID != vdc.OrgID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Can only delete VDCs in your own organization"})
-			return
-		}
-	}
-
-	// Check for force parameter to enable cascade deletion
-	forceDelete := c.Query("force") == "true"
-
-	// Check if VDC has any VMs before deletion
-	vms, err := h.storage.ListVMs(vdc.OrgID)
-	if err != nil {
-		klog.Errorf("Failed to list VMs for VDC %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VDC resources"})
-		return
-	}
-
-	// Filter VMs that belong to this VDC
-	var vdcVMs []*models.VirtualMachine
-	for _, vm := range vms {
-		if vm.VDCID != nil && *vm.VDCID == id {
-			vdcVMs = append(vdcVMs, vm)
-		}
-	}
-
-	// Track initial VM count for response
-	initialVMCount := len(vdcVMs)
-
-	// Handle VM deletion based on force parameter
-	if len(vdcVMs) > 0 {
-		if !forceDelete {
-			// Protection mode: Block deletion and return detailed error
-			runningVMs := 0
-			var vmNames []string
-			for _, vm := range vdcVMs {
-				vmNames = append(vmNames, vm.Name)
-				if vm.Status == models.VMStatusRunning || vm.Status == models.VMStatusProvisioning {
-					runningVMs++
-				}
-			}
-
-			klog.Warningf("VDC %s deletion blocked - contains %d VMs (%d running): %v",
-				vdc.Name, len(vdcVMs), runningVMs, vmNames)
-
-			c.JSON(http.StatusConflict, gin.H{
-				"error": "Cannot delete VDC with existing VMs",
-				"details": gin.H{
-					"total_vms":   len(vdcVMs),
-					"running_vms": runningVMs,
-					"vm_names":    vmNames,
-					"suggestion":  "Use force=true parameter to delete VDC and all VMs, or delete VMs individually first",
-				},
-			})
-			return
-		} else {
-			// Force cascade deletion: Delete all VMs first
-			klog.Infof("Force deleting VDC %s with %d VMs by user %s (%s)", vdc.Name, len(vdcVMs), username, userID)
-
-			var deletionErrors []string
-			deletedVMs := 0
-
-			for _, vm := range vdcVMs {
-				if err := h.storage.DeleteVM(vm.ID); err != nil {
-					errMsg := fmt.Sprintf("Failed to delete VM %s (%s): %v", vm.Name, vm.ID, err)
-					klog.Errorf("Failed to delete VM %s (%s): %v", vm.Name, vm.ID, err)
-					deletionErrors = append(deletionErrors, errMsg)
-				} else {
-					deletedVMs++
-					klog.Infof("Deleted VM %s (%s) as part of VDC %s cascade deletion", vm.Name, vm.ID, vdc.Name)
-				}
-			}
-
-			// Log cascade deletion summary
-			if len(deletionErrors) > 0 {
-				klog.Warningf("VDC %s cascade deletion: deleted %d/%d VMs, %d errors occurred",
-					vdc.Name, deletedVMs, len(vdcVMs), len(deletionErrors))
-			} else {
-				klog.Infof("VDC %s cascade deletion: successfully deleted all %d VMs", vdc.Name, deletedVMs)
-			}
-		}
-	}
-
-	// Delete VDC namespace and resources if OpenShift client is available
-	if h.openshiftClient != nil {
+	// Delete VirtualDataCenter CRD if k8sClient is available
+	if h.k8sClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Delete namespace (this will delete all resources in it including ResourceQuota and LimitRange)
-		if err := h.openshiftClient.DeleteNamespace(ctx, vdc.WorkloadNamespace); err != nil {
-			klog.Errorf("Failed to delete VDC namespace %s: %v", vdc.WorkloadNamespace, err)
-			// Log error but continue with VDC deletion from database
-			// The namespace can be cleaned up manually if needed
+		// First, find the VDC CRD
+		var vdcCR *ovimv1.VirtualDataCenter
+		var orgNamespace string
+
+		// Try to find the VDC by listing all VDCs and finding the one with matching name
+		vdcList := &ovimv1.VirtualDataCenterList{}
+		if err := h.k8sClient.List(ctx, vdcList); err != nil {
+			klog.Errorf("Failed to list VDCs to find %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+			return
+		}
+
+		for _, vdc := range vdcList.Items {
+			if vdc.Name == id {
+				vdcCR = &vdc
+				orgNamespace = vdc.Namespace
+				break
+			}
+		}
+
+		if vdcCR == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+			return
+		}
+
+		// Check permissions - only system admin and org admin can delete VDCs
+		if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to delete VDC"})
+			return
+		}
+
+		// For org admin, ensure they can only delete VDCs in their own organization
+		if role == models.RoleOrgAdmin {
+			expectedOrgNamespace := fmt.Sprintf("org-%s", userOrgID)
+			if userOrgID == "" || orgNamespace != expectedOrgNamespace {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Can only delete VDCs in your own organization"})
+				return
+			}
+		}
+
+		// Add deletion annotation for audit
+		if vdcCR.Annotations == nil {
+			vdcCR.Annotations = make(map[string]string)
+		}
+		vdcCR.Annotations["ovim.io/deleted-by"] = username
+		vdcCR.Annotations["ovim.io/deleted-at"] = time.Now().Format(time.RFC3339)
+
+		if err := h.k8sClient.Update(ctx, vdcCR); err != nil {
+			klog.Warningf("Failed to add deletion annotation to VDC CRD %s: %v", id, err)
+		}
+
+		// Delete the VDC CRD
+		if err := h.k8sClient.Delete(ctx, vdcCR); err != nil {
+			klog.Errorf("Failed to delete VirtualDataCenter CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VDC CRD"})
+			return
+		}
+
+		klog.Infof("Deleted VirtualDataCenter CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "VDC deletion initiated - resources will be cleaned up by controller",
+		})
+	} else {
+		klog.Warningf("Kubernetes client not available - using legacy VDC deletion for %s", id)
+
+		// Fallback to legacy direct deletion for backward compatibility
+		// Get VDC from storage first
+		vdc, err := h.storage.GetVDC(id)
+		if err != nil {
+			if err == storage.ErrNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+				return
+			}
+			klog.Errorf("Failed to get VDC %s for user %s (%s): %v", id, username, userID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+			return
+		}
+
+		// Check permissions - only system admin and org admin can delete VDCs
+		if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to delete VDC"})
+			return
+		}
+
+		// For org admin, ensure they can only delete VDCs in their own organization
+		if role == models.RoleOrgAdmin {
+			if userOrgID == "" || userOrgID != vdc.OrgID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Can only delete VDCs in your own organization"})
+				return
+			}
+		}
+
+		// Check for force parameter to handle cascading deletion
+		forceDelete := c.Query("force") == "true"
+
+		// Check if there are VMs in this VDC that would prevent deletion
+		vms, err := h.storage.ListVMs(vdc.OrgID)
+		if err != nil {
+			klog.Errorf("Failed to list VMs for VDC %s deletion check: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VDC dependencies"})
+			return
+		}
+
+		// Filter VMs that belong to this VDC
+		var vdcVMs []*models.VirtualMachine
+		for _, vm := range vms {
+			if vm.VDCID != nil && *vm.VDCID == id {
+				vdcVMs = append(vdcVMs, vm)
+			}
+		}
+
+		// If there are VMs and force is not set, block deletion
+		if len(vdcVMs) > 0 && !forceDelete {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "Cannot delete VDC with existing VMs",
+				"details": gin.H{
+					"vms_count":  len(vdcVMs),
+					"suggestion": "Use force=true parameter to delete VDC and all VMs, or delete VMs manually first",
+				},
+			})
+			return
+		}
+
+		// If force delete is requested, delete all VMs first
+		var deletedVMs int
+		if forceDelete && len(vdcVMs) > 0 {
+			for _, vm := range vdcVMs {
+				if err := h.storage.DeleteVM(vm.ID); err != nil {
+					klog.Errorf("Failed to delete VM %s during VDC %s cascade deletion: %v", vm.ID, id, err)
+					// Continue with other VMs even if one fails
+				} else {
+					deletedVMs++
+					klog.Infof("Deleted VM %s (%s) during VDC %s cascade deletion", vm.Name, vm.ID, id)
+				}
+			}
+		}
+
+		// Delete VDC namespace and resources if OpenShift client is available
+		if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Delete VDC namespace (this will delete all resources in it)
+			if err := h.openshiftClient.DeleteNamespace(ctx, vdc.WorkloadNamespace); err != nil {
+				klog.Errorf("Failed to delete VDC namespace %s for VDC %s: %v", vdc.WorkloadNamespace, id, err)
+				// Log error but continue with VDC deletion from database
+			} else {
+				klog.Infof("Deleted VDC namespace %s for VDC %s", vdc.WorkloadNamespace, id)
+			}
 		} else {
-			klog.Infof("Deleted VDC namespace %s for VDC %s", vdc.WorkloadNamespace, vdc.Name)
+			klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.WorkloadNamespace, id)
 		}
-	} else {
-		klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.WorkloadNamespace, vdc.Name)
-	}
 
-	// Delete VDC from database
-	if err := h.storage.DeleteVDC(id); err != nil {
-		klog.Errorf("Failed to delete VDC %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VDC"})
-		return
-	}
-
-	// Prepare response with cascade deletion details
-	response := gin.H{
-		"message": "VDC deleted successfully",
-	}
-
-	// Add cascade deletion information if force delete was used
-	if forceDelete && initialVMCount > 0 {
-		response["cascade_deletion"] = gin.H{
-			"total_vms_deleted":   initialVMCount,
-			"force_delete_used":   true,
-			"deletion_successful": true,
+		// Delete VDC from storage
+		if err := h.storage.DeleteVDC(id); err != nil {
+			klog.Errorf("Failed to delete VDC %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VDC"})
+			return
 		}
-		klog.Infof("VDC %s (%s) and %d VMs cascade deleted by user %s (%s)", vdc.Name, vdc.ID, initialVMCount, username, userID)
-	} else {
-		klog.Infof("VDC %s (%s) deleted by user %s (%s)", vdc.Name, vdc.ID, username, userID)
-	}
 
-	c.JSON(http.StatusOK, response)
+		klog.Infof("Deleted VDC %s (%s) by user %s (%s)", vdc.Name, id, username, userID)
+
+		response := gin.H{
+			"message": "VDC deleted successfully",
+		}
+
+		// Add cascade deletion information if it occurred
+		if forceDelete && len(vdcVMs) > 0 {
+			response["cascade_deletion"] = gin.H{
+				"total_vms_deleted":   deletedVMs,
+				"total_vms_found":     len(vdcVMs),
+				"force_delete_used":   true,
+				"deletion_successful": true,
+			}
+		}
+
+		c.JSON(http.StatusOK, response)
+	}
 }
 
 // ListUserVDCs handles listing VDCs for the current user's organization
@@ -601,7 +708,7 @@ func (h *VDCHandlers) GetLimitRange(c *gin.Context) {
 	}
 
 	// Get LimitRange from OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -688,7 +795,7 @@ func (h *VDCHandlers) UpdateLimitRange(c *gin.Context) {
 	}
 
 	// Update LimitRange in OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -767,7 +874,7 @@ func (h *VDCHandlers) DeleteLimitRange(c *gin.Context) {
 	}
 
 	// Delete LimitRange from OpenShift cluster if client is available
-	if h.openshiftClient != nil {
+	if h.openshiftClient != nil && !reflect.ValueOf(h.openshiftClient).IsNil() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 

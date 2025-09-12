@@ -100,13 +100,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
 
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
-
 				vdcs := []*models.VirtualDataCenter{
 					{
 						ID:                "vdc-123",
@@ -158,13 +151,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
 
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
-
 				vdcs := []*models.VirtualDataCenter{
 					{
 						ID:                "vdc-123",
@@ -214,13 +200,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 					DiskSize: "20Gi",
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
-
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
 
 				vdcs := []*models.VirtualDataCenter{
 					{
@@ -272,13 +251,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
 
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
-
 				vdcs := []*models.VirtualDataCenter{
 					{
 						ID:                "vdc-123",
@@ -328,13 +300,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 					DiskSize: "20Gi",
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
-
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
 
 				vdcs := []*models.VirtualDataCenter{
 					{
@@ -387,13 +352,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
 
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
-
 				vdcs := []*models.VirtualDataCenter{
 					{
 						ID:                "vdc-123",
@@ -435,13 +393,6 @@ func TestVMHandlers_Create_WithLimitRangeValidation(t *testing.T) {
 					DiskSize: "20Gi",
 				}
 				ms.On("GetTemplate", "template-123").Return(template, nil)
-
-				org := &models.Organization{
-					ID:        "org-123",
-					Name:      "Test Organization",
-					Namespace: "org-test",
-				}
-				ms.On("GetOrganization", "org-123").Return(org, nil)
 
 				vdcs := []*models.VirtualDataCenter{
 					{
@@ -545,7 +496,7 @@ func TestNewVMHandlers(t *testing.T) {
 	mockProvisioner := &MockVMProvisioner{}
 	mockOpenShiftClient := &MockOpenShiftClient{}
 
-	handlers := NewVMHandlers(mockStorage, mockProvisioner, mockOpenShiftClient)
+	handlers := NewVMHandlers(mockStorage, mockProvisioner, nil, mockOpenShiftClient)
 
 	assert.NotNil(t, handlers)
 	assert.Equal(t, mockStorage, handlers.storage)

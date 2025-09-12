@@ -502,8 +502,7 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			role:     models.RoleSystemAdmin,
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
-				ms.On("DeleteOrganization", "failed-corp").Return(nil) // Rollback
+				// No storage calls expected since namespace creation fails first
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
 				moc.On("NamespaceExists", mock.Anything, "org-failed-corp").Return(false, nil)
@@ -550,7 +549,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(errors.New("database error"))
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				// Should not be called since database creation fails first
+				moc.On("NamespaceExists", mock.Anything, "org-db-fail-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-db-fail-corp", mock.Anything, mock.Anything).Return(nil)
+				moc.On("DeleteNamespace", mock.Anything, "org-db-fail-corp").Return(nil) // Rollback
 			},
 			expectedStatus: http.StatusInternalServerError,
 			description:    "Should fail organization creation if database creation fails",
@@ -618,19 +619,8 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				tt.mockOpenShiftBehavior(mockOpenShiftClient)
 			}
 
-			// Create handlers
-			var handlers *OrganizationHandlers
-			if mockOpenShiftClient != nil {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: mockOpenShiftClient,
-				}
-			} else {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: nil,
-				}
-			}
+			// Create handlers using constructor to ensure nil k8sClient for legacy mode
+			handlers := NewOrganizationHandlers(mockStorage, nil, mockOpenShiftClient)
 
 			// Setup request
 			c, w := setupGinContext("POST", "/organizations", tt.requestBody, tt.userID, tt.username, tt.role, tt.orgID)
@@ -792,19 +782,8 @@ func TestOrganizationHandlers_Delete_WithNamespace(t *testing.T) {
 				tt.mockOpenShiftBehavior(mockOpenShiftClient)
 			}
 
-			// Create handlers
-			var handlers *OrganizationHandlers
-			if mockOpenShiftClient != nil {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: mockOpenShiftClient,
-				}
-			} else {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: nil,
-				}
-			}
+			// Create handlers using constructor to ensure nil k8sClient for legacy mode
+			handlers := NewOrganizationHandlers(mockStorage, nil, mockOpenShiftClient)
 
 			// Setup request
 			c, w := setupGinContext("DELETE", "/organizations/"+tt.organizationID, nil, tt.userID, tt.username, tt.role, tt.orgID)
@@ -829,7 +808,7 @@ func TestNewOrganizationHandlers(t *testing.T) {
 	mockStorage := &MockStorage{}
 	mockOpenShiftClient := &MockOpenShiftClient{}
 
-	handlers := NewOrganizationHandlers(mockStorage, mockOpenShiftClient)
+	handlers := NewOrganizationHandlers(mockStorage, nil, mockOpenShiftClient)
 
 	assert.NotNil(t, handlers)
 	assert.Equal(t, mockStorage, handlers.storage)
@@ -849,8 +828,8 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 		"app.kubernetes.io/name":       "ovim",
 		"app.kubernetes.io/component":  "organization",
 		"app.kubernetes.io/managed-by": "ovim",
-		"ovim.io/organization-id":      "test-labels",
-		"ovim.io/organization-name":    "test-labels",
+		"ovim.io/organization":         "test-labels",
+		"type":                         "organization",
 	}
 
 	mockOpenShiftClient.On("CreateNamespace", mock.Anything, "org-test-labels", mock.MatchedBy(func(labels map[string]string) bool {
@@ -1105,19 +1084,8 @@ func TestOrganizationHandlers_Delete_WithCascadeResources(t *testing.T) {
 				tt.mockOpenShiftBehavior(mockOpenShiftClient)
 			}
 
-			// Create handlers
-			var handlers *OrganizationHandlers
-			if mockOpenShiftClient != nil {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: mockOpenShiftClient,
-				}
-			} else {
-				handlers = &OrganizationHandlers{
-					storage:         mockStorage,
-					openshiftClient: nil,
-				}
-			}
+			// Create handlers using constructor to ensure nil k8sClient for legacy mode
+			handlers := NewOrganizationHandlers(mockStorage, nil, mockOpenShiftClient)
 
 			// Setup request
 			c, w := setupGinContext("DELETE", "/organizations/"+tt.organizationID, nil, tt.userID, tt.username, tt.role, tt.orgID)
