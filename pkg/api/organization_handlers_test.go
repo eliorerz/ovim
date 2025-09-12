@@ -228,6 +228,11 @@ func (m *MockOpenShiftClient) CreateResourceQuota(ctx context.Context, namespace
 	return args.Error(0)
 }
 
+func (m *MockOpenShiftClient) CreateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error {
+	args := m.Called(ctx, namespace, minCPU, maxCPU, minMemory, maxMemory)
+	return args.Error(0)
+}
+
 func (m *MockOpenShiftClient) DeleteNamespace(ctx context.Context, name string) error {
 	args := m.Called(ctx, name)
 	return args.Error(0)
@@ -319,7 +324,7 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				Description:  "Organization with some custom quotas",
 				IsEnabled:    true,
 				CPUQuota:     intPtr(15),  // Custom CPU quota
-				MemoryQuota:  nil,         // Use default
+				MemoryQuota:  intPtr(20),  // Required value
 				StorageQuota: intPtr(300), // Custom storage quota
 			},
 			userID:   "user-123",
@@ -328,7 +333,7 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				ms.On("CreateOrganization", mock.MatchedBy(func(org *models.Organization) bool {
-					// Verify that custom quotas are set, defaults used where nil
+					// Verify that custom quotas are set correctly
 					return org.CPUQuota == 15 && org.MemoryQuota == 20 && org.StorageQuota == 300
 				})).Return(nil)
 			},
@@ -342,69 +347,62 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			description:              "Should create organization with mix of custom and default quotas",
 		},
 		{
-			name: "Organization creation with zero quotas (ignored)",
+			name: "Organization creation with zero quotas (rejected)",
 			requestBody: models.CreateOrganizationRequest{
 				Name:         "Zero Quota Corp",
-				Description:  "Organization with zero quotas (should use defaults)",
+				Description:  "Organization with zero quotas (should be rejected)",
 				IsEnabled:    true,
-				CPUQuota:     intPtr(0), // Zero CPU quota - should use default
-				MemoryQuota:  intPtr(0), // Zero memory quota - should use default
-				StorageQuota: intPtr(0), // Zero storage quota - should use default
+				CPUQuota:     intPtr(0), // Zero CPU quota - should be rejected
+				MemoryQuota:  intPtr(0), // Zero memory quota - should be rejected
+				StorageQuota: intPtr(0), // Zero storage quota - should be rejected
 			},
 			userID:   "user-123",
 			username: "admin",
 			role:     models.RoleSystemAdmin,
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("CreateOrganization", mock.MatchedBy(func(org *models.Organization) bool {
-					// Verify that defaults are used when zeros are provided
-					return org.CPUQuota == 10 && org.MemoryQuota == 20 && org.StorageQuota == 100
-				})).Return(nil)
+				// Should not be called due to validation failure
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "zero-quota-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "zero-quota-corp", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "zero-quota-corp", 10, 20, 100).Return(nil)
+				// Should not be called due to validation failure
 			},
-			expectedStatus:           http.StatusCreated,
-			expectedNamespaceCreated: true,
-			description:              "Should use default quotas when zero values are provided",
+			expectedStatus:           http.StatusBadRequest,
+			expectedNamespaceCreated: false,
+			description:              "Should reject zero quotas",
 		},
 		{
-			name: "Organization creation with negative quotas (ignored)",
+			name: "Organization creation with negative quotas (rejected)",
 			requestBody: models.CreateOrganizationRequest{
 				Name:         "Negative Quota Corp",
-				Description:  "Organization with negative quotas (should use defaults)",
+				Description:  "Organization with negative quotas (should be rejected)",
 				IsEnabled:    true,
-				CPUQuota:     intPtr(-5),  // Negative CPU quota - should use default
-				MemoryQuota:  intPtr(-10), // Negative memory quota - should use default
-				StorageQuota: intPtr(-20), // Negative storage quota - should use default
+				CPUQuota:     intPtr(-5),  // Negative CPU quota - should be rejected
+				MemoryQuota:  intPtr(-10), // Negative memory quota - should be rejected
+				StorageQuota: intPtr(-20), // Negative storage quota - should be rejected
 			},
 			userID:   "user-123",
 			username: "admin",
 			role:     models.RoleSystemAdmin,
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("CreateOrganization", mock.MatchedBy(func(org *models.Organization) bool {
-					// Verify that defaults are used when negative values are provided
-					return org.CPUQuota == 10 && org.MemoryQuota == 20 && org.StorageQuota == 100
-				})).Return(nil)
+				// Should not be called due to validation failure
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "negative-quota-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "negative-quota-corp", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "negative-quota-corp", 10, 20, 100).Return(nil)
+				// Should not be called due to validation failure
 			},
-			expectedStatus:           http.StatusCreated,
-			expectedNamespaceCreated: true,
-			description:              "Should use default quotas when negative values are provided",
+			expectedStatus:           http.StatusBadRequest,
+			expectedNamespaceCreated: false,
+			description:              "Should reject negative quotas",
 		},
 		{
 			name: "Successful organization and namespace creation",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "Acme Corporation",
-				Description: "Test organization",
-				IsEnabled:   true,
+				Name:         "Acme Corporation",
+				Description:  "Test organization",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -425,9 +423,12 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Organization creation with existing namespace",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "Existing Corp",
-				Description: "Organization with existing namespace",
-				IsEnabled:   true,
+				Name:         "Existing Corp",
+				Description:  "Organization with existing namespace",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -447,9 +448,12 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Namespace creation fails with rollback",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "Failed Corp",
-				Description: "Organization that fails namespace creation",
-				IsEnabled:   true,
+				Name:         "Failed Corp",
+				Description:  "Organization that fails namespace creation",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -470,9 +474,12 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Organization creation without OpenShift client",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "No Client Corp",
-				Description: "Organization created without OpenShift client",
-				IsEnabled:   true,
+				Name:         "No Client Corp",
+				Description:  "Organization created without OpenShift client",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -488,9 +495,12 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Database creation fails",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "DB Fail Corp",
-				Description: "Organization that fails database creation",
-				IsEnabled:   true,
+				Name:         "DB Fail Corp",
+				Description:  "Organization that fails database creation",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -508,9 +518,12 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Resource quota creation fails (non-fatal)",
 			requestBody: models.CreateOrganizationRequest{
-				Name:        "Quota Fail Corp",
-				Description: "Organization where quota creation fails",
-				IsEnabled:   true,
+				Name:         "Quota Fail Corp",
+				Description:  "Organization where quota creation fails",
+				IsEnabled:    true,
+				CPUQuota:     intPtr(10),
+				MemoryQuota:  intPtr(20),
+				StorageQuota: intPtr(100),
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -831,9 +844,12 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 	}
 
 	requestBody := models.CreateOrganizationRequest{
-		Name:        "Test Labels",
-		Description: "Test organization for labels",
-		IsEnabled:   true,
+		Name:         "Test Labels",
+		Description:  "Test organization for labels",
+		IsEnabled:    true,
+		CPUQuota:     intPtr(10),
+		MemoryQuota:  intPtr(20),
+		StorageQuota: intPtr(100),
 	}
 
 	c, w := setupGinContext("POST", "/organizations", requestBody, "user-123", "admin", models.RoleSystemAdmin, "")

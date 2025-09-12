@@ -457,6 +457,67 @@ func (c *Client) CreateNamespace(ctx context.Context, name string, labels map[st
 	return nil
 }
 
+// CreateLimitRange creates a LimitRange for enforcing per-VM resource limits
+func (c *Client) CreateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	// Check if LimitRange already exists (idempotent behavior)
+	_, err := c.kubeClient.CoreV1().LimitRanges(namespace).Get(ctx, "vm-limits", metav1.GetOptions{})
+	if err == nil {
+		// LimitRange already exists, nothing to do
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check if LimitRange exists: %w", err)
+	}
+
+	// Create LimitRange object with per-VM constraints using provided parameters
+	limitRange := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vm-limits",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "limitrange",
+				"app.kubernetes.io/managed-by": "ovim",
+			},
+		},
+		Spec: corev1.LimitRangeSpec{
+			Limits: []corev1.LimitRangeItem{
+				{
+					Type: corev1.LimitTypeContainer,
+					Default: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", maxCPU*1000)), // Default to max CPU
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", maxMemory)),  // Default to max memory
+					},
+					DefaultRequest: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", minCPU*1000)), // Default request to min CPU
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", minMemory)),  // Default request to min memory
+					},
+					Min: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", minCPU*1000)), // Minimum CPU from parameters
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", minMemory)),  // Minimum memory from parameters
+					},
+					Max: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", maxCPU*1000)), // Maximum CPU from parameters
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", maxMemory)),  // Maximum memory from parameters
+					},
+				},
+			},
+		},
+	}
+
+	// Create the LimitRange
+	_, err = c.kubeClient.CoreV1().LimitRanges(namespace).Create(ctx, limitRange, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create LimitRange for namespace %s: %w", namespace, err)
+	}
+
+	return nil
+}
+
 // CreateResourceQuota creates a resource quota for a namespace
 func (c *Client) CreateResourceQuota(ctx context.Context, namespace string, cpuQuota, memoryQuota, storageQuota int) error {
 	if c.kubeClient == nil {

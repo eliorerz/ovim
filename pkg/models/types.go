@@ -224,6 +224,14 @@ type VirtualMachine struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// LimitRangeRequest represents LimitRange parameters for VM resource constraints
+type LimitRangeRequest struct {
+	MinCPU    int `json:"min_cpu"`    // Minimum CPU cores per VM
+	MaxCPU    int `json:"max_cpu"`    // Maximum CPU cores per VM
+	MinMemory int `json:"min_memory"` // Minimum memory in GB per VM
+	MaxMemory int `json:"max_memory"` // Maximum memory in GB per VM
+}
+
 // CreateOrganizationRequest represents a request to create an organization
 type CreateOrganizationRequest struct {
 	Name        string `json:"name" binding:"required"`
@@ -234,6 +242,9 @@ type CreateOrganizationRequest struct {
 	CPUQuota     *int `json:"cpu_quota" binding:"required"`     // CPU cores allocated to organization
 	MemoryQuota  *int `json:"memory_quota" binding:"required"`  // Memory in GB allocated to organization
 	StorageQuota *int `json:"storage_quota" binding:"required"` // Storage in GB allocated to organization
+
+	// Optional LimitRange for VM resource constraints
+	LimitRange *LimitRangeRequest `json:"limit_range,omitempty"` // Per-VM resource limits (optional)
 }
 
 // UpdateOrganizationRequest represents a request to update an organization

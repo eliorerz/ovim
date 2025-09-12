@@ -19,6 +19,7 @@ import (
 type OpenShiftClient interface {
 	CreateNamespace(ctx context.Context, name string, labels map[string]string, annotations map[string]string) error
 	CreateResourceQuota(ctx context.Context, namespace string, cpuQuota, memoryQuota, storageQuota int) error
+	CreateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error
 	DeleteNamespace(ctx context.Context, name string) error
 	NamespaceExists(ctx context.Context, name string) (bool, error)
 }
@@ -184,6 +185,20 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 			} else {
 				klog.Infof("Created resource quota for organization %s namespace %s (CPU: %d, Memory: %dGi, Storage: %dGi)",
 					orgID, namespace, org.CPUQuota, org.MemoryQuota, org.StorageQuota)
+			}
+
+			// Create LimitRange for per-VM resource constraints if provided
+			if req.LimitRange != nil {
+				lr := req.LimitRange
+				if err := h.openshiftClient.CreateLimitRange(ctx, namespace, lr.MinCPU, lr.MaxCPU, lr.MinMemory, lr.MaxMemory); err != nil {
+					klog.Errorf("Failed to create LimitRange for namespace %s: %v", namespace, err)
+					// Log error but don't fail the organization creation - LimitRange can be created later
+				} else {
+					klog.Infof("Created LimitRange for organization %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM)",
+						orgID, namespace, lr.MinCPU, lr.MaxCPU, lr.MinMemory, lr.MaxMemory)
+				}
+			} else {
+				klog.Infof("No LimitRange requested for organization %s namespace %s", orgID, namespace)
 			}
 
 			klog.Infof("Created namespace %s for organization %s", namespace, orgID)
