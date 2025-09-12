@@ -139,6 +139,18 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		}
 	}
 
+	// Verify that the organization exists
+	_, err := h.storage.GetOrganization(req.OrgID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Organization not found"})
+			return
+		}
+		klog.Errorf("Failed to verify organization %s: %v", req.OrgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify organization"})
+		return
+	}
+
 	// Generate VDC ID (use sanitized name for CRD)
 	vdcID := util.SanitizeKubernetesName(req.Name)
 
@@ -404,9 +416,7 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 
 	klog.Infof("Deleted VirtualDataCenter CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "VDC deletion initiated - resources will be cleaned up by controller",
-	})
+	c.JSON(http.StatusNoContent, nil)
 }
 
 // ListUserVDCs handles listing VDCs for the current user's organization

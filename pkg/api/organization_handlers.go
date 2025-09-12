@@ -79,9 +79,15 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	}
 
 	// Get user info from context
-	userID, username, _, _, ok := auth.GetUserFromContext(c)
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can create organizations
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can create organizations"})
 		return
 	}
 
@@ -150,9 +156,15 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 	}
 
 	// Get user info from context
-	userID, username, _, _, ok := auth.GetUserFromContext(c)
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can update organizations
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can update organizations"})
 		return
 	}
 
@@ -220,9 +232,31 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 	}
 
 	// Get user info from context
-	userID, username, _, _, ok := auth.GetUserFromContext(c)
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can delete organizations
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can delete organizations"})
+		return
+	}
+
+	// Check for dependent VDCs
+	vdcs, err := h.storage.ListVDCs(id)
+	if err != nil {
+		klog.Errorf("Failed to list VDCs for organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VDCs"})
+		return
+	}
+
+	if len(vdcs) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Cannot delete organization with existing VDCs",
+			"vdc_count": len(vdcs),
+		})
 		return
 	}
 
@@ -257,9 +291,7 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 
 	klog.Infof("Deleted Organization CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Organization deletion initiated - resources will be cleaned up by controller",
-	})
+	c.JSON(http.StatusNoContent, nil)
 }
 
 // GetUserOrganization handles getting the current user's organization
@@ -273,7 +305,7 @@ func (h *OrganizationHandlers) GetUserOrganization(c *gin.Context) {
 
 	// Check if user has an organization
 	if orgID == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User is not assigned to any organization"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User is not assigned to any organization"})
 		return
 	}
 

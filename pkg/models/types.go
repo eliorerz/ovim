@@ -15,6 +15,7 @@ const (
 	RoleSystemAdmin = "system_admin"
 	RoleOrgAdmin    = "org_admin"
 	RoleOrgUser     = "org_user"
+	RoleOrgMember   = "org_member"
 )
 
 // VM statuses
