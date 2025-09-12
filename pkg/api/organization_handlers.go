@@ -254,7 +254,7 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 
 	if len(vdcs) > 0 {
 		c.JSON(http.StatusConflict, gin.H{
-			"error": "Cannot delete organization with existing VDCs",
+			"error":     "Cannot delete organization with existing VDCs",
 			"vdc_count": len(vdcs),
 		})
 		return

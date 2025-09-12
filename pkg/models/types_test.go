@@ -877,6 +877,301 @@ func TestOrganization_CanAllocateResources_EmptyVDCs(t *testing.T) {
 	}
 }
 
+func TestVirtualDataCenter_GetResourceUsage(t *testing.T) {
+	vdc := VirtualDataCenter{
+		ID:           "vdc-123",
+		Name:         "Test VDC",
+		OrgID:        "org-123",
+		CPUQuota:     20,
+		MemoryQuota:  64,
+		StorageQuota: 200,
+	}
+
+	tests := []struct {
+		name                string
+		vms                 []*VirtualMachine
+		expectedCPUUsed     int
+		expectedMemoryUsed  int
+		expectedStorageUsed int
+		expectedVMCount     int
+	}{
+		{
+			name:                "Empty VMs list",
+			vms:                 []*VirtualMachine{},
+			expectedCPUUsed:     0,
+			expectedMemoryUsed:  0,
+			expectedStorageUsed: 0,
+			expectedVMCount:     0,
+		},
+		{
+			name: "VMs in this VDC - running status",
+			vms: []*VirtualMachine{
+				{
+					ID:       "vm1",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Running",
+					CPU:      4,
+					Memory:   "8Gi",
+					DiskSize: "50Gi",
+				},
+				{
+					ID:       "vm2",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Running",
+					CPU:      2,
+					Memory:   "4Gi",
+					DiskSize: "20Gi",
+				},
+			},
+			expectedCPUUsed:     6,  // 4 + 2
+			expectedMemoryUsed:  12, // 8 + 4
+			expectedStorageUsed: 70, // 50 + 20
+			expectedVMCount:     2,
+		},
+		{
+			name: "VMs with different statuses",
+			vms: []*VirtualMachine{
+				{
+					ID:       "vm1",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Running",
+					CPU:      4,
+					Memory:   "8Gi",
+					DiskSize: "50Gi",
+				},
+				{
+					ID:       "vm2",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Stopped",
+					CPU:      2,
+					Memory:   "4Gi",
+					DiskSize: "20Gi",
+				},
+				{
+					ID:       "vm3",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Paused",
+					CPU:      1,
+					Memory:   "2Gi",
+					DiskSize: "10Gi",
+				},
+				{
+					ID:       "vm4",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Error", // Should be excluded
+					CPU:      8,
+					Memory:   "16Gi",
+					DiskSize: "100Gi",
+				},
+			},
+			expectedCPUUsed:     7,  // 4 + 2 + 1 (excludes Error status)
+			expectedMemoryUsed:  14, // 8 + 4 + 2 (excludes Error status)
+			expectedStorageUsed: 80, // 50 + 20 + 10 (excludes Error status)
+			expectedVMCount:     3,  // Excludes Error status
+		},
+		{
+			name: "VMs in different VDCs",
+			vms: []*VirtualMachine{
+				{
+					ID:       "vm1",
+					VDCID:    stringPtr("vdc-123"), // This VDC
+					Status:   "Running",
+					CPU:      4,
+					Memory:   "8Gi",
+					DiskSize: "50Gi",
+				},
+				{
+					ID:       "vm2",
+					VDCID:    stringPtr("other-vdc"), // Different VDC
+					Status:   "Running",
+					CPU:      8,
+					Memory:   "16Gi",
+					DiskSize: "100Gi",
+				},
+				{
+					ID:       "vm3",
+					VDCID:    nil, // No VDC association
+					Status:   "Running",
+					CPU:      2,
+					Memory:   "4Gi",
+					DiskSize: "20Gi",
+				},
+			},
+			expectedCPUUsed:     4,  // Only vm1
+			expectedMemoryUsed:  8,  // Only vm1
+			expectedStorageUsed: 50, // Only vm1
+			expectedVMCount:     1,  // Only vm1
+		},
+		{
+			name: "Complex memory parsing",
+			vms: []*VirtualMachine{
+				{
+					ID:       "vm1",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Running",
+					CPU:      2,
+					Memory:   "2048Mi", // 2GB
+					DiskSize: "100GB",
+				},
+				{
+					ID:       "vm2",
+					VDCID:    stringPtr("vdc-123"),
+					Status:   "Running",
+					CPU:      4,
+					Memory:   "4GiB", // 4GB
+					DiskSize: "50Gi", // 50GB
+				},
+			},
+			expectedCPUUsed:     6,   // 2 + 4
+			expectedMemoryUsed:  6,   // 2 + 4
+			expectedStorageUsed: 150, // 100 + 50
+			expectedVMCount:     2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := vdc.GetResourceUsage(tt.vms)
+
+			// Verify usage calculations
+			assert.Equal(t, tt.expectedCPUUsed, usage.CPUUsed)
+			assert.Equal(t, tt.expectedMemoryUsed, usage.MemoryUsed)
+			assert.Equal(t, tt.expectedStorageUsed, usage.StorageUsed)
+			assert.Equal(t, tt.expectedVMCount, usage.VMCount)
+
+			// Verify quota comes from VDC
+			assert.Equal(t, vdc.CPUQuota, usage.CPUQuota)
+			assert.Equal(t, vdc.MemoryQuota, usage.MemoryQuota)
+			assert.Equal(t, vdc.StorageQuota, usage.StorageQuota)
+		})
+	}
+}
+
+func TestOrganization_GetResourceUsage_WithActualVMs(t *testing.T) {
+	org := Organization{
+		ID:   "org-123",
+		Name: "Test Organization",
+	}
+
+	tests := []struct {
+		name                 string
+		vdcs                 []*VirtualDataCenter
+		vms                  []*VirtualMachine
+		expectedCPUUsed      int
+		expectedMemoryUsed   int
+		expectedStorageUsed  int
+		expectedCPUQuota     int
+		expectedMemoryQuota  int
+		expectedStorageQuota int
+		expectedVDCCount     int
+	}{
+		{
+			name: "Organization with VDCs and VMs",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID:           "vdc1",
+					CPUQuota:     20,
+					MemoryQuota:  64,
+					StorageQuota: 200,
+				},
+				{
+					ID:           "vdc2",
+					CPUQuota:     10,
+					MemoryQuota:  32,
+					StorageQuota: 100,
+				},
+			},
+			vms: []*VirtualMachine{
+				{
+					ID:       "vm1",
+					VDCID:    stringPtr("vdc1"),
+					Status:   "Running",
+					CPU:      8,
+					Memory:   "16Gi",
+					DiskSize: "100Gi",
+				},
+				{
+					ID:       "vm2",
+					VDCID:    stringPtr("vdc1"),
+					Status:   "Running",
+					CPU:      4,
+					Memory:   "8Gi",
+					DiskSize: "50Gi",
+				},
+				{
+					ID:       "vm3",
+					VDCID:    stringPtr("vdc2"),
+					Status:   "Running",
+					CPU:      2,
+					Memory:   "4Gi",
+					DiskSize: "25Gi",
+				},
+				{
+					ID:       "vm4",
+					VDCID:    stringPtr("other-vdc"), // Different org
+					Status:   "Running",
+					CPU:      16,
+					Memory:   "32Gi",
+					DiskSize: "200Gi",
+				},
+			},
+			expectedCPUUsed:      14,  // 8+4 (vdc1) + 2 (vdc2)
+			expectedMemoryUsed:   28,  // 16+8 (vdc1) + 4 (vdc2)
+			expectedStorageUsed:  175, // 100+50 (vdc1) + 25 (vdc2)
+			expectedCPUQuota:     30,  // 20 (vdc1) + 10 (vdc2)
+			expectedMemoryQuota:  96,  // 64 (vdc1) + 32 (vdc2)
+			expectedStorageQuota: 300, // 200 (vdc1) + 100 (vdc2)
+			expectedVDCCount:     2,
+		},
+		{
+			name: "Organization with VDCs but no VMs",
+			vdcs: []*VirtualDataCenter{
+				{
+					ID:           "vdc1",
+					CPUQuota:     10,
+					MemoryQuota:  32,
+					StorageQuota: 100,
+				},
+			},
+			vms:                  []*VirtualMachine{},
+			expectedCPUUsed:      0,
+			expectedMemoryUsed:   0,
+			expectedStorageUsed:  0,
+			expectedCPUQuota:     10,
+			expectedMemoryQuota:  32,
+			expectedStorageQuota: 100,
+			expectedVDCCount:     1,
+		},
+		{
+			name:                 "Empty organization",
+			vdcs:                 []*VirtualDataCenter{},
+			vms:                  []*VirtualMachine{},
+			expectedCPUUsed:      0,
+			expectedMemoryUsed:   0,
+			expectedStorageUsed:  0,
+			expectedCPUQuota:     0,
+			expectedMemoryQuota:  0,
+			expectedStorageQuota: 0,
+			expectedVDCCount:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := org.GetResourceUsage(tt.vdcs, tt.vms)
+
+			// Verify all resource calculations
+			assert.Equal(t, tt.expectedCPUUsed, usage.CPUUsed)
+			assert.Equal(t, tt.expectedMemoryUsed, usage.MemoryUsed)
+			assert.Equal(t, tt.expectedStorageUsed, usage.StorageUsed)
+			assert.Equal(t, tt.expectedCPUQuota, usage.CPUQuota)
+			assert.Equal(t, tt.expectedMemoryQuota, usage.MemoryQuota)
+			assert.Equal(t, tt.expectedStorageQuota, usage.StorageQuota)
+			assert.Equal(t, tt.expectedVDCCount, usage.VDCCount)
+		})
+	}
+}
+
 func TestOrganization_IdentityContainer_JSONSerialization(t *testing.T) {
 	org := Organization{
 		ID:          "org-123",

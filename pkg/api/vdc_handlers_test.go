@@ -257,9 +257,13 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 		{
 			name: "unauthorized user (not system admin or org admin)",
 			requestBody: models.CreateVDCRequest{
-				Name:        "test-vdc",
-				DisplayName: "Test VDC",
-				OrgID:       "test-org",
+				Name:         "test-vdc",
+				DisplayName:  "Test VDC",
+				Description:  "A test VDC",
+				OrgID:        "test-org",
+				CPUQuota:     4,
+				MemoryQuota:  8,
+				StorageQuota: 50,
 			},
 			userRole:  models.RoleOrgUser,
 			userOrgID: "test-org",
@@ -535,7 +539,21 @@ func TestVDCHandlers_Delete_CRDOnly(t *testing.T) {
 				// No calls expected
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
-				// No calls expected
+				// Mock listing VDCs to find the one with matching name (needed before auth check)
+				mk.On("List", mock.Anything, mock.AnythingOfType("*v1.VirtualDataCenterList"), mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+					vdcList := args.Get(1).(*ovimv1.VirtualDataCenterList)
+					vdcList.Items = []ovimv1.VirtualDataCenter{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "test-vdc",
+								Namespace: "org-test-org",
+							},
+							Spec: ovimv1.VirtualDataCenterSpec{
+								OrganizationRef: "test-org",
+							},
+						},
+					}
+				})
 			},
 			expectedStatus: http.StatusForbidden,
 		},
@@ -622,20 +640,82 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 		userOrgID           string
 		mockStorageBehavior func(*MockStorage)
 		expectedStatus      int
+		expectedCPUUsed     int
+		expectedCPUQuota    int
+		expectedVMCount     int
 	}{
 		{
-			name:      "successful get resource usage",
+			name:      "successful get resource usage with VMs",
 			vdcID:     "test-vdc",
 			userRole:  models.RoleSystemAdmin,
 			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
-					ID:    "test-vdc",
-					Name:  "Test VDC",
-					OrgID: "test-org",
+					ID:           "test-vdc",
+					Name:         "Test VDC",
+					OrgID:        "test-org",
+					CPUQuota:     20,
+					MemoryQuota:  64,
+					StorageQuota: 200,
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{
+					{
+						ID:       "vm1",
+						Name:     "VM 1",
+						OrgID:    "test-org",
+						VDCID:    stringPtr("test-vdc"),
+						Status:   "Running",
+						CPU:      8,
+						Memory:   "16Gi",
+						DiskSize: "100Gi",
+					},
+					{
+						ID:       "vm2",
+						Name:     "VM 2",
+						OrgID:    "test-org",
+						VDCID:    stringPtr("test-vdc"),
+						Status:   "Running",
+						CPU:      4,
+						Memory:   "8Gi",
+						DiskSize: "50Gi",
+					},
+					{
+						ID:       "vm3",
+						Name:     "VM 3",
+						OrgID:    "test-org",
+						VDCID:    stringPtr("other-vdc"), // Different VDC
+						Status:   "Running",
+						CPU:      2,
+						Memory:   "4Gi",
+						DiskSize: "25Gi",
+					},
 				}, nil)
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus:   http.StatusOK,
+			expectedCPUUsed:  12, // Only vm1(8) + vm2(4) = 12, vm3 is in different VDC
+			expectedCPUQuota: 20,
+			expectedVMCount:  2, // Only 2 VMs in this VDC
+		},
+		{
+			name:      "successful get resource usage empty VDC",
+			vdcID:     "empty-vdc",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetVDC", "empty-vdc").Return(&models.VirtualDataCenter{
+					ID:           "empty-vdc",
+					Name:         "Empty VDC",
+					OrgID:        "test-org",
+					CPUQuota:     10,
+					MemoryQuota:  32,
+					StorageQuota: 100,
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)
+			},
+			expectedStatus:   http.StatusOK,
+			expectedCPUUsed:  0,
+			expectedCPUQuota: 10,
+			expectedVMCount:  0,
 		},
 		{
 			name:      "VDC not found",
@@ -646,6 +726,21 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 				ms.On("GetVDC", "nonexistent").Return(nil, storage.ErrNotFound)
 			},
 			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:      "VM list error",
+			vdcID:     "test-vdc",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
+					ID:    "test-vdc",
+					Name:  "Test VDC",
+					OrgID: "test-org",
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, fmt.Errorf("VM list error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
 		},
 		{
 			name:      "unauthorized access to different org VDC",
@@ -675,6 +770,14 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			handlers.GetResourceUsage(c)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusOK {
+				var response models.VDCResourceUsage
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedCPUUsed, response.CPUUsed)
+				assert.Equal(t, tt.expectedCPUQuota, response.CPUQuota)
+				assert.Equal(t, tt.expectedVMCount, response.VMCount)
+			}
 			mockStorage.AssertExpectations(t)
 		})
 	}

@@ -487,12 +487,117 @@ func TestOrganizationHandlers_GetResourceUsage(t *testing.T) {
 	tests := []struct {
 		name                string
 		orgID               string
+		userRole            string
+		userOrgID           string
 		mockStorageBehavior func(*MockStorage)
 		expectedStatus      int
+		expectedCPUUsed     int
+		expectedCPUQuota    int
+		expectedVDCCount    int
 	}{
 		{
-			name:  "successful get resource usage",
-			orgID: "test-org",
+			name:      "successful get resource usage with VMs",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{
+					{
+						ID:           "vdc1",
+						Name:         "VDC 1",
+						OrgID:        "test-org",
+						CPUQuota:     10,
+						MemoryQuota:  32,
+						StorageQuota: 100,
+					},
+					{
+						ID:           "vdc2",
+						Name:         "VDC 2",
+						OrgID:        "test-org",
+						CPUQuota:     8,
+						MemoryQuota:  16,
+						StorageQuota: 50,
+					},
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{
+					{
+						ID:       "vm1",
+						Name:     "VM 1",
+						OrgID:    "test-org",
+						VDCID:    stringPtr("vdc1"),
+						Status:   "Running",
+						CPU:      4,
+						Memory:   "8Gi",
+						DiskSize: "50Gi",
+					},
+					{
+						ID:       "vm2",
+						Name:     "VM 2",
+						OrgID:    "test-org",
+						VDCID:    stringPtr("vdc2"),
+						Status:   "Running",
+						CPU:      2,
+						Memory:   "4Gi",
+						DiskSize: "20Gi",
+					},
+				}, nil)
+			},
+			expectedStatus:   http.StatusOK,
+			expectedCPUUsed:  6,  // 4 + 2 from VMs
+			expectedCPUQuota: 18, // 10 + 8 from VDCs
+			expectedVDCCount: 2,
+		},
+		{
+			name:      "successful get resource usage empty organization",
+			orgID:     "empty-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "empty-org").Return(&models.Organization{
+					ID:   "empty-org",
+					Name: "Empty Organization",
+				}, nil)
+				ms.On("ListVDCs", "empty-org").Return([]*models.VirtualDataCenter{}, nil)
+				ms.On("ListVMs", "empty-org").Return([]*models.VirtualMachine{}, nil)
+			},
+			expectedStatus:   http.StatusOK,
+			expectedCPUUsed:  0,
+			expectedCPUQuota: 0,
+			expectedVDCCount: 0,
+		},
+		{
+			name:      "organization not found",
+			orgID:     "nonexistent",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "nonexistent").Return(nil, storage.ErrNotFound)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:      "VDC list error",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, fmt.Errorf("VDC list error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:      "VM list error",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				ms.On("GetOrganization", "test-org").Return(&models.Organization{
 					ID:   "test-org",
@@ -501,16 +606,19 @@ func TestOrganizationHandlers_GetResourceUsage(t *testing.T) {
 				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{
 					{ID: "vdc1", Name: "VDC 1", OrgID: "test-org"},
 				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, fmt.Errorf("VM list error"))
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 		},
 		{
-			name:  "organization not found",
-			orgID: "nonexistent",
+			name:      "unauthorized access to different org",
+			orgID:     "other-org",
+			userRole:  models.RoleOrgAdmin,
+			userOrgID: "my-org",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("GetOrganization", "nonexistent").Return(nil, storage.ErrNotFound)
+				// No calls expected - authorization check happens first
 			},
-			expectedStatus: http.StatusNotFound,
+			expectedStatus: http.StatusForbidden,
 		},
 	}
 
@@ -520,12 +628,20 @@ func TestOrganizationHandlers_GetResourceUsage(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 
 			handlers := NewOrganizationHandlers(mockStorage, nil)
-			c, w := setupGinContext("GET", fmt.Sprintf("/organizations/%s/usage", tt.orgID), nil, "user1", "admin", models.RoleSystemAdmin, "")
+			c, w := setupGinContext("GET", fmt.Sprintf("/organizations/%s/usage", tt.orgID), nil, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 
 			handlers.GetResourceUsage(c)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusOK {
+				var response models.OrganizationResourceUsage
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedCPUUsed, response.CPUUsed)
+				assert.Equal(t, tt.expectedCPUQuota, response.CPUQuota)
+				assert.Equal(t, tt.expectedVDCCount, response.VDCCount)
+			}
 			mockStorage.AssertExpectations(t)
 		})
 	}
@@ -538,17 +654,183 @@ func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 
 	handlers.UpdateResourceQuotas(c)
 
-	// This method is not implemented, should return 501
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	// This method is deprecated - organizations are identity containers only
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.Contains(t, response["error"], "identity containers only")
 }
 
 func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
-	mockStorage := &MockStorage{}
-	handlers := NewOrganizationHandlers(mockStorage, nil)
-	c, w := setupGinContext("POST", "/organizations/test-org/validate", nil, "user1", "admin", models.RoleSystemAdmin, "")
+	tests := []struct {
+		name                string
+		orgID               string
+		userRole            string
+		userOrgID           string
+		requestBody         interface{}
+		mockStorageBehavior func(*MockStorage)
+		expectedStatus      int
+		expectedCanAllocate bool
+	}{
+		{
+			name:      "successful validation - organizations are identity containers",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			requestBody: map[string]int{
+				"cpu_request":     10,
+				"memory_request":  20,
+				"storage_request": 100,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{
+					{
+						ID:           "vdc1",
+						CPUQuota:     20,
+						MemoryQuota:  40,
+						StorageQuota: 200,
+					},
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)
+			},
+			expectedStatus:      http.StatusOK,
+			expectedCanAllocate: true, // Organizations are identity containers - always allow
+		},
+		{
+			name:      "large resource request - organizations are identity containers",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			requestBody: map[string]int{
+				"cpu_request":     1000,
+				"memory_request":  2000,
+				"storage_request": 10000,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)
+			},
+			expectedStatus:      http.StatusOK,
+			expectedCanAllocate: true, // Organizations are identity containers - always allow
+		},
+		{
+			name:      "organization not found",
+			orgID:     "nonexistent",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			requestBody: map[string]int{
+				"cpu_request":     10,
+				"memory_request":  20,
+				"storage_request": 100,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "nonexistent").Return(nil, storage.ErrNotFound)
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:        "invalid request body",
+			orgID:       "test-org",
+			userRole:    models.RoleSystemAdmin,
+			userOrgID:   "",
+			requestBody: "invalid json",
+			mockStorageBehavior: func(ms *MockStorage) {
+				// No calls expected
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:      "unauthorized access to different org",
+			orgID:     "other-org",
+			userRole:  models.RoleOrgAdmin,
+			userOrgID: "my-org",
+			requestBody: map[string]int{
+				"cpu_request":     10,
+				"memory_request":  20,
+				"storage_request": 100,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				// No calls expected
+			},
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:      "VDC list error",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			requestBody: map[string]int{
+				"cpu_request":     10,
+				"memory_request":  20,
+				"storage_request": 100,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, fmt.Errorf("VDC list error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:      "VM list error",
+			orgID:     "test-org",
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			requestBody: map[string]int{
+				"cpu_request":     10,
+				"memory_request":  20,
+				"storage_request": 100,
+			},
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{
+					{ID: "vdc1", Name: "VDC 1"},
+				}, nil)
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, fmt.Errorf("VM list error"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
 
-	handlers.ValidateResourceAllocation(c)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStorage := &MockStorage{}
+			tt.mockStorageBehavior(mockStorage)
 
-	// This method is not implemented, should return 501
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+			handlers := NewOrganizationHandlers(mockStorage, nil)
+			c, w := setupGinContext("POST", fmt.Sprintf("/organizations/%s/validate", tt.orgID), tt.requestBody, "user1", "admin", tt.userRole, tt.userOrgID)
+			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
+
+			handlers.ValidateResourceAllocation(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusOK {
+				var response map[string]interface{}
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedCanAllocate, response["can_allocate"])
+				requested, ok := response["requested"].(map[string]interface{})
+				assert.True(t, ok)
+				assert.Contains(t, requested, "cpu")
+				assert.Contains(t, requested, "memory")
+				assert.Contains(t, requested, "storage")
+				assert.Contains(t, response, "current_usage")
+			}
+			mockStorage.AssertExpectations(t)
+		})
+	}
 }

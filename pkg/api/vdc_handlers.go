@@ -396,6 +396,30 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 		}
 	}
 
+	// Check for dependent VMs
+	vms, err := h.storage.ListVMs("")
+	if err != nil {
+		klog.Errorf("Failed to list VMs for VDC %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VMs"})
+		return
+	}
+
+	// Check if any VMs are assigned to this VDC
+	var vmsInVDC []*models.VirtualMachine
+	for _, vm := range vms {
+		if vm.VDCID != nil && *vm.VDCID == id {
+			vmsInVDC = append(vmsInVDC, vm)
+		}
+	}
+
+	if len(vmsInVDC) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":    "Cannot delete VDC with existing VMs",
+			"vm_count": len(vmsInVDC),
+		})
+		return
+	}
+
 	// Add deletion annotation for audit
 	if vdcCR.Annotations == nil {
 		vdcCR.Annotations = make(map[string]string)
@@ -436,7 +460,7 @@ func (h *VDCHandlers) ListUserVDCs(c *gin.Context) {
 
 	// Check if user has an organization
 	if userOrgID == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User is not assigned to any organization"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User is not assigned to any organization"})
 		return
 	}
 

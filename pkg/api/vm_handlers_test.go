@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
@@ -192,25 +193,32 @@ func TestVMHandlers_Create(t *testing.T) {
 			userRole:  models.RoleOrgUser,
 			userOrgID: "test-org",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
-					ID:                "test-vdc",
-					Name:              "Test VDC",
-					OrgID:             "test-org",
-					WorkloadNamespace: "vdc-test-org-test-vdc",
-				}, nil)
 				ms.On("GetTemplate", "test-template").Return(&models.Template{
 					ID:   "test-template",
 					Name: "Test Template",
 				}, nil)
 				ms.On("CreateVM", mock.AnythingOfType("*models.VirtualMachine")).Return(nil)
+				ms.On("UpdateVM", mock.AnythingOfType("*models.VirtualMachine")).Return(nil)
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
-				// Mock getting existing VDC CRD
-				mk.On("Get", mock.Anything, mock.AnythingOfType("client.ObjectKey"), mock.AnythingOfType("*v1.VirtualDataCenter"), mock.Anything).Return(nil).Run(func(args mock.Arguments) {
-					vdc := args.Get(2).(*ovimv1.VirtualDataCenter)
-					vdc.Name = "test-vdc"
-					vdc.Spec.OrganizationRef = "test-org"
-					vdc.Status.Namespace = "vdc-test-org-test-vdc"
+				// Mock listing VDCs in organization namespace
+				mk.On("List", mock.Anything, mock.AnythingOfType("*v1.VirtualDataCenterList"), mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+					vdcList := args.Get(1).(*ovimv1.VirtualDataCenterList)
+					vdcList.Items = []ovimv1.VirtualDataCenter{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "test-vdc",
+								Namespace: "org-test-org",
+							},
+							Spec: ovimv1.VirtualDataCenterSpec{
+								OrganizationRef: "test-org",
+							},
+							Status: ovimv1.VirtualDataCenterStatus{
+								Phase:     ovimv1.VirtualDataCenterPhaseActive,
+								Namespace: "vdc-test-org-test-vdc",
+							},
+						},
+					}
 				})
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
@@ -247,10 +255,17 @@ func TestVMHandlers_Create(t *testing.T) {
 			userRole:  models.RoleOrgUser,
 			userOrgID: "test-org",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("GetVDC", "nonexistent-vdc").Return(nil, storage.ErrNotFound)
+				ms.On("GetTemplate", "test-template").Return(&models.Template{
+					ID:   "test-template",
+					Name: "Test Template",
+				}, nil)
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
-				// No calls expected
+				// Mock listing VDCs in organization namespace returning empty list
+				mk.On("List", mock.Anything, mock.AnythingOfType("*v1.VirtualDataCenterList"), mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+					vdcList := args.Get(1).(*ovimv1.VirtualDataCenterList)
+					vdcList.Items = []ovimv1.VirtualDataCenter{} // Empty list
+				})
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
 				// No calls expected
@@ -258,7 +273,7 @@ func TestVMHandlers_Create(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "unauthorized access to different org VDC",
+			name: "no VDC available in organization",
 			requestBody: models.CreateVMRequest{
 				Name:       "test-vm",
 				TemplateID: "test-template",
@@ -268,19 +283,22 @@ func TestVMHandlers_Create(t *testing.T) {
 			userRole:  models.RoleOrgUser,
 			userOrgID: "test-org",
 			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("GetVDC", "other-vdc").Return(&models.VirtualDataCenter{
-					ID:    "other-vdc",
-					Name:  "Other VDC",
-					OrgID: "other-org", // Different org
+				ms.On("GetTemplate", "test-template").Return(&models.Template{
+					ID:   "test-template",
+					Name: "Test Template",
 				}, nil)
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
-				// No calls expected
+				// Mock listing VDCs in organization namespace returning empty list (no VDCs)
+				mk.On("List", mock.Anything, mock.AnythingOfType("*v1.VirtualDataCenterList"), mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+					vdcList := args.Get(1).(*ovimv1.VirtualDataCenterList)
+					vdcList.Items = []ovimv1.VirtualDataCenter{} // Empty list
+				})
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
 				// No calls expected
 			},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -402,12 +420,15 @@ func TestVMHandlers_GetStatus(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1", // Same as request user
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
 					ID:                "test-vdc",
 					WorkloadNamespace: "vdc-test-org-test-vdc",
 				}, nil)
+				ms.On("UpdateVM", mock.AnythingOfType("*models.VirtualMachine")).Return(nil)
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
 				mp.On("GetVMStatus", mock.Anything, "vm1", "vdc-test-org-test-vdc").Return(&kubevirt.VMStatus{
@@ -439,6 +460,8 @@ func TestVMHandlers_GetStatus(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
@@ -495,6 +518,8 @@ func TestVMHandlers_UpdatePower(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
@@ -518,6 +543,8 @@ func TestVMHandlers_UpdatePower(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
@@ -541,7 +568,10 @@ func TestVMHandlers_UpdatePower(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
+					Status:  models.VMStatusRunning,
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
 					ID:                "test-vdc",
@@ -624,6 +654,8 @@ func TestVMHandlers_Delete(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
@@ -631,6 +663,7 @@ func TestVMHandlers_Delete(t *testing.T) {
 					WorkloadNamespace: "vdc-test-org-test-vdc",
 				}, nil)
 				ms.On("UpdateVM", mock.AnythingOfType("*models.VirtualMachine")).Return(nil)
+				ms.On("DeleteVM", "vm1").Return(nil)
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
 				mp.On("DeleteVM", mock.Anything, "vm1", "vdc-test-org-test-vdc").Return(nil)
@@ -676,12 +709,15 @@ func TestVMHandlers_Delete(t *testing.T) {
 				ms.On("GetVM", "vm1").Return(&models.VirtualMachine{
 					ID:      "vm1",
 					Name:    "Test VM",
+					OrgID:   "test-org",
+					VDCID:   stringPtr("test-vdc"),
 					OwnerID: "user1",
 				}, nil)
 				ms.On("GetVDC", "test-vdc").Return(&models.VirtualDataCenter{
 					ID:                "test-vdc",
 					WorkloadNamespace: "vdc-test-org-test-vdc",
 				}, nil)
+				ms.On("UpdateVM", mock.AnythingOfType("*models.VirtualMachine")).Return(nil)
 			},
 			mockProvBehavior: func(mp *MockVMProvisioner) {
 				mp.On("DeleteVM", mock.Anything, "vm1", "vdc-test-org-test-vdc").Return(fmt.Errorf("kubevirt error"))
