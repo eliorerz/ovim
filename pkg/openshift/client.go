@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	templatev1 "github.com/openshift/api/template/v1"
@@ -12,6 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -55,6 +59,7 @@ type Client struct {
 	config         *config.OpenShiftConfig
 	kubeClient     kubernetes.Interface
 	templateClient templateclient.TemplateV1Interface
+	dynamicClient  dynamic.Interface
 	restConfig     *rest.Config
 }
 
@@ -90,10 +95,16 @@ func NewClient(cfg *config.OpenShiftConfig) (*Client, error) {
 		return nil, fmt.Errorf("failed to create template client: %w", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
 	return &Client{
 		config:         cfg,
 		kubeClient:     kubeClient,
 		templateClient: templateClient,
+		dynamicClient:  dynamicClient,
 		restConfig:     restConfig,
 	}, nil
 }
@@ -417,9 +428,70 @@ func (c *Client) DeployVM(ctx context.Context, req DeployVMRequest) (*VirtualMac
 
 // GetVMs retrieves deployed VMs from OpenShift
 func (c *Client) GetVMs(ctx context.Context, namespace string) ([]VirtualMachine, error) {
-	// TODO: Implement KubeVirt VM listing from the cluster
-	// For now, return empty list until full implementation
-	return []VirtualMachine{}, nil
+	if c.dynamicClient == nil {
+		return nil, fmt.Errorf("dynamic client not initialized")
+	}
+
+	// Define the KubeVirt VirtualMachine resource
+	vmGVR := schema.GroupVersionResource{
+		Group:    "kubevirt.io",
+		Version:  "v1",
+		Resource: "virtualmachines",
+	}
+
+	// List VirtualMachines from the specified namespace
+	vmList, err := c.dynamicClient.Resource(vmGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// If KubeVirt is not installed or VMs not found, return empty list instead of error
+		if errors.IsNotFound(err) || strings.Contains(err.Error(), "no matches for kind") {
+			return []VirtualMachine{}, nil
+		}
+		return nil, fmt.Errorf("failed to list VMs from namespace %s: %w", namespace, err)
+	}
+
+	vms := make([]VirtualMachine, 0, len(vmList.Items))
+	for _, item := range vmList.Items {
+		vm := c.convertKubeVirtVM(&item)
+		vms = append(vms, vm)
+	}
+
+	return vms, nil
+}
+
+// convertKubeVirtVM converts a KubeVirt VirtualMachine to our VirtualMachine struct
+func (c *Client) convertKubeVirtVM(obj *unstructured.Unstructured) VirtualMachine {
+	vm := VirtualMachine{
+		ID:        string(obj.GetUID()),
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		Template:  "",
+		Created:   obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
+	}
+
+	// Extract status information
+	status, found, err := unstructured.NestedString(obj.Object, "status", "phase")
+	if err == nil && found {
+		vm.Status = status
+	} else {
+		// Fallback to printableStatus if phase is not available
+		printableStatus, found, err := unstructured.NestedString(obj.Object, "status", "printableStatus")
+		if err == nil && found {
+			vm.Status = printableStatus
+		} else {
+			vm.Status = "Unknown"
+		}
+	}
+
+	// Try to extract template information from labels or annotations
+	if templateName := obj.GetLabels()["vm.kubevirt.io/template"]; templateName != "" {
+		vm.Template = templateName
+	} else if templateName := obj.GetAnnotations()["vm.kubevirt.io/template"]; templateName != "" {
+		vm.Template = templateName
+	} else {
+		vm.Template = "Custom"
+	}
+
+	return vm
 }
 
 // IsConnected checks if the OpenShift client is properly connected

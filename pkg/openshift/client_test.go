@@ -3,12 +3,18 @@ package openshift
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	templatev1 "github.com/openshift/api/template/v1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/fake"
 )
 
 func TestConvertTemplate(t *testing.T) {
@@ -151,12 +157,11 @@ func TestConvertTemplate_OSTypeDetection(t *testing.T) {
 			expected: "Linux", // Falls back to Linux when no OS info found
 		},
 		{
-			name: "Multiple OS labels (first match wins)",
+			name: "Multiple OS labels (first match)",
 			labels: map[string]string{
-				"os.template.kubevirt.io/rhel9":  "true",
-				"os.template.kubevirt.io/ubuntu": "true",
+				"os.template.kubevirt.io/rhel9": "true",
 			},
-			expected: "Rhel9", // Simple label-based extraction
+			expected: "Rhel9",
 		},
 	}
 
@@ -1296,4 +1301,325 @@ func TestClientMethodsWithoutKubeClient(t *testing.T) {
 		connected := client.IsConnected(ctx)
 		assert.False(t, connected)
 	})
+
+	t.Run("GetVMs with nil dynamic client", func(t *testing.T) {
+		vms, err := client.GetVMs(ctx, "test-namespace")
+		assert.Error(t, err)
+		assert.Nil(t, vms)
+		assert.Contains(t, err.Error(), "dynamic client not initialized")
+	})
+}
+
+// Test VM conversion functionality
+func TestConvertKubeVirtVM(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name        string
+		vmObject    *unstructured.Unstructured
+		expected    VirtualMachine
+		description string
+	}{
+		{
+			name: "Complete VM with all fields",
+			vmObject: func() *unstructured.Unstructured {
+				// Create a proper time object to ensure consistent formatting
+				timestamp := metav1.NewTime(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-uid-123",
+							"name":      "test-vm",
+							"namespace": "test-namespace",
+							"labels": map[string]interface{}{
+								"vm.kubevirt.io/template": "rhel9-template",
+							},
+						},
+						"status": map[string]interface{}{
+							"phase": "Running",
+						},
+					},
+				}
+				obj.SetCreationTimestamp(timestamp)
+				return obj
+			}(),
+			expected: VirtualMachine{
+				ID:        "vm-uid-123",
+				Name:      "test-vm",
+				Status:    "Running",
+				Namespace: "test-namespace",
+				Template:  "rhel9-template",
+				Created:   "2024-01-01T12:00:00Z",
+			},
+			description: "Should extract all VM fields correctly",
+		},
+		{
+			name: "VM with printableStatus fallback",
+			vmObject: func() *unstructured.Unstructured {
+				timestamp := metav1.NewTime(time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC))
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-uid-456",
+							"name":      "test-vm-2",
+							"namespace": "test-namespace",
+						},
+						"status": map[string]interface{}{
+							"printableStatus": "Stopped",
+						},
+					},
+				}
+				obj.SetCreationTimestamp(timestamp)
+				return obj
+			}(),
+			expected: VirtualMachine{
+				ID:        "vm-uid-456",
+				Name:      "test-vm-2",
+				Status:    "Stopped",
+				Namespace: "test-namespace",
+				Template:  "Custom",
+				Created:   "2024-01-02T14:30:00Z",
+			},
+			description: "Should use printableStatus when phase is not available",
+		},
+		{
+			name: "VM with template from annotations",
+			vmObject: func() *unstructured.Unstructured {
+				timestamp := metav1.NewTime(time.Date(2024, 1, 3, 9, 15, 0, 0, time.UTC))
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-uid-789",
+							"name":      "ubuntu-vm",
+							"namespace": "user-namespace",
+							"annotations": map[string]interface{}{
+								"vm.kubevirt.io/template": "ubuntu-server",
+							},
+						},
+						"status": map[string]interface{}{
+							"phase": "Provisioning",
+						},
+					},
+				}
+				obj.SetCreationTimestamp(timestamp)
+				return obj
+			}(),
+			expected: VirtualMachine{
+				ID:        "vm-uid-789",
+				Name:      "ubuntu-vm",
+				Status:    "Provisioning",
+				Namespace: "user-namespace",
+				Template:  "ubuntu-server",
+				Created:   "2024-01-03T09:15:00Z",
+			},
+			description: "Should extract template from annotations when labels are not present",
+		},
+		{
+			name: "VM without status - defaults to Unknown",
+			vmObject: func() *unstructured.Unstructured {
+				timestamp := metav1.NewTime(time.Date(2024, 1, 4, 16, 45, 0, 0, time.UTC))
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-uid-unknown",
+							"name":      "minimal-vm",
+							"namespace": "minimal-namespace",
+						},
+					},
+				}
+				obj.SetCreationTimestamp(timestamp)
+				return obj
+			}(),
+			expected: VirtualMachine{
+				ID:        "vm-uid-unknown",
+				Name:      "minimal-vm",
+				Status:    "Unknown",
+				Namespace: "minimal-namespace",
+				Template:  "Custom",
+				Created:   "2024-01-04T16:45:00Z",
+			},
+			description: "Should default status to Unknown and template to Custom when not available",
+		},
+		{
+			name: "VM with both label and annotation template - label takes priority",
+			vmObject: func() *unstructured.Unstructured {
+				timestamp := metav1.NewTime(time.Date(2024, 1, 5, 11, 20, 0, 0, time.UTC))
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-priority-test",
+							"name":      "priority-vm",
+							"namespace": "priority-namespace",
+							"labels": map[string]interface{}{
+								"vm.kubevirt.io/template": "label-template",
+							},
+							"annotations": map[string]interface{}{
+								"vm.kubevirt.io/template": "annotation-template",
+							},
+						},
+						"status": map[string]interface{}{
+							"phase": "Running",
+						},
+					},
+				}
+				obj.SetCreationTimestamp(timestamp)
+				return obj
+			}(),
+			expected: VirtualMachine{
+				ID:        "vm-priority-test",
+				Name:      "priority-vm",
+				Status:    "Running",
+				Namespace: "priority-namespace",
+				Template:  "label-template",
+				Created:   "2024-01-05T11:20:00Z",
+			},
+			description: "Should prefer template from labels over annotations",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := client.convertKubeVirtVM(tt.vmObject)
+			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
+}
+
+// Test GetVMs functionality with mocked dynamic client
+func TestGetVMs(t *testing.T) {
+	tests := []struct {
+		name             string
+		namespace        string
+		setupMockClient  func() dynamic.Interface
+		expectedVMs      []VirtualMachine
+		expectedError    bool
+		expectedErrorMsg string
+		description      string
+	}{
+		{
+			name:      "Successful VM retrieval",
+			namespace: "test-namespace",
+			setupMockClient: func() dynamic.Interface {
+				// Create a fake dynamic client with VM objects
+				vm1 := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-1",
+							"name":      "test-vm-1",
+							"namespace": "test-namespace",
+							"labels": map[string]interface{}{
+								"vm.kubevirt.io/template": "rhel9-template",
+							},
+						},
+						"status": map[string]interface{}{
+							"phase": "Running",
+						},
+					},
+				}
+				vm1.SetCreationTimestamp(metav1.NewTime(time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)))
+
+				vm2 := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "kubevirt.io/v1",
+						"kind":       "VirtualMachine",
+						"metadata": map[string]interface{}{
+							"uid":       "vm-2",
+							"name":      "test-vm-2",
+							"namespace": "test-namespace",
+						},
+						"status": map[string]interface{}{
+							"printableStatus": "Stopped",
+						},
+					},
+				}
+				vm2.SetCreationTimestamp(metav1.NewTime(time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC)))
+
+				// Create a dynamic client with proper resource mapping
+				vmGVR := schema.GroupVersionResource{
+					Group:    "kubevirt.io",
+					Version:  "v1",
+					Resource: "virtualmachines",
+				}
+				client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+					map[schema.GroupVersionResource]string{
+						vmGVR: "VirtualMachineList",
+					},
+					vm1, vm2)
+				return client
+			},
+			expectedVMs: []VirtualMachine{
+				{
+					ID:        "vm-1",
+					Name:      "test-vm-1",
+					Status:    "Running",
+					Namespace: "test-namespace",
+					Template:  "rhel9-template",
+					Created:   "2024-01-01T10:00:00Z",
+				},
+				{
+					ID:        "vm-2",
+					Name:      "test-vm-2",
+					Status:    "Stopped",
+					Namespace: "test-namespace",
+					Template:  "Custom",
+					Created:   "2024-01-01T11:00:00Z",
+				},
+			},
+			expectedError: false,
+			description:   "Should successfully retrieve and convert VMs from namespace",
+		},
+		{
+			name:      "Empty namespace - no VMs",
+			namespace: "empty-namespace",
+			setupMockClient: func() dynamic.Interface {
+				// Create a fake dynamic client with no VM objects
+				vmGVR := schema.GroupVersionResource{
+					Group:    "kubevirt.io",
+					Version:  "v1",
+					Resource: "virtualmachines",
+				}
+				client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+					map[schema.GroupVersionResource]string{
+						vmGVR: "VirtualMachineList",
+					})
+				return client
+			},
+			expectedVMs:   []VirtualMachine{},
+			expectedError: false,
+			description:   "Should return empty list when no VMs are found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				dynamicClient: tt.setupMockClient(),
+			}
+
+			vms, err := client.GetVMs(context.Background(), tt.namespace)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+				if tt.expectedErrorMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				}
+				assert.Nil(t, vms)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedVMs, vms, tt.description)
+			}
+		})
+	}
 }

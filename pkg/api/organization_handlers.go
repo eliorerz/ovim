@@ -140,7 +140,6 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		return
 	}
 
-
 	// Create namespace in OpenShift cluster if client is available
 	if h.openshiftClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
