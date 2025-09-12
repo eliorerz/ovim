@@ -20,19 +20,17 @@ import (
 
 // VMHandlers handles VM-related requests
 type VMHandlers struct {
-	storage         storage.Storage
-	provisioner     kubevirt.VMProvisioner
-	k8sClient       client.Client
-	openshiftClient OpenShiftClient // Legacy support, will be phased out
+	storage     storage.Storage
+	provisioner kubevirt.VMProvisioner
+	k8sClient   client.Client
 }
 
 // NewVMHandlers creates a new VM handlers instance
-func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client, openshiftClient OpenShiftClient) *VMHandlers {
+func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client) *VMHandlers {
 	return &VMHandlers{
-		storage:         storage,
-		provisioner:     provisioner,
-		k8sClient:       k8sClient,
-		openshiftClient: openshiftClient,
+		storage:     storage,
+		provisioner: provisioner,
+		k8sClient:   k8sClient,
 	}
 }
 
@@ -127,54 +125,37 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Find a VDC in the user's organization
+	// Find a VDC in the user's organization using CRDs
 	var selectedVDC *ovimv1.VirtualDataCenter
-	var vdc *models.VirtualDataCenter
 
-	if h.k8sClient != nil {
-		// Use CRDs to find VDCs
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-		// List VDCs in the organization namespace
-		vdcList := &ovimv1.VirtualDataCenterList{}
-		orgNamespace := fmt.Sprintf("org-%s", userOrgID)
-		if err := h.k8sClient.List(ctx, vdcList, client.InNamespace(orgNamespace)); err != nil {
-			klog.Errorf("Failed to list VDCs for organization %s: %v", userOrgID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
-			return
-		}
+	// List VDCs in the organization namespace
+	vdcList := &ovimv1.VirtualDataCenterList{}
+	orgNamespace := fmt.Sprintf("org-%s", userOrgID)
+	if err := h.k8sClient.List(ctx, vdcList, client.InNamespace(orgNamespace)); err != nil {
+		klog.Errorf("Failed to list VDCs for organization %s: %v", userOrgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+		return
+	}
 
-		if len(vdcList.Items) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No VDC available in organization"})
-			return
-		}
+	if len(vdcList.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No VDC available in organization"})
+		return
+	}
 
-		// Use the first active VDC
-		for _, vdcItem := range vdcList.Items {
-			if vdcItem.Status.Phase == ovimv1.VirtualDataCenterPhaseActive && vdcItem.Status.Namespace != "" {
-				selectedVDC = &vdcItem
-				break
-			}
+	// Use the first active VDC
+	for _, vdcItem := range vdcList.Items {
+		if vdcItem.Status.Phase == ovimv1.VirtualDataCenterPhaseActive && vdcItem.Status.Namespace != "" {
+			selectedVDC = &vdcItem
+			break
 		}
+	}
 
-		if selectedVDC == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No active VDC available in organization"})
-			return
-		}
-	} else {
-		// Fallback to storage-based VDC lookup
-		vdcs, err := h.storage.ListVDCs(userOrgID)
-		if err != nil {
-			klog.Errorf("Failed to list VDCs for organization %s: %v", userOrgID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
-			return
-		}
-		if len(vdcs) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No VDC available in organization"})
-			return
-		}
-		vdc = vdcs[0] // Use the first VDC
+	if selectedVDC == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No active VDC available in organization"})
+		return
 	}
 
 	// Generate VM ID
@@ -202,33 +183,24 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		diskSize = template.DiskSize
 	}
 
-	// Validate VM specs and prepare VDC model
-	var vdcID string
-	var vdcForProvisioner *models.VirtualDataCenter
+	// Validate VM specs and prepare VDC model - CRD-based only
+	if selectedVDC == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No VDC found for organization"})
+		return
+	}
 
-	if selectedVDC != nil {
-		// CRD-based validation and setup
-		if err := h.validateVMLimitRangeCRD(selectedVDC, cpu, memory); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+	// CRD-based validation and setup
+	if err := h.validateVMLimitRangeCRD(selectedVDC, cpu, memory); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-		vdcID = selectedVDC.Name
-		vdcForProvisioner = &models.VirtualDataCenter{
-			ID:                selectedVDC.Name,
-			Name:              selectedVDC.Spec.DisplayName,
-			OrgID:             selectedVDC.Spec.OrganizationRef,
-			WorkloadNamespace: selectedVDC.Status.Namespace,
-		}
-	} else {
-		// Storage-based validation and setup
-		if err := h.validateVMLimitRange(vdc, cpu, memory); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		vdcID = vdc.ID
-		vdcForProvisioner = vdc
+	vdcID := selectedVDC.Name
+	vdcForProvisioner := &models.VirtualDataCenter{
+		ID:                selectedVDC.Name,
+		Name:              selectedVDC.Spec.DisplayName,
+		OrgID:             selectedVDC.Spec.OrganizationRef,
+		WorkloadNamespace: selectedVDC.Status.Namespace,
 	}
 
 	// Create VM model
@@ -287,12 +259,7 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		// Don't fail the request - VM was created successfully
 	}
 
-	var vdcName string
-	if selectedVDC != nil {
-		vdcName = selectedVDC.Spec.DisplayName
-	} else {
-		vdcName = vdc.Name
-	}
+	vdcName := selectedVDC.Spec.DisplayName
 	klog.Infof("VM %s (%s) created and provisioned in VDC %s (org %s) by user %s (%s)", vm.Name, vm.ID, vdcName, userOrgID, username, userID)
 
 	c.JSON(http.StatusCreated, vm)
@@ -695,57 +662,6 @@ func mapKubeVirtStatusToModel(phase string, ready bool) string {
 		}
 		return models.VMStatusPending
 	}
-}
-
-// validateVMLimitRange validates VM CPU and memory specifications against VDC LimitRange constraints
-func (h *VMHandlers) validateVMLimitRange(vdc *models.VirtualDataCenter, cpu int, memory string) error {
-	// Skip validation if OpenShift client is not available
-	if h.openshiftClient == nil {
-		klog.V(4).Infof("OpenShift client not available, skipping LimitRange validation for VM in VDC %s", vdc.ID)
-		return nil
-	}
-
-	// Get LimitRange information for the VDC namespace
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	limitRange, err := h.openshiftClient.GetLimitRange(ctx, vdc.WorkloadNamespace)
-	if err != nil {
-		klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", vdc.ID, vdc.WorkloadNamespace, err)
-		// Don't fail VM creation if we can't get LimitRange info - might not exist
-		klog.V(4).Infof("LimitRange check failed for VDC %s, allowing VM creation to proceed", vdc.ID)
-		return nil
-	}
-
-	// If LimitRange doesn't exist, allow any VM size
-	if !limitRange.Exists {
-		klog.V(6).Infof("No LimitRange found for VDC %s, allowing VM creation without constraints", vdc.ID)
-		return nil
-	}
-
-	// Parse memory string to GB for comparison
-	memoryGB := models.ParseMemoryString(memory)
-
-	// Validate CPU constraints
-	if limitRange.MinCPU > 0 && cpu < limitRange.MinCPU {
-		return fmt.Errorf("VM CPU (%d cores) is below VDC minimum limit (%d cores)", cpu, limitRange.MinCPU)
-	}
-	if limitRange.MaxCPU > 0 && cpu > limitRange.MaxCPU {
-		return fmt.Errorf("VM CPU (%d cores) exceeds VDC maximum limit (%d cores)", cpu, limitRange.MaxCPU)
-	}
-
-	// Validate memory constraints
-	if limitRange.MinMemory > 0 && memoryGB < limitRange.MinMemory {
-		return fmt.Errorf("VM memory (%dGB) is below VDC minimum limit (%dGB)", memoryGB, limitRange.MinMemory)
-	}
-	if limitRange.MaxMemory > 0 && memoryGB > limitRange.MaxMemory {
-		return fmt.Errorf("VM memory (%dGB) exceeds VDC maximum limit (%dGB)", memoryGB, limitRange.MaxMemory)
-	}
-
-	klog.V(6).Infof("VM specs validated successfully against VDC %s LimitRange: CPU=%d (limits: %d-%d), Memory=%dGB (limits: %d-%d)",
-		vdc.ID, cpu, limitRange.MinCPU, limitRange.MaxCPU, memoryGB, limitRange.MinMemory, limitRange.MaxMemory)
-
-	return nil
 }
 
 // validateVMLimitRangeCRD validates VM CPU and memory specifications against VDC CRD LimitRange constraints
