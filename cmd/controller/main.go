@@ -121,6 +121,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set up VM Controller
+	if err = (&controllers.VMReconciler{
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Storage: store,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "VM")
+		os.Exit(1)
+	}
+
 	// Set up webhook if enabled
 	if enableWebhook {
 		setupLog.Info("Setting up webhook")

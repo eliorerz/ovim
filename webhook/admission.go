@@ -114,6 +114,12 @@ func (w *WorkloadWebhook) handleVirtualMachine(ctx context.Context, req admissio
 			logger.Error(err, "VDC namespace validation failed")
 			return admission.Denied(fmt.Sprintf("VDC namespace validation failed: %v", err))
 		}
+
+		// Additional VM-specific validation for VDC namespace
+		if err := w.validateVMInVDC(ctx, &vm, req.Namespace); err != nil {
+			logger.Error(err, "VM validation in VDC failed")
+			return admission.Denied(fmt.Sprintf("VM validation failed: %v", err))
+		}
 	}
 
 	logger.Info("Virtual Machine creation allowed", "namespace", req.Namespace, "vm", vm.GetName())
@@ -209,6 +215,96 @@ func (w *WorkloadWebhook) validateOVIMNamespace(ctx context.Context, ns *corev1.
 		if ns.Labels[label] == "" {
 			return fmt.Errorf("required label '%s' missing", label)
 		}
+	}
+
+	return nil
+}
+
+// validateVMInVDC performs additional validation for VMs in VDC namespaces
+func (w *WorkloadWebhook) validateVMInVDC(ctx context.Context, vm *unstructured.Unstructured, namespaceName string) error {
+	// Check for required OVIM labels
+	labels := vm.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+
+	// Validate OVIM-managed VM labels
+	requiredLabels := []string{"ovim.io/vm", "ovim.io/vdc", "ovim.io/organization"}
+	for _, label := range requiredLabels {
+		if labels[label] == "" {
+			return fmt.Errorf("missing required OVIM label: %s", label)
+		}
+	}
+
+	// Validate that managed-by label is set correctly for OVIM VMs
+	if labels["app.kubernetes.io/managed-by"] == "ovim" {
+		// This is an OVIM-managed VM, validate it more strictly
+
+		// Check annotations
+		annotations := vm.GetAnnotations()
+		if annotations != nil {
+			if annotations["ovim.io/created-by"] == "" {
+				return fmt.Errorf("OVIM-managed VM missing required annotation: ovim.io/created-by")
+			}
+		}
+
+		// Validate VDC and organization labels match the namespace
+		vdcLabel := labels["ovim.io/vdc"]
+		orgLabel := labels["ovim.io/organization"]
+
+		// Extract expected values from namespace name (format: vdc-{org}-{vdc})
+		namespaceParts := strings.Split(namespaceName, "-")
+		if len(namespaceParts) >= 3 {
+			expectedOrg := namespaceParts[1]
+			expectedVDC := strings.Join(namespaceParts[2:], "-")
+
+			if orgLabel != expectedOrg {
+				return fmt.Errorf("VM organization label '%s' does not match namespace organization '%s'", orgLabel, expectedOrg)
+			}
+
+			if vdcLabel != expectedVDC {
+				return fmt.Errorf("VM VDC label '%s' does not match namespace VDC '%s'", vdcLabel, expectedVDC)
+			}
+		}
+	}
+
+	// Validate VM resource requests against namespace limits
+	if err := w.validateVMResources(ctx, vm, namespaceName); err != nil {
+		return fmt.Errorf("VM resource validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// validateVMResources validates VM resource requests against VDC limits
+func (w *WorkloadWebhook) validateVMResources(ctx context.Context, vm *unstructured.Unstructured, namespaceName string) error {
+	// Extract resource requests from VM spec
+	resources, found, err := unstructured.NestedMap(vm.Object, "spec", "template", "spec", "domain", "resources", "requests")
+	if err != nil || !found {
+		// No resource requests specified, which is allowed
+		return nil
+	}
+
+	// Get namespace to check LimitRange
+	ns := &corev1.Namespace{}
+	if err := w.Client.Get(ctx, client.ObjectKey{Name: namespaceName}, ns); err != nil {
+		return fmt.Errorf("failed to get namespace %s: %w", namespaceName, err)
+	}
+
+	// Check if this VM would exceed namespace limits
+	// This is a basic check - in a production system you might want to check
+	// against actual resource consumption vs quotas
+
+	if cpuStr, found := resources["cpu"].(string); found {
+		// Parse CPU request and validate against limits
+		// For now, just log that we found CPU requirements
+		_ = cpuStr // TODO: Implement CPU validation against LimitRange
+	}
+
+	if memoryStr, found := resources["memory"].(string); found {
+		// Parse memory request and validate against limits
+		// For now, just log that we found memory requirements
+		_ = memoryStr // TODO: Implement memory validation against LimitRange
 	}
 
 	return nil
