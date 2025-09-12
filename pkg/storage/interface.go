@@ -44,6 +44,13 @@ type Storage interface {
 	UpdateVM(vm *models.VirtualMachine) error
 	DeleteVM(id string) error
 
+	// Organization Catalog Source operations
+	ListOrganizationCatalogSources(orgID string) ([]*models.OrganizationCatalogSource, error)
+	GetOrganizationCatalogSource(id string) (*models.OrganizationCatalogSource, error)
+	CreateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error
+	UpdateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error
+	DeleteOrganizationCatalogSource(id string) error
+
 	// Health check
 	Ping() error
 	Close() error

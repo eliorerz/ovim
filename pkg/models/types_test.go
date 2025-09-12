@@ -367,6 +367,73 @@ func TestCreateVDCRequest_Struct(t *testing.T) {
 	assert.Equal(t, quotas, req.ResourceQuotas)
 }
 
+func TestCreateVDCRequest_WithLimitRange(t *testing.T) {
+	quotas := map[string]string{
+		"cpu":     "10",
+		"memory":  "32Gi",
+		"storage": "100Gi",
+	}
+
+	req := CreateVDCRequest{
+		Name:           "Test VDC with LimitRange",
+		Description:    "A test VDC with VM resource constraints",
+		OrgID:          "org-123",
+		ResourceQuotas: quotas,
+		MinCPU:         intPtr(1),
+		MaxCPU:         intPtr(8),
+		MinMemory:      intPtr(1),
+		MaxMemory:      intPtr(16),
+	}
+
+	assert.Equal(t, "Test VDC with LimitRange", req.Name)
+	assert.Equal(t, "A test VDC with VM resource constraints", req.Description)
+	assert.Equal(t, "org-123", req.OrgID)
+	assert.Equal(t, quotas, req.ResourceQuotas)
+	assert.NotNil(t, req.MinCPU)
+	assert.Equal(t, 1, *req.MinCPU)
+	assert.NotNil(t, req.MaxCPU)
+	assert.Equal(t, 8, *req.MaxCPU)
+	assert.NotNil(t, req.MinMemory)
+	assert.Equal(t, 1, *req.MinMemory)
+	assert.NotNil(t, req.MaxMemory)
+	assert.Equal(t, 16, *req.MaxMemory)
+}
+
+func TestLimitRangeRequest_Struct(t *testing.T) {
+	req := LimitRangeRequest{
+		MinCPU:    1,
+		MaxCPU:    8,
+		MinMemory: 1,
+		MaxMemory: 16,
+	}
+
+	assert.Equal(t, 1, req.MinCPU)
+	assert.Equal(t, 8, req.MaxCPU)
+	assert.Equal(t, 1, req.MinMemory)
+	assert.Equal(t, 16, req.MaxMemory)
+}
+
+func TestLimitRangeInfo_Struct(t *testing.T) {
+	info := LimitRangeInfo{
+		Exists:    true,
+		MinCPU:    1,
+		MaxCPU:    8,
+		MinMemory: 1,
+		MaxMemory: 16,
+	}
+
+	assert.True(t, info.Exists)
+	assert.Equal(t, 1, info.MinCPU)
+	assert.Equal(t, 8, info.MaxCPU)
+	assert.Equal(t, 1, info.MinMemory)
+	assert.Equal(t, 16, info.MaxMemory)
+}
+
+// Helper function to create int pointers
+func intPtr(i int) *int {
+	return &i
+}
+
 func TestUpdateVDCRequest_Struct(t *testing.T) {
 	quotas := map[string]string{
 		"storage": "100Gi",
@@ -485,18 +552,20 @@ func TestStringMap_ComplexValues(t *testing.T) {
 
 // Tests for Resource Quota functionality added in Phase A1/A2
 
-func TestOrganization_ResourceQuotaFields(t *testing.T) {
+func TestOrganization_IdentityContainer(t *testing.T) {
 	org := Organization{
-		ID:           "org-123",
-		Name:         "Test Organization",
-		CPUQuota:     50,
-		MemoryQuota:  100,
-		StorageQuota: 500,
+		ID:          "org-123",
+		Name:        "Test Organization",
+		Description: "Identity container only",
+		Namespace:   "org-test",
+		IsEnabled:   true,
 	}
 
-	assert.Equal(t, 50, org.CPUQuota)
-	assert.Equal(t, 100, org.MemoryQuota)
-	assert.Equal(t, 500, org.StorageQuota)
+	assert.Equal(t, "org-123", org.ID)
+	assert.Equal(t, "Test Organization", org.Name)
+	assert.Equal(t, "Identity container only", org.Description)
+	assert.Equal(t, "org-test", org.Namespace)
+	assert.True(t, org.IsEnabled)
 }
 
 func TestOrganizationResourceUsage_Struct(t *testing.T) {
@@ -509,9 +578,7 @@ func TestOrganizationResourceUsage_Struct(t *testing.T) {
 		MemoryQuota:  100,
 		StorageQuota: 500,
 
-		CPUAvailable:     40,
-		MemoryAvailable:  80,
-		StorageAvailable: 400,
+		VDCCount: 3,
 	}
 
 	assert.Equal(t, 10, usage.CPUUsed)
@@ -520,9 +587,7 @@ func TestOrganizationResourceUsage_Struct(t *testing.T) {
 	assert.Equal(t, 50, usage.CPUQuota)
 	assert.Equal(t, 100, usage.MemoryQuota)
 	assert.Equal(t, 500, usage.StorageQuota)
-	assert.Equal(t, 40, usage.CPUAvailable)
-	assert.Equal(t, 80, usage.MemoryAvailable)
-	assert.Equal(t, 400, usage.StorageAvailable)
+	assert.Equal(t, 3, usage.VDCCount)
 }
 
 func TestParseCPUString(t *testing.T) {
@@ -624,31 +689,26 @@ func TestParseStorageString(t *testing.T) {
 
 func TestOrganization_GetResourceUsage(t *testing.T) {
 	org := Organization{
-		ID:           "org-123",
-		CPUQuota:     50,
-		MemoryQuota:  100,
-		StorageQuota: 500,
+		ID:        "org-123",
+		Name:      "Test Organization",
+		Namespace: "org-test",
 	}
 
 	tests := []struct {
-		name               string
-		vdcs               []*VirtualDataCenter
-		expectedCPU        int
-		expectedMemory     int
-		expectedStorage    int
-		expectedCPUAvail   int
-		expectedMemAvail   int
-		expectedStoreAvail int
+		name             string
+		vdcs             []*VirtualDataCenter
+		expectedCPU      int
+		expectedMemory   int
+		expectedStorage  int
+		expectedVDCCount int
 	}{
 		{
-			name:               "Empty VDCs",
-			vdcs:               []*VirtualDataCenter{},
-			expectedCPU:        0,
-			expectedMemory:     0,
-			expectedStorage:    0,
-			expectedCPUAvail:   50,
-			expectedMemAvail:   100,
-			expectedStoreAvail: 500,
+			name:             "Empty VDCs",
+			vdcs:             []*VirtualDataCenter{},
+			expectedCPU:      0,
+			expectedMemory:   0,
+			expectedStorage:  0,
+			expectedVDCCount: 0,
 		},
 		{
 			name: "Single VDC with resources",
@@ -662,12 +722,10 @@ func TestOrganization_GetResourceUsage(t *testing.T) {
 					},
 				},
 			},
-			expectedCPU:        10,
-			expectedMemory:     32,
-			expectedStorage:    100,
-			expectedCPUAvail:   40,
-			expectedMemAvail:   68,
-			expectedStoreAvail: 400,
+			expectedCPU:      10,
+			expectedMemory:   32,
+			expectedStorage:  100,
+			expectedVDCCount: 1,
 		},
 		{
 			name: "Multiple VDCs with resources",
@@ -689,12 +747,10 @@ func TestOrganization_GetResourceUsage(t *testing.T) {
 					},
 				},
 			},
-			expectedCPU:        18,
-			expectedMemory:     48,
-			expectedStorage:    150,
-			expectedCPUAvail:   32,
-			expectedMemAvail:   52,
-			expectedStoreAvail: 350,
+			expectedCPU:      18,
+			expectedMemory:   48,
+			expectedStorage:  150,
+			expectedVDCCount: 2,
 		},
 		{
 			name: "VDC with nil ResourceQuotas",
@@ -712,85 +768,35 @@ func TestOrganization_GetResourceUsage(t *testing.T) {
 					},
 				},
 			},
-			expectedCPU:        5,
-			expectedMemory:     8,
-			expectedStorage:    25,
-			expectedCPUAvail:   45,
-			expectedMemAvail:   92,
-			expectedStoreAvail: 475,
-		},
-		{
-			name: "VDC with partial resource definitions",
-			vdcs: []*VirtualDataCenter{
-				{
-					ID: "vdc-1",
-					ResourceQuotas: StringMap{
-						"cpu":    "4",
-						"memory": "16Gi",
-						// no storage defined
-					},
-				},
-				{
-					ID: "vdc-2",
-					ResourceQuotas: StringMap{
-						"storage": "75Gi",
-						// no cpu or memory defined
-					},
-				},
-			},
-			expectedCPU:        4,
-			expectedMemory:     16,
-			expectedStorage:    75,
-			expectedCPUAvail:   46,
-			expectedMemAvail:   84,
-			expectedStoreAvail: 425,
-		},
-		{
-			name: "Over-allocation scenario",
-			vdcs: []*VirtualDataCenter{
-				{
-					ID: "vdc-1",
-					ResourceQuotas: StringMap{
-						"cpu":     "60",    // More than org quota
-						"memory":  "150Gi", // More than org quota
-						"storage": "600Gi", // More than org quota
-					},
-				},
-			},
-			expectedCPU:        60,
-			expectedMemory:     150,
-			expectedStorage:    600,
-			expectedCPUAvail:   0, // max(0, 50-60) = 0
-			expectedMemAvail:   0, // max(0, 100-150) = 0
-			expectedStoreAvail: 0, // max(0, 500-600) = 0
+			expectedCPU:      5,
+			expectedMemory:   8,
+			expectedStorage:  25,
+			expectedVDCCount: 2,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			usage := org.GetResourceUsage(tt.vdcs)
+			usage := org.GetResourceUsage(tt.vdcs, []*VirtualMachine{})
 
-			assert.Equal(t, tt.expectedCPU, usage.CPUUsed)
-			assert.Equal(t, tt.expectedMemory, usage.MemoryUsed)
-			assert.Equal(t, tt.expectedStorage, usage.StorageUsed)
+			assert.Equal(t, tt.expectedCPU, usage.CPUQuota)         // Total allocated across VDCs
+			assert.Equal(t, tt.expectedMemory, usage.MemoryQuota)   // Total allocated across VDCs
+			assert.Equal(t, tt.expectedStorage, usage.StorageQuota) // Total allocated across VDCs
+			assert.Equal(t, tt.expectedVDCCount, usage.VDCCount)
 
-			assert.Equal(t, 50, usage.CPUQuota)
-			assert.Equal(t, 100, usage.MemoryQuota)
-			assert.Equal(t, 500, usage.StorageQuota)
-
-			assert.Equal(t, tt.expectedCPUAvail, usage.CPUAvailable)
-			assert.Equal(t, tt.expectedMemAvail, usage.MemoryAvailable)
-			assert.Equal(t, tt.expectedStoreAvail, usage.StorageAvailable)
+			// TODO: Usage calculation will be implemented when VM tracking is added
+			assert.Equal(t, 0, usage.CPUUsed)
+			assert.Equal(t, 0, usage.MemoryUsed)
+			assert.Equal(t, 0, usage.StorageUsed)
 		})
 	}
 }
 
 func TestOrganization_CanAllocateResources(t *testing.T) {
 	org := Organization{
-		ID:           "org-123",
-		CPUQuota:     50,
-		MemoryQuota:  100,
-		StorageQuota: 500,
+		ID:        "org-123",
+		Name:      "Test Organization",
+		Namespace: "org-test",
 	}
 
 	existingVDCs := []*VirtualDataCenter{
@@ -803,8 +809,6 @@ func TestOrganization_CanAllocateResources(t *testing.T) {
 			},
 		},
 	}
-	// Current usage: CPU=20, Memory=40, Storage=200
-	// Available: CPU=30, Memory=60, Storage=300
 
 	tests := []struct {
 		name        string
@@ -814,60 +818,18 @@ func TestOrganization_CanAllocateResources(t *testing.T) {
 		canAllocate bool
 	}{
 		{
-			name:        "Can allocate within limits",
-			cpuReq:      10,
-			memoryReq:   20,
-			storageReq:  100,
+			name:        "Organizations are identity containers - always allow",
+			cpuReq:      1000,
+			memoryReq:   2000,
+			storageReq:  5000,
 			canAllocate: true,
 		},
 		{
-			name:        "Can allocate exact remaining resources",
-			cpuReq:      30,
-			memoryReq:   60,
-			storageReq:  300,
-			canAllocate: true,
-		},
-		{
-			name:        "Cannot allocate - CPU exceeds limit",
-			cpuReq:      35, // More than available (30)
-			memoryReq:   20,
-			storageReq:  100,
-			canAllocate: false,
-		},
-		{
-			name:        "Cannot allocate - Memory exceeds limit",
-			cpuReq:      10,
-			memoryReq:   70, // More than available (60)
-			storageReq:  100,
-			canAllocate: false,
-		},
-		{
-			name:        "Cannot allocate - Storage exceeds limit",
-			cpuReq:      10,
-			memoryReq:   20,
-			storageReq:  350, // More than available (300)
-			canAllocate: false,
-		},
-		{
-			name:        "Cannot allocate - All resources exceed limits",
-			cpuReq:      60,
-			memoryReq:   120,
-			storageReq:  600,
-			canAllocate: false,
-		},
-		{
-			name:        "Can allocate zero resources",
+			name:        "Zero resources - allowed",
 			cpuReq:      0,
 			memoryReq:   0,
 			storageReq:  0,
 			canAllocate: true,
-		},
-		{
-			name:        "Cannot allocate - One resource at boundary+1",
-			cpuReq:      31,  // Available is 30
-			memoryReq:   59,  // Available is 60
-			storageReq:  299, // Available is 300
-			canAllocate: false,
 		},
 	}
 
@@ -881,13 +843,12 @@ func TestOrganization_CanAllocateResources(t *testing.T) {
 
 func TestOrganization_CanAllocateResources_EmptyVDCs(t *testing.T) {
 	org := Organization{
-		ID:           "org-123",
-		CPUQuota:     50,
-		MemoryQuota:  100,
-		StorageQuota: 500,
+		ID:        "org-123",
+		Name:      "Test Organization",
+		Namespace: "org-test",
 	}
 
-	// No existing VDCs, all quota is available
+	// No existing VDCs
 	emptyVDCs := []*VirtualDataCenter{}
 
 	tests := []struct {
@@ -898,18 +859,18 @@ func TestOrganization_CanAllocateResources_EmptyVDCs(t *testing.T) {
 		canAllocate bool
 	}{
 		{
-			name:        "Can allocate full quota",
+			name:        "Organizations are identity containers - always allow",
 			cpuReq:      50,
 			memoryReq:   100,
 			storageReq:  500,
 			canAllocate: true,
 		},
 		{
-			name:        "Cannot exceed quota",
-			cpuReq:      51,
-			memoryReq:   100,
-			storageReq:  500,
-			canAllocate: false,
+			name:        "Large requests also allowed for identity containers",
+			cpuReq:      1000,
+			memoryReq:   2000,
+			storageReq:  5000,
+			canAllocate: true,
 		},
 	}
 
@@ -921,13 +882,13 @@ func TestOrganization_CanAllocateResources_EmptyVDCs(t *testing.T) {
 	}
 }
 
-func TestOrganization_ResourceQuota_JSONSerialization(t *testing.T) {
+func TestOrganization_IdentityContainer_JSONSerialization(t *testing.T) {
 	org := Organization{
-		ID:           "org-123",
-		Name:         "Test Organization",
-		CPUQuota:     50,
-		MemoryQuota:  100,
-		StorageQuota: 500,
+		ID:          "org-123",
+		Name:        "Test Organization",
+		Description: "Identity container only",
+		Namespace:   "org-test",
+		IsEnabled:   true,
 	}
 
 	// Serialize to JSON
@@ -942,9 +903,9 @@ func TestOrganization_ResourceQuota_JSONSerialization(t *testing.T) {
 	// Should be equal
 	assert.Equal(t, org.ID, deserialized.ID)
 	assert.Equal(t, org.Name, deserialized.Name)
-	assert.Equal(t, org.CPUQuota, deserialized.CPUQuota)
-	assert.Equal(t, org.MemoryQuota, deserialized.MemoryQuota)
-	assert.Equal(t, org.StorageQuota, deserialized.StorageQuota)
+	assert.Equal(t, org.Description, deserialized.Description)
+	assert.Equal(t, org.Namespace, deserialized.Namespace)
+	assert.Equal(t, org.IsEnabled, deserialized.IsEnabled)
 }
 
 func TestOrganizationResourceUsage_JSONSerialization(t *testing.T) {
@@ -957,9 +918,7 @@ func TestOrganizationResourceUsage_JSONSerialization(t *testing.T) {
 		MemoryQuota:  100,
 		StorageQuota: 500,
 
-		CPUAvailable:     30,
-		MemoryAvailable:  60,
-		StorageAvailable: 300,
+		VDCCount: 3,
 	}
 
 	// Serialize to JSON

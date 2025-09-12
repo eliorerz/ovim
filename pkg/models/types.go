@@ -76,7 +76,7 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// Organization represents a tenant organization
+// Organization represents a tenant organization (identity and catalog container only)
 type Organization struct {
 	ID          string `json:"id" gorm:"primaryKey"`
 	Name        string `json:"name"`
@@ -84,51 +84,71 @@ type Organization struct {
 	Namespace   string `json:"namespace" gorm:"uniqueIndex"`
 	IsEnabled   bool   `json:"is_enabled" gorm:"default:true"`
 
-	// Resource Quotas - organization-level resource limits
-	CPUQuota     int `json:"cpu_quota" gorm:"default:0"`     // Total CPU cores allocated to organization
-	MemoryQuota  int `json:"memory_quota" gorm:"default:0"`  // Total memory in GB allocated to organization
-	StorageQuota int `json:"storage_quota" gorm:"default:0"` // Total storage in GB allocated to organization
-
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// OrganizationResourceUsage represents current resource usage for an organization
+// OrganizationResourceUsage represents current resource usage across all VDCs in an organization
 type OrganizationResourceUsage struct {
 	CPUUsed     int `json:"cpu_used"`
 	MemoryUsed  int `json:"memory_used"`
 	StorageUsed int `json:"storage_used"`
 
+	// Total quota allocated across all VDCs
 	CPUQuota     int `json:"cpu_quota"`
 	MemoryQuota  int `json:"memory_quota"`
 	StorageQuota int `json:"storage_quota"`
 
-	CPUAvailable     int `json:"cpu_available"`
-	MemoryAvailable  int `json:"memory_available"`
-	StorageAvailable int `json:"storage_available"`
+	VDCCount int `json:"vdc_count"` // Number of VDCs in the organization
 }
 
-// GetResourceUsage calculates current resource usage for the organization
-func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter) OrganizationResourceUsage {
-	var cpuUsed, memoryUsed, storageUsed int
+// VDCResourceUsage represents current resource usage for a specific VDC
+type VDCResourceUsage struct {
+	CPUUsed     int `json:"cpu_used"`
+	MemoryUsed  int `json:"memory_used"`
+	StorageUsed int `json:"storage_used"`
 
+	// VDC quota
+	CPUQuota     int `json:"cpu_quota"`
+	MemoryQuota  int `json:"memory_quota"`
+	StorageQuota int `json:"storage_quota"`
+
+	VMCount int `json:"vm_count"` // Number of VMs in the VDC
+}
+
+// GetResourceUsage calculates current resource usage across all VDCs in the organization
+func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter, vms []*VirtualMachine) OrganizationResourceUsage {
+	var cpuUsed, memoryUsed, storageUsed int
+	var cpuQuota, memoryQuota, storageQuota int
+
+	// Calculate quota from all VDCs
 	for _, vdc := range vdcs {
 		if vdc.ResourceQuotas != nil {
 			if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
 				// Parse CPU string (e.g., "4" or "4 cores")
 				cpuParsed := ParseCPUString(cpuStr)
-				cpuUsed += cpuParsed
+				cpuQuota += cpuParsed
 			}
 			if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
 				// Parse memory string (e.g., "8Gi", "8GB")
 				memParsed := ParseMemoryString(memStr)
-				memoryUsed += memParsed
+				memoryQuota += memParsed
 			}
 			if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
 				// Parse storage string (e.g., "100Gi", "100GB")
 				storParsed := ParseStorageString(storStr)
-				storageUsed += storParsed
+				storageQuota += storParsed
 			}
+		}
+	}
+
+	// Calculate actual usage from all VMs in the organization
+	for _, vm := range vms {
+		// Only count VMs that are deployed (not stopped/failed)
+		if vm.Status == "Running" || vm.Status == "Stopped" || vm.Status == "Paused" {
+			cpuUsed += vm.CPU
+			memoryUsed += ParseMemoryString(vm.Memory)
+			storageUsed += ParseStorageString(vm.DiskSize)
 		}
 	}
 
@@ -137,34 +157,110 @@ func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter) OrganizationR
 		MemoryUsed:  memoryUsed,
 		StorageUsed: storageUsed,
 
-		CPUQuota:     o.CPUQuota,
-		MemoryQuota:  o.MemoryQuota,
-		StorageQuota: o.StorageQuota,
+		CPUQuota:     cpuQuota,
+		MemoryQuota:  memoryQuota,
+		StorageQuota: storageQuota,
 
-		CPUAvailable:     max(0, o.CPUQuota-cpuUsed),
-		MemoryAvailable:  max(0, o.MemoryQuota-memoryUsed),
-		StorageAvailable: max(0, o.StorageQuota-storageUsed),
+		VDCCount: len(vdcs),
+	}
+}
+
+// GetResourceUsage calculates current resource usage for a specific VDC
+func (vdc *VirtualDataCenter) GetResourceUsage(vms []*VirtualMachine) VDCResourceUsage {
+	var cpuUsed, memoryUsed, storageUsed int
+	var cpuQuota, memoryQuota, storageQuota int
+	var vmCount int
+
+	// Get quota from this VDC's resource quotas
+	if vdc.ResourceQuotas != nil {
+		if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
+			cpuQuota = ParseCPUString(cpuStr)
+		}
+		if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
+			memoryQuota = ParseMemoryString(memStr)
+		}
+		if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
+			storageQuota = ParseStorageString(storStr)
+		}
+	}
+
+	// Calculate actual usage from VMs in this specific VDC
+	for _, vm := range vms {
+		if vm.VDCID == vdc.ID {
+			// Only count VMs that are deployed (not stopped/failed)
+			if vm.Status == "Running" || vm.Status == "Stopped" || vm.Status == "Paused" {
+				cpuUsed += vm.CPU
+				memoryUsed += ParseMemoryString(vm.Memory)
+				storageUsed += ParseStorageString(vm.DiskSize)
+				vmCount++
+			}
+		}
+	}
+
+	return VDCResourceUsage{
+		CPUUsed:     cpuUsed,
+		MemoryUsed:  memoryUsed,
+		StorageUsed: storageUsed,
+
+		CPUQuota:     cpuQuota,
+		MemoryQuota:  memoryQuota,
+		StorageQuota: storageQuota,
+
+		VMCount: vmCount,
 	}
 }
 
 // CanAllocateResources checks if the organization can allocate the requested resources
+// Since organizations no longer have quotas, this always returns true
+// Resource allocation is now handled at the VDC level
 func (o *Organization) CanAllocateResources(cpuReq, memoryReq, storageReq int, vdcs []*VirtualDataCenter) bool {
-	usage := o.GetResourceUsage(vdcs)
-	return usage.CPUAvailable >= cpuReq &&
-		usage.MemoryAvailable >= memoryReq &&
-		usage.StorageAvailable >= storageReq
+	// Organizations are identity containers only - no resource limits
+	return true
 }
 
-// VirtualDataCenter represents a virtual data center within an organization
+// VirtualDataCenter represents a virtual data center within an organization (resource container)
 type VirtualDataCenter struct {
 	ID             string    `json:"id" gorm:"primaryKey"`
 	Name           string    `json:"name"`
 	Description    string    `json:"description"`
 	OrgID          string    `json:"org_id"`
-	Namespace      string    `json:"namespace"`
+	Namespace      string    `json:"namespace" gorm:"uniqueIndex"` // Unique namespace per VDC
 	ResourceQuotas StringMap `json:"resource_quotas" gorm:"type:jsonb"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// GetCPUQuota returns the CPU quota for this VDC in cores
+func (vdc *VirtualDataCenter) GetCPUQuota() int {
+	if vdc.ResourceQuotas == nil {
+		return 0
+	}
+	if cpuStr, ok := vdc.ResourceQuotas["cpu"]; ok {
+		return ParseCPUString(cpuStr)
+	}
+	return 0
+}
+
+// GetMemoryQuota returns the memory quota for this VDC in GB
+func (vdc *VirtualDataCenter) GetMemoryQuota() int {
+	if vdc.ResourceQuotas == nil {
+		return 0
+	}
+	if memStr, ok := vdc.ResourceQuotas["memory"]; ok {
+		return ParseMemoryString(memStr)
+	}
+	return 0
+}
+
+// GetStorageQuota returns the storage quota for this VDC in GB
+func (vdc *VirtualDataCenter) GetStorageQuota() int {
+	if vdc.ResourceQuotas == nil {
+		return 0
+	}
+	if storStr, ok := vdc.ResourceQuotas["storage"]; ok {
+		return ParseStorageString(storStr)
+	}
+	return 0
 }
 
 // Template source types
@@ -232,19 +328,11 @@ type LimitRangeRequest struct {
 	MaxMemory int `json:"max_memory"` // Maximum memory in GB per VM
 }
 
-// CreateOrganizationRequest represents a request to create an organization
+// CreateOrganizationRequest represents a request to create an organization (identity container only)
 type CreateOrganizationRequest struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
 	IsEnabled   bool   `json:"is_enabled"`
-
-	// Resource Quotas (required)
-	CPUQuota     *int `json:"cpu_quota" binding:"required"`     // CPU cores allocated to organization
-	MemoryQuota  *int `json:"memory_quota" binding:"required"`  // Memory in GB allocated to organization
-	StorageQuota *int `json:"storage_quota" binding:"required"` // Storage in GB allocated to organization
-
-	// Optional LimitRange for VM resource constraints
-	LimitRange *LimitRangeRequest `json:"limit_range,omitempty"` // Per-VM resource limits (optional)
 }
 
 // UpdateOrganizationRequest represents a request to update an organization
@@ -260,6 +348,12 @@ type CreateVDCRequest struct {
 	Description    string            `json:"description"`
 	OrgID          string            `json:"org_id" binding:"required"`
 	ResourceQuotas map[string]string `json:"resource_quotas,omitempty"`
+
+	// Optional LimitRange parameters for VM resource constraints
+	MinCPU    *int `json:"min_cpu,omitempty"`    // Minimum CPU cores per VM
+	MaxCPU    *int `json:"max_cpu,omitempty"`    // Maximum CPU cores per VM
+	MinMemory *int `json:"min_memory,omitempty"` // Minimum memory (GB) per VM
+	MaxMemory *int `json:"max_memory,omitempty"` // Maximum memory (GB) per VM
 }
 
 // UpdateVDCRequest represents a request to update a virtual data center
@@ -339,4 +433,30 @@ type LimitRangeInfo struct {
 	MaxCPU    int  `json:"max_cpu"`    // Maximum CPU cores per VM
 	MinMemory int  `json:"min_memory"` // Minimum memory in GB per VM
 	MaxMemory int  `json:"max_memory"` // Maximum memory in GB per VM
+}
+
+// OrganizationCatalogSource represents a catalog source attached to an organization
+type OrganizationCatalogSource struct {
+	ID              string    `json:"id" gorm:"primaryKey"`
+	OrgID           string    `json:"org_id" gorm:"index"`
+	SourceType      string    `json:"source_type"`      // Type of catalog source (e.g., "operatorhubio", "redhat-operators")
+	SourceName      string    `json:"source_name"`      // Display name for this source in the organization
+	SourceNamespace string    `json:"source_namespace"` // OpenShift namespace where the catalog source exists
+	Enabled         bool      `json:"enabled" gorm:"default:true"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// CreateOrganizationCatalogSourceRequest represents a request to add a catalog source to an organization
+type CreateOrganizationCatalogSourceRequest struct {
+	SourceType      string `json:"source_type" binding:"required"`
+	SourceName      string `json:"source_name" binding:"required"`
+	SourceNamespace string `json:"source_namespace" binding:"required"`
+	Enabled         bool   `json:"enabled"`
+}
+
+// UpdateOrganizationCatalogSourceRequest represents a request to update an organization catalog source
+type UpdateOrganizationCatalogSourceRequest struct {
+	SourceName *string `json:"source_name,omitempty"`
+	Enabled    *bool   `json:"enabled,omitempty"`
 }

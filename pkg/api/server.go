@@ -200,6 +200,15 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/limitrange", orgHandlers.GetLimitRange)
 				orgs.PUT("/:id/limitrange", orgHandlers.UpdateLimitRange)
 				orgs.DELETE("/:id/limitrange", orgHandlers.DeleteLimitRange)
+
+				// Organization catalog source management endpoints
+				orgs.GET("/:id/catalog-sources", catalogHandlers.GetOrganizationCatalogSources)
+				orgs.POST("/:id/catalog-sources", catalogHandlers.AddCatalogSourceToOrganization)
+				orgs.PUT("/:id/catalog-sources/:sourceId", catalogHandlers.UpdateOrganizationCatalogSource)
+				orgs.DELETE("/:id/catalog-sources/:sourceId", catalogHandlers.RemoveOrganizationCatalogSource)
+
+				// Organization catalog templates endpoint (based on assigned catalog sources)
+				orgs.GET("/:id/catalog/templates", catalogHandlers.GetOrganizationCatalogTemplates)
 			}
 
 			// User management (system admin only)
@@ -222,7 +231,7 @@ func (s *Server) setupRoutes() {
 					osClient = s.openshiftClient
 				}
 				orgHandlers := NewOrganizationHandlers(s.storage, osClient)
-				vdcHandlers := NewVDCHandlers(s.storage)
+				vdcHandlers := NewVDCHandlers(s.storage, osClient)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -242,12 +251,24 @@ func (s *Server) setupRoutes() {
 			vdcs := protected.Group("/vdcs")
 			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
 			{
-				vdcHandlers := NewVDCHandlers(s.storage)
+				var osClient OpenShiftClient
+				if s.openshiftClient != nil {
+					osClient = s.openshiftClient
+				}
+				vdcHandlers := NewVDCHandlers(s.storage, osClient)
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
 				vdcs.GET("/:id", vdcHandlers.Get)
 				vdcs.PUT("/:id", vdcHandlers.Update)
 				vdcs.DELETE("/:id", vdcHandlers.Delete)
+
+				// VDC LimitRange management endpoints
+				vdcs.GET("/:id/limitrange", vdcHandlers.GetLimitRange)
+				vdcs.PUT("/:id/limitrange", vdcHandlers.UpdateLimitRange)
+				vdcs.DELETE("/:id/limitrange", vdcHandlers.DeleteLimitRange)
+
+				// VDC resource usage endpoint
+				vdcs.GET("/:id/resources", vdcHandlers.GetResourceUsage)
 			}
 
 			// VM catalog (all authenticated users)
@@ -262,7 +283,7 @@ func (s *Server) setupRoutes() {
 			// VM management (all authenticated users, filtered by role)
 			vms := protected.Group("/vms")
 			{
-				vmHandlers := NewVMHandlers(s.storage, s.provisioner)
+				vmHandlers := NewVMHandlers(s.storage, s.provisioner, s.openshiftClient)
 				vms.GET("/", vmHandlers.List)
 				vms.POST("/", vmHandlers.Create)
 				vms.GET("/:id", vmHandlers.Get)

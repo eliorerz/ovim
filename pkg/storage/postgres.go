@@ -79,6 +79,7 @@ func (s *PostgresStorage) migrate() error {
 		&models.VirtualDataCenter{},
 		&models.Template{},
 		&models.VirtualMachine{},
+		&models.OrganizationCatalogSource{},
 	)
 }
 
@@ -583,6 +584,7 @@ func (s *PostgresStorage) clearAllData() error {
 	tables := []string{
 		"virtual_machines",
 		"templates",
+		"organization_catalog_sources",
 		"virtual_data_centers",
 		"organizations",
 		"users",
@@ -595,5 +597,47 @@ func (s *PostgresStorage) clearAllData() error {
 	}
 
 	klog.Info("Cleared all test data from PostgreSQL database")
+	return nil
+}
+
+// Organization Catalog Source operations
+
+func (s *PostgresStorage) ListOrganizationCatalogSources(orgID string) ([]*models.OrganizationCatalogSource, error) {
+	var sources []*models.OrganizationCatalogSource
+	if err := s.db.Where("org_id = ?", orgID).Find(&sources).Error; err != nil {
+		return nil, fmt.Errorf("failed to list organization catalog sources: %w", err)
+	}
+	return sources, nil
+}
+
+func (s *PostgresStorage) GetOrganizationCatalogSource(id string) (*models.OrganizationCatalogSource, error) {
+	var source models.OrganizationCatalogSource
+	if err := s.db.First(&source, "id = ?", id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get organization catalog source: %w", err)
+	}
+	return &source, nil
+}
+
+func (s *PostgresStorage) CreateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	if err := s.db.Create(source).Error; err != nil {
+		return fmt.Errorf("failed to create organization catalog source: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) UpdateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	if err := s.db.Save(source).Error; err != nil {
+		return fmt.Errorf("failed to update organization catalog source: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) DeleteOrganizationCatalogSource(id string) error {
+	if err := s.db.Delete(&models.OrganizationCatalogSource{}, "id = ?", id).Error; err != nil {
+		return fmt.Errorf("failed to delete organization catalog source: %w", err)
+	}
 	return nil
 }

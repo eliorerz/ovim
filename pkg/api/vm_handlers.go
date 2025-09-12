@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,15 +18,17 @@ import (
 
 // VMHandlers handles VM-related requests
 type VMHandlers struct {
-	storage     storage.Storage
-	provisioner kubevirt.VMProvisioner
+	storage         storage.Storage
+	provisioner     kubevirt.VMProvisioner
+	openshiftClient OpenShiftClient
 }
 
 // NewVMHandlers creates a new VM handlers instance
-func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner) *VMHandlers {
+func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, openshiftClient OpenShiftClient) *VMHandlers {
 	return &VMHandlers{
-		storage:     storage,
-		provisioner: provisioner,
+		storage:         storage,
+		provisioner:     provisioner,
+		openshiftClient: openshiftClient,
 	}
 }
 
@@ -168,6 +171,12 @@ func (h *VMHandlers) Create(c *gin.Context) {
 	diskSize := req.DiskSize
 	if diskSize == "" {
 		diskSize = template.DiskSize
+	}
+
+	// Validate VM specs against VDC LimitRange constraints
+	if err := h.validateVMLimitRange(vdc, cpu, memory); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Create VM
@@ -613,4 +622,55 @@ func mapKubeVirtStatusToModel(phase string, ready bool) string {
 		}
 		return models.VMStatusPending
 	}
+}
+
+// validateVMLimitRange validates VM CPU and memory specifications against VDC LimitRange constraints
+func (h *VMHandlers) validateVMLimitRange(vdc *models.VirtualDataCenter, cpu int, memory string) error {
+	// Skip validation if OpenShift client is not available
+	if h.openshiftClient == nil {
+		klog.V(4).Infof("OpenShift client not available, skipping LimitRange validation for VM in VDC %s", vdc.ID)
+		return nil
+	}
+
+	// Get LimitRange information for the VDC namespace
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	limitRange, err := h.openshiftClient.GetLimitRange(ctx, vdc.Namespace)
+	if err != nil {
+		klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", vdc.ID, vdc.Namespace, err)
+		// Don't fail VM creation if we can't get LimitRange info - might not exist
+		klog.V(4).Infof("LimitRange check failed for VDC %s, allowing VM creation to proceed", vdc.ID)
+		return nil
+	}
+
+	// If LimitRange doesn't exist, allow any VM size
+	if !limitRange.Exists {
+		klog.V(6).Infof("No LimitRange found for VDC %s, allowing VM creation without constraints", vdc.ID)
+		return nil
+	}
+
+	// Parse memory string to GB for comparison
+	memoryGB := models.ParseMemoryString(memory)
+
+	// Validate CPU constraints
+	if limitRange.MinCPU > 0 && cpu < limitRange.MinCPU {
+		return fmt.Errorf("VM CPU (%d cores) is below VDC minimum limit (%d cores)", cpu, limitRange.MinCPU)
+	}
+	if limitRange.MaxCPU > 0 && cpu > limitRange.MaxCPU {
+		return fmt.Errorf("VM CPU (%d cores) exceeds VDC maximum limit (%d cores)", cpu, limitRange.MaxCPU)
+	}
+
+	// Validate memory constraints
+	if limitRange.MinMemory > 0 && memoryGB < limitRange.MinMemory {
+		return fmt.Errorf("VM memory (%dGB) is below VDC minimum limit (%dGB)", memoryGB, limitRange.MinMemory)
+	}
+	if limitRange.MaxMemory > 0 && memoryGB > limitRange.MaxMemory {
+		return fmt.Errorf("VM memory (%dGB) exceeds VDC maximum limit (%dGB)", memoryGB, limitRange.MaxMemory)
+	}
+
+	klog.V(6).Infof("VM specs validated successfully against VDC %s LimitRange: CPU=%d (limits: %d-%d), Memory=%dGB (limits: %d-%d)",
+		vdc.ID, cpu, limitRange.MinCPU, limitRange.MaxCPU, memoryGB, limitRange.MinMemory, limitRange.MaxMemory)
+
+	return nil
 }

@@ -203,6 +203,37 @@ func (m *MockStorage) ListTemplatesByOrg(orgID string) ([]*models.Template, erro
 	return args.Get(0).([]*models.Template), args.Error(1)
 }
 
+func (m *MockStorage) ListOrganizationCatalogSources(orgID string) ([]*models.OrganizationCatalogSource, error) {
+	args := m.Called(orgID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.OrganizationCatalogSource), args.Error(1)
+}
+
+func (m *MockStorage) GetOrganizationCatalogSource(id string) (*models.OrganizationCatalogSource, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.OrganizationCatalogSource), args.Error(1)
+}
+
+func (m *MockStorage) CreateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	args := m.Called(source)
+	return args.Error(0)
+}
+
+func (m *MockStorage) UpdateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	args := m.Called(source)
+	return args.Error(0)
+}
+
+func (m *MockStorage) DeleteOrganizationCatalogSource(id string) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -307,14 +338,11 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		description              string
 	}{
 		{
-			name: "Organization creation with custom resource quotas",
+			name: "Organization creation as identity container",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Custom Quota Corp",
-				Description:  "Organization with custom quotas",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(25),  // Custom CPU quota
-				MemoryQuota:  intPtr(50),  // Custom memory quota
-				StorageQuota: intPtr(200), // Custom storage quota
+				Name:        "Identity Container Corp",
+				Description: "Organization as identity container only",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -322,14 +350,14 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				ms.On("CreateOrganization", mock.MatchedBy(func(org *models.Organization) bool {
-					// Verify that custom quotas are set correctly
-					return org.CPUQuota == 25 && org.MemoryQuota == 50 && org.StorageQuota == 200
+					// Verify identity container organization structure
+					return org.ID == "identity-container-corp" && org.Name == "Identity Container Corp" && org.IsEnabled == true
 				})).Return(nil)
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "custom-quota-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "custom-quota-corp", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "custom-quota-corp", 25, 50, 200).Return(nil)
+				moc.On("NamespaceExists", mock.Anything, "org-identity-container-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-identity-container-corp", mock.Anything, mock.Anything).Return(nil)
+				// No ResourceQuota creation for identity containers
 			},
 			expectedStatus:           http.StatusCreated,
 			expectedNamespaceCreated: true,
@@ -338,12 +366,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Organization creation with partial custom quotas",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Partial Quota Corp",
-				Description:  "Organization with some custom quotas",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(15),  // Custom CPU quota
-				MemoryQuota:  intPtr(20),  // Required value
-				StorageQuota: intPtr(300), // Custom storage quota
+				Name:        "Partial Quota Corp",
+				Description: "Organization with some custom quotas",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -351,76 +376,24 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 			orgID:    "",
 			mockStorageBehavior: func(ms *MockStorage) {
 				ms.On("CreateOrganization", mock.MatchedBy(func(org *models.Organization) bool {
-					// Verify that custom quotas are set correctly
-					return org.CPUQuota == 15 && org.MemoryQuota == 20 && org.StorageQuota == 300
+					// Verify identity container organization structure
+					return org.ID == "partial-quota-corp" && org.Name == "Partial Quota Corp"
 				})).Return(nil)
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "partial-quota-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "partial-quota-corp", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "partial-quota-corp", 15, 20, 300).Return(nil)
+				moc.On("NamespaceExists", mock.Anything, "org-partial-quota-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-partial-quota-corp", mock.Anything, mock.Anything).Return(nil)
 			},
 			expectedStatus:           http.StatusCreated,
 			expectedNamespaceCreated: true,
 			description:              "Should create organization with mix of custom and default quotas",
 		},
 		{
-			name: "Organization creation with zero quotas (rejected)",
+			name: "Organization creation as identity container (no quota validation)",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Zero Quota Corp",
-				Description:  "Organization with zero quotas (should be rejected)",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(0), // Zero CPU quota - should be rejected
-				MemoryQuota:  intPtr(0), // Zero memory quota - should be rejected
-				StorageQuota: intPtr(0), // Zero storage quota - should be rejected
-			},
-			userID:   "user-123",
-			username: "admin",
-			role:     models.RoleSystemAdmin,
-			orgID:    "",
-			mockStorageBehavior: func(ms *MockStorage) {
-				// Should not be called due to validation failure
-			},
-			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				// Should not be called due to validation failure
-			},
-			expectedStatus:           http.StatusBadRequest,
-			expectedNamespaceCreated: false,
-			description:              "Should reject zero quotas",
-		},
-		{
-			name: "Organization creation with negative quotas (rejected)",
-			requestBody: models.CreateOrganizationRequest{
-				Name:         "Negative Quota Corp",
-				Description:  "Organization with negative quotas (should be rejected)",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(-5),  // Negative CPU quota - should be rejected
-				MemoryQuota:  intPtr(-10), // Negative memory quota - should be rejected
-				StorageQuota: intPtr(-20), // Negative storage quota - should be rejected
-			},
-			userID:   "user-123",
-			username: "admin",
-			role:     models.RoleSystemAdmin,
-			orgID:    "",
-			mockStorageBehavior: func(ms *MockStorage) {
-				// Should not be called due to validation failure
-			},
-			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				// Should not be called due to validation failure
-			},
-			expectedStatus:           http.StatusBadRequest,
-			expectedNamespaceCreated: false,
-			description:              "Should reject negative quotas",
-		},
-		{
-			name: "Successful organization and namespace creation",
-			requestBody: models.CreateOrganizationRequest{
-				Name:         "Acme Corporation",
-				Description:  "Test organization",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "Identity Corp",
+				Description: "Organization as identity container (no quotas needed)",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -430,9 +403,52 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "acme-corporation").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "acme-corporation", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "acme-corporation", 10, 20, 100).Return(nil)
+				moc.On("NamespaceExists", mock.Anything, "org-identity-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-identity-corp", mock.Anything, mock.Anything).Return(nil)
+			},
+			expectedStatus:           http.StatusCreated,
+			expectedNamespaceCreated: true,
+			description:              "Should create identity container organization without quota validation",
+		},
+		{
+			name: "Another identity container organization",
+			requestBody: models.CreateOrganizationRequest{
+				Name:        "Second Identity Corp",
+				Description: "Another organization as identity container",
+				IsEnabled:   true,
+			},
+			userID:   "user-123",
+			username: "admin",
+			role:     models.RoleSystemAdmin,
+			orgID:    "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
+			},
+			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
+				moc.On("NamespaceExists", mock.Anything, "org-second-identity-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-second-identity-corp", mock.Anything, mock.Anything).Return(nil)
+			},
+			expectedStatus:           http.StatusCreated,
+			expectedNamespaceCreated: true,
+			description:              "Should create another identity container organization",
+		},
+		{
+			name: "Successful organization and namespace creation",
+			requestBody: models.CreateOrganizationRequest{
+				Name:        "Acme Corporation",
+				Description: "Test organization",
+				IsEnabled:   true,
+			},
+			userID:   "user-123",
+			username: "admin",
+			role:     models.RoleSystemAdmin,
+			orgID:    "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
+			},
+			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
+				moc.On("NamespaceExists", mock.Anything, "org-acme-corporation").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-acme-corporation", mock.Anything, mock.Anything).Return(nil)
 			},
 			expectedStatus:           http.StatusCreated,
 			expectedNamespaceCreated: true,
@@ -441,12 +457,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Organization creation with existing namespace",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Existing Corp",
-				Description:  "Organization with existing namespace",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "Existing Corp",
+				Description: "Organization with existing namespace",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -456,7 +469,7 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "existing-corp").Return(true, nil)
+				moc.On("NamespaceExists", mock.Anything, "org-existing-corp").Return(true, nil)
 				// Should not call CreateNamespace since it exists
 			},
 			expectedStatus:           http.StatusCreated,
@@ -466,12 +479,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Namespace creation fails with rollback",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Failed Corp",
-				Description:  "Organization that fails namespace creation",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "Failed Corp",
+				Description: "Organization that fails namespace creation",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -482,8 +492,8 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				ms.On("DeleteOrganization", "failed-corp").Return(nil) // Rollback
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "failed-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "failed-corp", mock.Anything, mock.Anything).Return(errors.New("namespace creation failed"))
+				moc.On("NamespaceExists", mock.Anything, "org-failed-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-failed-corp", mock.Anything, mock.Anything).Return(errors.New("namespace creation failed"))
 			},
 			expectedStatus:   http.StatusInternalServerError,
 			expectedRollback: true,
@@ -492,12 +502,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Organization creation without OpenShift client",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "No Client Corp",
-				Description:  "Organization created without OpenShift client",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "No Client Corp",
+				Description: "Organization created without OpenShift client",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -513,12 +520,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Database creation fails",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "DB Fail Corp",
-				Description:  "Organization that fails database creation",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "DB Fail Corp",
+				Description: "Organization that fails database creation",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -536,12 +540,9 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 		{
 			name: "Resource quota creation fails (non-fatal)",
 			requestBody: models.CreateOrganizationRequest{
-				Name:         "Quota Fail Corp",
-				Description:  "Organization where quota creation fails",
-				IsEnabled:    true,
-				CPUQuota:     intPtr(10),
-				MemoryQuota:  intPtr(20),
-				StorageQuota: intPtr(100),
+				Name:        "Quota Fail Corp",
+				Description: "Organization where quota creation fails",
+				IsEnabled:   true,
 			},
 			userID:   "user-123",
 			username: "admin",
@@ -551,9 +552,8 @@ func TestOrganizationHandlers_Create_WithNamespace(t *testing.T) {
 				ms.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
 			},
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
-				moc.On("NamespaceExists", mock.Anything, "quota-fail-corp").Return(false, nil)
-				moc.On("CreateNamespace", mock.Anything, "quota-fail-corp", mock.Anything, mock.Anything).Return(nil)
-				moc.On("CreateResourceQuota", mock.Anything, "quota-fail-corp", 10, 20, 100).Return(errors.New("quota creation failed"))
+				moc.On("NamespaceExists", mock.Anything, "org-quota-fail-corp").Return(false, nil)
+				moc.On("CreateNamespace", mock.Anything, "org-quota-fail-corp", mock.Anything, mock.Anything).Return(nil)
 			},
 			expectedStatus:           http.StatusCreated,
 			expectedNamespaceCreated: true,
@@ -820,7 +820,7 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 	mockOpenShiftClient := &MockOpenShiftClient{}
 
 	mockStorage.On("CreateOrganization", mock.AnythingOfType("*models.Organization")).Return(nil)
-	mockOpenShiftClient.On("NamespaceExists", mock.Anything, "test-labels").Return(false, nil)
+	mockOpenShiftClient.On("NamespaceExists", mock.Anything, "org-test-labels").Return(false, nil)
 
 	// Verify the labels and annotations passed to CreateNamespace
 	expectedLabels := map[string]string{
@@ -831,7 +831,7 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 		"ovim.io/organization-name":    "test-labels",
 	}
 
-	mockOpenShiftClient.On("CreateNamespace", mock.Anything, "test-labels", mock.MatchedBy(func(labels map[string]string) bool {
+	mockOpenShiftClient.On("CreateNamespace", mock.Anything, "org-test-labels", mock.MatchedBy(func(labels map[string]string) bool {
 		// Verify required labels are present
 		for key, expectedValue := range expectedLabels {
 			if value, exists := labels[key]; !exists || value != expectedValue {
@@ -854,20 +854,15 @@ func TestOrganizationHandlers_NamespaceLabelsAndAnnotations(t *testing.T) {
 		return true
 	})).Return(nil)
 
-	mockOpenShiftClient.On("CreateResourceQuota", mock.Anything, "test-labels", 10, 20, 100).Return(nil)
-
 	handlers := &OrganizationHandlers{
 		storage:         mockStorage,
 		openshiftClient: mockOpenShiftClient,
 	}
 
 	requestBody := models.CreateOrganizationRequest{
-		Name:         "Test Labels",
-		Description:  "Test organization for labels",
-		IsEnabled:    true,
-		CPUQuota:     intPtr(10),
-		MemoryQuota:  intPtr(20),
-		StorageQuota: intPtr(100),
+		Name:        "Test Labels",
+		Description: "Test organization for labels",
+		IsEnabled:   true,
 	}
 
 	c, w := setupGinContext("POST", "/organizations", requestBody, "user-123", "admin", models.RoleSystemAdmin, "")
@@ -935,8 +930,8 @@ func TestOrganizationHandlers_Delete_WithCascadeResources(t *testing.T) {
 				ms.On("DeleteVM", "vm-2").Return(nil)
 
 				ms.On("ListVDCs", "test-org-cascade").Return([]*models.VirtualDataCenter{
-					{ID: "vdc-1", Name: "Test VDC 1", OrgID: "test-org-cascade"},
-					{ID: "vdc-2", Name: "Test VDC 2", OrgID: "test-org-cascade"},
+					{ID: "vdc-1", Name: "Test VDC 1", OrgID: "test-org-cascade", Namespace: "vdc-1-namespace"},
+					{ID: "vdc-2", Name: "Test VDC 2", OrgID: "test-org-cascade", Namespace: "vdc-2-namespace"},
 				}, nil)
 				ms.On("DeleteVDC", "vdc-1").Return(nil)
 				ms.On("DeleteVDC", "vdc-2").Return(nil)
@@ -962,6 +957,9 @@ func TestOrganizationHandlers_Delete_WithCascadeResources(t *testing.T) {
 			mockOpenShiftBehavior: func(moc *MockOpenShiftClient) {
 				moc.On("NamespaceExists", mock.Anything, "test-org-cascade").Return(true, nil)
 				moc.On("DeleteNamespace", mock.Anything, "test-org-cascade").Return(nil)
+				// VDC namespace deletions during cascade
+				moc.On("DeleteNamespace", mock.Anything, "vdc-1-namespace").Return(nil)
+				moc.On("DeleteNamespace", mock.Anything, "vdc-2-namespace").Return(nil)
 			},
 			expectedStatus: http.StatusOK,
 			description:    "Should delete organization and all attached resources",
@@ -1129,17 +1127,12 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// Helper function to create int pointers
-func intPtr(i int) *int {
-	return &i
-}
-
 // Helper function to create bool pointers
 func boolPtr(b bool) *bool {
 	return &b
 }
 
-// Test UpdateResourceQuotas endpoint
+// Test UpdateResourceQuotas endpoint (deprecated - returns error)
 func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -1154,7 +1147,7 @@ func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 		description         string
 	}{
 		{
-			name:           "Successful resource quota update by system admin",
+			name:           "Organization quota update returns error (deprecated feature)",
 			organizationID: "test-org",
 			userID:         "admin-123",
 			username:       "admin",
@@ -1166,159 +1159,10 @@ func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 				"storage_quota": 200,
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
-				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     10,
-					MemoryQuota:  20,
-					StorageQuota: 100,
-				}
-				ms.On("GetOrganization", "test-org").Return(org, nil)
-				ms.On("UpdateOrganization", mock.MatchedBy(func(updatedOrg *models.Organization) bool {
-					return updatedOrg.CPUQuota == 20 && updatedOrg.MemoryQuota == 40 && updatedOrg.StorageQuota == 200
-				})).Return(nil)
-			},
-			expectedStatus: http.StatusOK,
-			description:    "Should update resource quotas successfully for system admin",
-		},
-		{
-			name:           "Forbidden update by non-system admin",
-			organizationID: "test-org",
-			userID:         "user-123",
-			username:       "user",
-			role:           models.RoleOrgAdmin,
-			orgID:          "test-org",
-			requestBody: map[string]interface{}{
-				"cpu_quota":     20,
-				"memory_quota":  40,
-				"storage_quota": 200,
-			},
-			mockStorageBehavior: func(ms *MockStorage) {
-				// Should not be called due to permission check
-			},
-			expectedStatus: http.StatusForbidden,
-			description:    "Should forbid quota updates for non-system admin",
-		},
-		{
-			name:           "Organization not found",
-			organizationID: "non-existent",
-			userID:         "admin-123",
-			username:       "admin",
-			role:           models.RoleSystemAdmin,
-			orgID:          "",
-			requestBody: map[string]interface{}{
-				"cpu_quota":     20,
-				"memory_quota":  40,
-				"storage_quota": 200,
-			},
-			mockStorageBehavior: func(ms *MockStorage) {
-				ms.On("GetOrganization", "non-existent").Return(nil, storage.ErrNotFound)
-			},
-			expectedStatus: http.StatusNotFound,
-			description:    "Should return not found for non-existent organization",
-		},
-		{
-			name:           "Invalid request with negative quotas",
-			organizationID: "test-org",
-			userID:         "admin-123",
-			username:       "admin",
-			role:           models.RoleSystemAdmin,
-			orgID:          "",
-			requestBody: map[string]interface{}{
-				"cpu_quota":     -5, // Negative quota
-				"memory_quota":  40,
-				"storage_quota": 200,
-			},
-			mockStorageBehavior: func(ms *MockStorage) {
-				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     10,
-					MemoryQuota:  20,
-					StorageQuota: 100,
-				}
-				ms.On("GetOrganization", "test-org").Return(org, nil)
-				// Should not call UpdateOrganization due to validation
+				// No mock expectations needed - handler returns error immediately
 			},
 			expectedStatus: http.StatusBadRequest,
-			description:    "Should reject negative resource quotas",
-		},
-		{
-			name:           "Valid request with zero quotas",
-			organizationID: "test-org",
-			userID:         "admin-123",
-			username:       "admin",
-			role:           models.RoleSystemAdmin,
-			orgID:          "",
-			requestBody: map[string]interface{}{
-				"cpu_quota":     0, // Zero quota (valid)
-				"memory_quota":  0, // Zero quota (valid)
-				"storage_quota": 0, // Zero quota (valid)
-			},
-			mockStorageBehavior: func(ms *MockStorage) {
-				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     10,
-					MemoryQuota:  20,
-					StorageQuota: 100,
-				}
-				ms.On("GetOrganization", "test-org").Return(org, nil)
-				ms.On("UpdateOrganization", mock.MatchedBy(func(updatedOrg *models.Organization) bool {
-					return updatedOrg.CPUQuota == 0 && updatedOrg.MemoryQuota == 0 && updatedOrg.StorageQuota == 0
-				})).Return(nil)
-			},
-			expectedStatus: http.StatusOK,
-			description:    "Should accept zero resource quotas (valid for unlimited)",
-		},
-		{
-			name:           "Database update failure",
-			organizationID: "test-org",
-			userID:         "admin-123",
-			username:       "admin",
-			role:           models.RoleSystemAdmin,
-			orgID:          "",
-			requestBody: map[string]interface{}{
-				"cpu_quota":     20,
-				"memory_quota":  40,
-				"storage_quota": 200,
-			},
-			mockStorageBehavior: func(ms *MockStorage) {
-				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     10,
-					MemoryQuota:  20,
-					StorageQuota: 100,
-				}
-				ms.On("GetOrganization", "test-org").Return(org, nil)
-				ms.On("UpdateOrganization", mock.Anything).Return(errors.New("database error"))
-			},
-			expectedStatus: http.StatusInternalServerError,
-			description:    "Should handle database update failures",
-		},
-		{
-			name:           "Invalid JSON request",
-			organizationID: "test-org",
-			userID:         "admin-123",
-			username:       "admin",
-			role:           models.RoleSystemAdmin,
-			orgID:          "",
-			requestBody:    "invalid json",
-			mockStorageBehavior: func(ms *MockStorage) {
-				// Should not be called due to JSON parsing error, but we still need to set up
-				// a basic expectation in case GetOrganization is called during validation
-				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     10,
-					MemoryQuota:  20,
-					StorageQuota: 100,
-				}
-				ms.On("GetOrganization", "test-org").Return(org, nil).Maybe()
-			},
-			expectedStatus: http.StatusBadRequest,
-			description:    "Should reject invalid JSON request",
+			description:    "Should return error explaining organizations are identity containers only",
 		},
 	}
 
@@ -1349,12 +1193,12 @@ func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 			// Verify mock expectations
 			mockStorage.AssertExpectations(t)
 
-			// Additional assertions for successful updates
-			if tt.expectedStatus == http.StatusOK {
-				var response models.Organization
+			// Additional assertions for error response
+			if tt.expectedStatus == http.StatusBadRequest {
+				var response map[string]interface{}
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
-				assert.NotEmpty(t, response.ID)
+				assert.Contains(t, response["error"], "identity containers only")
 			}
 		})
 	}
@@ -1389,45 +1233,45 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     20,
-					MemoryQuota:  40,
-					StorageQuota: 200,
+					ID:        "test-org",
+					Name:      "Test Organization",
+					Namespace: "org-test",
+					IsEnabled: true,
 				}
 				ms.On("GetOrganization", "test-org").Return(org, nil)
 				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, nil) // No existing VDCs
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)     // No existing VMs
 			},
 			expectedStatus:     http.StatusOK,
 			expectedAllocation: boolPtr(true),
 			description:        "Should allow allocation within quota limits",
 		},
 		{
-			name:           "Invalid allocation request exceeding limits",
+			name:           "Organizations are identity containers - always allow allocation",
 			organizationID: "test-org",
 			userID:         "user-123",
 			username:       "user",
 			role:           models.RoleOrgUser,
 			orgID:          "test-org",
 			requestBody: map[string]interface{}{
-				"cpu_request":     25, // Exceeds quota of 20
+				"cpu_request":     25, // Organizations have no limits
 				"memory_request":  10,
 				"storage_request": 50,
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				org := &models.Organization{
-					ID:           "test-org",
-					Name:         "Test Organization",
-					CPUQuota:     20,
-					MemoryQuota:  40,
-					StorageQuota: 200,
+					ID:        "test-org",
+					Name:      "Test Organization",
+					Namespace: "org-test",
+					IsEnabled: true,
 				}
 				ms.On("GetOrganization", "test-org").Return(org, nil)
 				ms.On("ListVDCs", "test-org").Return([]*models.VirtualDataCenter{}, nil) // No existing VDCs
+				ms.On("ListVMs", "test-org").Return([]*models.VirtualMachine{}, nil)     // No existing VMs
 			},
 			expectedStatus:     http.StatusOK,
-			expectedAllocation: boolPtr(false),
-			description:        "Should deny allocation exceeding quota limits",
+			expectedAllocation: boolPtr(true),
+			description:        "Should allow allocation since organizations are identity containers only",
 		},
 		{
 			name:           "Forbidden validation for different organization",
@@ -1461,14 +1305,14 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 			},
 			mockStorageBehavior: func(ms *MockStorage) {
 				org := &models.Organization{
-					ID:           "other-org",
-					Name:         "Other Organization",
-					CPUQuota:     20,
-					MemoryQuota:  40,
-					StorageQuota: 200,
+					ID:        "other-org",
+					Name:      "Other Organization",
+					Namespace: "org-other",
+					IsEnabled: true,
 				}
 				ms.On("GetOrganization", "other-org").Return(org, nil)
 				ms.On("ListVDCs", "other-org").Return([]*models.VirtualDataCenter{}, nil)
+				ms.On("ListVMs", "other-org").Return([]*models.VirtualMachine{}, nil)
 			},
 			expectedStatus:     http.StatusOK,
 			expectedAllocation: boolPtr(true),

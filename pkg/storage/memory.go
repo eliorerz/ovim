@@ -20,22 +20,24 @@ var (
 
 // MemoryStorage implements the Storage interface using in-memory storage
 type MemoryStorage struct {
-	users         map[string]*models.User
-	organizations map[string]*models.Organization
-	vdcs          map[string]*models.VirtualDataCenter
-	templates     map[string]*models.Template
-	vms           map[string]*models.VirtualMachine
-	mutex         sync.RWMutex
+	users          map[string]*models.User
+	organizations  map[string]*models.Organization
+	vdcs           map[string]*models.VirtualDataCenter
+	templates      map[string]*models.Template
+	vms            map[string]*models.VirtualMachine
+	catalogSources map[string]*models.OrganizationCatalogSource
+	mutex          sync.RWMutex
 }
 
 // NewMemoryStorage creates a new in-memory storage instance
 func NewMemoryStorage() (Storage, error) {
 	storage := &MemoryStorage{
-		users:         make(map[string]*models.User),
-		organizations: make(map[string]*models.Organization),
-		vdcs:          make(map[string]*models.VirtualDataCenter),
-		templates:     make(map[string]*models.Template),
-		vms:           make(map[string]*models.VirtualMachine),
+		users:          make(map[string]*models.User),
+		organizations:  make(map[string]*models.Organization),
+		vdcs:           make(map[string]*models.VirtualDataCenter),
+		templates:      make(map[string]*models.Template),
+		vms:            make(map[string]*models.VirtualMachine),
+		catalogSources: make(map[string]*models.OrganizationCatalogSource),
 	}
 
 	if err := storage.seedData(); err != nil {
@@ -495,15 +497,85 @@ func (s *MemoryStorage) Close() error {
 	return nil
 }
 
+// Organization Catalog Source operations
+func (s *MemoryStorage) ListOrganizationCatalogSources(orgID string) ([]*models.OrganizationCatalogSource, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	sources := make([]*models.OrganizationCatalogSource, 0)
+	for _, source := range s.catalogSources {
+		if source.OrgID == orgID {
+			sources = append(sources, source)
+		}
+	}
+	return sources, nil
+}
+
+func (s *MemoryStorage) GetOrganizationCatalogSource(id string) (*models.OrganizationCatalogSource, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	source, exists := s.catalogSources[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	return source, nil
+}
+
+func (s *MemoryStorage) CreateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	if source == nil || source.ID == "" {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.catalogSources[source.ID]; exists {
+		return ErrAlreadyExists
+	}
+
+	s.catalogSources[source.ID] = source
+	return nil
+}
+
+func (s *MemoryStorage) UpdateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error {
+	if source == nil || source.ID == "" {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.catalogSources[source.ID]; !exists {
+		return ErrNotFound
+	}
+
+	s.catalogSources[source.ID] = source
+	return nil
+}
+
+func (s *MemoryStorage) DeleteOrganizationCatalogSource(id string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.catalogSources[id]; !exists {
+		return ErrNotFound
+	}
+
+	delete(s.catalogSources, id)
+	return nil
+}
+
 // NewMemoryStorageForTest creates a new in-memory storage instance for testing
 // This version doesn't seed any initial data, providing a clean slate for tests
 func NewMemoryStorageForTest() (Storage, error) {
 	storage := &MemoryStorage{
-		users:         make(map[string]*models.User),
-		organizations: make(map[string]*models.Organization),
-		vdcs:          make(map[string]*models.VirtualDataCenter),
-		templates:     make(map[string]*models.Template),
-		vms:           make(map[string]*models.VirtualMachine),
+		users:          make(map[string]*models.User),
+		organizations:  make(map[string]*models.Organization),
+		vdcs:           make(map[string]*models.VirtualDataCenter),
+		templates:      make(map[string]*models.Template),
+		vms:            make(map[string]*models.VirtualMachine),
+		catalogSources: make(map[string]*models.OrganizationCatalogSource),
 	}
 
 	klog.Info("Initialized in-memory storage for testing with clean state")

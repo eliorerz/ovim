@@ -95,41 +95,18 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Use sanitized name as both ID and namespace
+	// Use sanitized name as ID and org- prefix for namespace
 	orgID := util.SanitizeKubernetesName(req.Name)
-	namespace := orgID
+	namespace := "org-" + orgID
 
-	// Resource quotas are now required - no defaults
-	if req.CPUQuota == nil || *req.CPUQuota <= 0 {
-		klog.V(4).Infof("Invalid CPU quota in create organization request: %v", req.CPUQuota)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "CPU quota is required and must be greater than 0"})
-		return
-	}
-	if req.MemoryQuota == nil || *req.MemoryQuota <= 0 {
-		klog.V(4).Infof("Invalid memory quota in create organization request: %v", req.MemoryQuota)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Memory quota is required and must be greater than 0"})
-		return
-	}
-	if req.StorageQuota == nil || *req.StorageQuota <= 0 {
-		klog.V(4).Infof("Invalid storage quota in create organization request: %v", req.StorageQuota)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Storage quota is required and must be greater than 0"})
-		return
-	}
-
-	cpuQuota := *req.CPUQuota
-	memoryQuota := *req.MemoryQuota
-	storageQuota := *req.StorageQuota
-
+	// Organizations are identity containers only - no quotas
 	// Create organization
 	org := &models.Organization{
-		ID:           orgID,
-		Name:         req.Name,
-		Description:  req.Description,
-		Namespace:    namespace,
-		IsEnabled:    req.IsEnabled,
-		CPUQuota:     cpuQuota,
-		MemoryQuota:  memoryQuota,
-		StorageQuota: storageQuota,
+		ID:          orgID,
+		Name:        req.Name,
+		Description: req.Description,
+		Namespace:   namespace,
+		IsEnabled:   req.IsEnabled,
 	}
 
 	// Create organization in database first
@@ -180,28 +157,8 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 				return
 			}
 
-			// Create resource quota for the namespace
-			if err := h.openshiftClient.CreateResourceQuota(ctx, namespace, org.CPUQuota, org.MemoryQuota, org.StorageQuota); err != nil {
-				klog.Errorf("Failed to create resource quota for namespace %s: %v", namespace, err)
-				// Log error but don't fail the organization creation - quota can be created later
-			} else {
-				klog.Infof("Created resource quota for organization %s namespace %s (CPU: %d, Memory: %dGi, Storage: %dGi)",
-					orgID, namespace, org.CPUQuota, org.MemoryQuota, org.StorageQuota)
-			}
-
-			// Create LimitRange for per-VM resource constraints if provided
-			if req.LimitRange != nil {
-				lr := req.LimitRange
-				if err := h.openshiftClient.CreateLimitRange(ctx, namespace, lr.MinCPU, lr.MaxCPU, lr.MinMemory, lr.MaxMemory); err != nil {
-					klog.Errorf("Failed to create LimitRange for namespace %s: %v", namespace, err)
-					// Log error but don't fail the organization creation - LimitRange can be created later
-				} else {
-					klog.Infof("Created LimitRange for organization %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM)",
-						orgID, namespace, lr.MinCPU, lr.MaxCPU, lr.MinMemory, lr.MaxMemory)
-				}
-			} else {
-				klog.Infof("No LimitRange requested for organization %s namespace %s", orgID, namespace)
-			}
+			// Organizations are identity containers only - no ResourceQuota or LimitRange creation
+			// Resource allocation will be handled at the VDC level
 
 			klog.Infof("Created namespace %s for organization %s", namespace, orgID)
 		} else {
@@ -211,8 +168,8 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 		klog.Warningf("OpenShift client not available - namespace %s not created for organization %s", namespace, orgID)
 	}
 
-	klog.Infof("Organization %s (%s) created by user %s (%s) with resource quotas (CPU: %d, Memory: %dGB, Storage: %dGB)",
-		org.Name, org.ID, username, userID, org.CPUQuota, org.MemoryQuota, org.StorageQuota)
+	klog.Infof("Organization %s (%s) created by user %s (%s) as identity container (namespace: %s)",
+		org.Name, org.ID, username, userID, org.Namespace)
 
 	c.JSON(http.StatusCreated, org)
 }
@@ -416,8 +373,16 @@ func (h *OrganizationHandlers) GetResourceUsage(c *gin.Context) {
 		return
 	}
 
+	// Get VMs for this organization
+	vms, err := h.storage.ListVMs(id)
+	if err != nil {
+		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+		return
+	}
+
 	// Calculate resource usage
-	usage := org.GetResourceUsage(vdcs)
+	usage := org.GetResourceUsage(vdcs, vms)
 
 	klog.V(6).Infof("Retrieved resource usage for organization %s (CPU: %d/%d, Memory: %d/%d, Storage: %d/%d)",
 		org.Name, usage.CPUUsed, usage.CPUQuota, usage.MemoryUsed, usage.MemoryQuota, usage.StorageUsed, usage.StorageQuota)
@@ -425,74 +390,12 @@ func (h *OrganizationHandlers) GetResourceUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, usage)
 }
 
-// UpdateResourceQuotas handles updating organization resource quotas (system admin only)
+// UpdateResourceQuotas is deprecated - organizations are identity containers only
+// Resource quotas are managed at the VDC level
 func (h *OrganizationHandlers) UpdateResourceQuotas(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
-		return
-	}
-
-	// Get user info from context
-	userID, username, role, _, ok := auth.GetUserFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
-		return
-	}
-
-	// Only system admin can update resource quotas
-	if role != models.RoleSystemAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can update resource quotas"})
-		return
-	}
-
-	// Get existing organization
-	org, err := h.storage.GetOrganization(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
-			return
-		}
-		klog.Errorf("Failed to get organization %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
-		return
-	}
-
-	// Define request structure for resource quotas
-	type UpdateResourceQuotasRequest struct {
-		CPUQuota     int `json:"cpu_quota"`
-		MemoryQuota  int `json:"memory_quota"`
-		StorageQuota int `json:"storage_quota"`
-	}
-
-	var req UpdateResourceQuotasRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		klog.V(4).Infof("Invalid update resource quotas request: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
-		return
-	}
-
-	// Validate quotas are not negative
-	if req.CPUQuota < 0 || req.MemoryQuota < 0 || req.StorageQuota < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Resource quotas cannot be negative"})
-		return
-	}
-
-	// Update organization quotas
-	org.CPUQuota = req.CPUQuota
-	org.MemoryQuota = req.MemoryQuota
-	org.StorageQuota = req.StorageQuota
-
-	if err := h.storage.UpdateOrganization(org); err != nil {
-		klog.Errorf("Failed to update organization resource quotas for %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update resource quotas"})
-		return
-	}
-
-	klog.Infof("Organization %s (%s) resource quotas updated by user %s (%s): CPU=%d, Memory=%d, Storage=%d",
-		org.Name, org.ID, username, userID, req.CPUQuota, req.MemoryQuota, req.StorageQuota)
-
-	c.JSON(http.StatusOK, org)
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error": "Organizations are identity containers only. Resource quotas are managed at the Virtual Data Center (VDC) level.",
+	})
 }
 
 // ValidateResourceAllocation handles validating if requested resources can be allocated
@@ -555,8 +458,16 @@ func (h *OrganizationHandlers) ValidateResourceAllocation(c *gin.Context) {
 	// Check if allocation is possible
 	canAllocate := org.CanAllocateResources(req.CPURequest, req.MemoryRequest, req.StorageRequest, vdcs)
 
+	// Get VMs for this organization
+	vms, err := h.storage.ListVMs(id)
+	if err != nil {
+		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
+		return
+	}
+
 	// Get current usage for detailed response
-	usage := org.GetResourceUsage(vdcs)
+	usage := org.GetResourceUsage(vdcs, vms)
 
 	response := gin.H{
 		"can_allocate": canAllocate,
@@ -598,7 +509,7 @@ func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, user
 		}
 	}
 
-	// 2. Delete all VDCs in the organization
+	// 2. Delete all VDCs in the organization (including OpenShift namespaces)
 	vdcs, err := h.storage.ListVDCs(orgID)
 	if err != nil {
 		return fmt.Errorf("failed to list VDCs for organization %s: %v", orgID, err)
@@ -606,6 +517,24 @@ func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, user
 
 	for _, vdc := range vdcs {
 		klog.V(6).Infof("Deleting VDC %s (%s) in organization %s", vdc.Name, vdc.ID, orgID)
+
+		// Delete VDC namespace and resources if OpenShift client is available
+		if h.openshiftClient != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Delete VDC namespace (this will delete all resources in it including ResourceQuota and LimitRange)
+			if err := h.openshiftClient.DeleteNamespace(ctx, vdc.Namespace); err != nil {
+				klog.Errorf("Failed to delete VDC namespace %s for VDC %s in organization %s: %v", vdc.Namespace, vdc.ID, orgID, err)
+				// Log error but continue with VDC deletion from database
+			} else {
+				klog.Infof("Deleted VDC namespace %s for VDC %s in organization %s", vdc.Namespace, vdc.ID, orgID)
+			}
+		} else {
+			klog.Warningf("OpenShift client not available - VDC namespace %s not deleted for VDC %s", vdc.Namespace, vdc.ID)
+		}
+
+		// Delete VDC from database
 		if err := h.storage.DeleteVDC(vdc.ID); err != nil {
 			klog.Errorf("Failed to delete VDC %s in organization %s: %v", vdc.ID, orgID, err)
 			// Continue with other VDCs even if one fails
