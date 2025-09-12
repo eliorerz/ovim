@@ -331,3 +331,12 @@ func ParseStorageString(storStr string) int {
 	// Storage parsing is same as memory parsing
 	return ParseMemoryString(storStr)
 }
+
+// LimitRangeInfo represents current LimitRange information for an organization namespace
+type LimitRangeInfo struct {
+	Exists    bool `json:"exists"`     // Whether LimitRange exists
+	MinCPU    int  `json:"min_cpu"`    // Minimum CPU cores per VM
+	MaxCPU    int  `json:"max_cpu"`    // Maximum CPU cores per VM
+	MinMemory int  `json:"min_memory"` // Minimum memory in GB per VM
+	MaxMemory int  `json:"max_memory"` // Maximum memory in GB per VM
+}

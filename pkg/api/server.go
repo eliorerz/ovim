@@ -195,6 +195,11 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/resources", orgHandlers.GetResourceUsage)
 				orgs.PUT("/:id/resources", orgHandlers.UpdateResourceQuotas)
 				orgs.POST("/:id/resources/validate", orgHandlers.ValidateResourceAllocation)
+
+				// LimitRange management endpoints
+				orgs.GET("/:id/limitrange", orgHandlers.GetLimitRange)
+				orgs.PUT("/:id/limitrange", orgHandlers.UpdateLimitRange)
+				orgs.DELETE("/:id/limitrange", orgHandlers.DeleteLimitRange)
 			}
 
 			// User management (system admin only)

@@ -22,6 +22,9 @@ type OpenShiftClient interface {
 	CreateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error
 	DeleteNamespace(ctx context.Context, name string) error
 	NamespaceExists(ctx context.Context, name string) (bool, error)
+	UpdateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error
+	DeleteLimitRange(ctx context.Context, namespace string) error
+	GetLimitRange(ctx context.Context, namespace string) (*models.LimitRangeInfo, error)
 }
 
 // OrganizationHandlers handles organization-related requests
@@ -649,4 +652,209 @@ func (h *OrganizationHandlers) deleteOrganizationResources(orgID, username, user
 		orgID, len(vms), len(vdcs), len(templates), len(users))
 
 	return nil
+}
+
+// GetLimitRange handles getting the current LimitRange for an organization
+func (h *OrganizationHandlers) GetLimitRange(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can view any org, others can only view their own
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != id {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only view LimitRange for your own organization"})
+			return
+		}
+	}
+
+	// Get organization to verify it exists and get namespace
+	org, err := h.storage.GetOrganization(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+		klog.Errorf("Failed to get organization %s for user %s (%s): %v", id, username, userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
+		return
+	}
+
+	// Get LimitRange from OpenShift cluster if client is available
+	if h.openshiftClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, org.Namespace)
+		if err != nil {
+			klog.Errorf("Failed to get LimitRange for organization %s namespace %s: %v", id, org.Namespace, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get LimitRange information"})
+			return
+		}
+
+		klog.V(6).Infof("Retrieved LimitRange info for organization %s: exists=%v", org.Name, limitRangeInfo.Exists)
+		c.JSON(http.StatusOK, limitRangeInfo)
+	} else {
+		// No OpenShift client available
+		klog.Warningf("OpenShift client not available - cannot get LimitRange for organization %s", id)
+		c.JSON(http.StatusOK, &models.LimitRangeInfo{
+			Exists:    false,
+			MinCPU:    0,
+			MaxCPU:    0,
+			MinMemory: 0,
+			MaxMemory: 0,
+		})
+	}
+}
+
+// UpdateLimitRange handles creating or updating LimitRange for an organization
+func (h *OrganizationHandlers) UpdateLimitRange(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Only system admin can update LimitRange
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can update LimitRange"})
+		return
+	}
+
+	// Get existing organization
+	org, err := h.storage.GetOrganization(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+		klog.Errorf("Failed to get organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
+		return
+	}
+
+	var req models.LimitRangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		klog.V(4).Infof("Invalid update LimitRange request: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// Validate LimitRange values are not negative
+	if req.MinCPU < 0 || req.MaxCPU < 0 || req.MinMemory < 0 || req.MaxMemory < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "LimitRange values cannot be negative"})
+		return
+	}
+
+	// Validate that min values are not greater than max values
+	if req.MinCPU > req.MaxCPU || req.MinMemory > req.MaxMemory {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Minimum values cannot be greater than maximum values"})
+		return
+	}
+
+	// Update LimitRange in OpenShift cluster if client is available
+	if h.openshiftClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Try to update first (in case it exists), then create if it doesn't exist
+		err := h.openshiftClient.UpdateLimitRange(ctx, org.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
+		if err != nil {
+			// If update fails, try to create
+			klog.V(4).Infof("LimitRange update failed for organization %s, trying to create: %v", id, err)
+			err = h.openshiftClient.CreateLimitRange(ctx, org.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory)
+			if err != nil {
+				klog.Errorf("Failed to create/update LimitRange for organization %s namespace %s: %v", id, org.Namespace, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create/update LimitRange"})
+				return
+			}
+			klog.Infof("Created LimitRange for organization %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM) by user %s (%s)",
+				id, org.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
+		} else {
+			klog.Infof("Updated LimitRange for organization %s namespace %s (VM limits: %d-%d vCPUs, %d-%dGi RAM) by user %s (%s)",
+				id, org.Namespace, req.MinCPU, req.MaxCPU, req.MinMemory, req.MaxMemory, username, userID)
+		}
+
+		// Get the updated LimitRange info to return
+		limitRangeInfo, err := h.openshiftClient.GetLimitRange(ctx, org.Namespace)
+		if err != nil {
+			klog.Errorf("Failed to get updated LimitRange for organization %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "LimitRange updated but failed to retrieve current state"})
+			return
+		}
+
+		c.JSON(http.StatusOK, limitRangeInfo)
+	} else {
+		klog.Warningf("OpenShift client not available - cannot update LimitRange for organization %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenShift client not available"})
+	}
+}
+
+// DeleteLimitRange handles deleting LimitRange for an organization
+func (h *OrganizationHandlers) DeleteLimitRange(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Only system admin can delete LimitRange
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can delete LimitRange"})
+		return
+	}
+
+	// Get existing organization
+	org, err := h.storage.GetOrganization(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+		klog.Errorf("Failed to get organization %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get organization"})
+		return
+	}
+
+	// Delete LimitRange from OpenShift cluster if client is available
+	if h.openshiftClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := h.openshiftClient.DeleteLimitRange(ctx, org.Namespace)
+		if err != nil {
+			klog.Errorf("Failed to delete LimitRange for organization %s namespace %s: %v", id, org.Namespace, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete LimitRange"})
+			return
+		}
+
+		klog.Infof("Deleted LimitRange for organization %s namespace %s by user %s (%s)", id, org.Namespace, username, userID)
+		c.JSON(http.StatusOK, gin.H{"message": "LimitRange deleted successfully"})
+	} else {
+		klog.Warningf("OpenShift client not available - cannot delete LimitRange for organization %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenShift client not available"})
+	}
 }

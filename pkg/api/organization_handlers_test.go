@@ -233,6 +233,24 @@ func (m *MockOpenShiftClient) CreateLimitRange(ctx context.Context, namespace st
 	return args.Error(0)
 }
 
+func (m *MockOpenShiftClient) UpdateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error {
+	args := m.Called(ctx, namespace, minCPU, maxCPU, minMemory, maxMemory)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) DeleteLimitRange(ctx context.Context, namespace string) error {
+	args := m.Called(ctx, namespace)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) GetLimitRange(ctx context.Context, namespace string) (*models.LimitRangeInfo, error) {
+	args := m.Called(ctx, namespace)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.LimitRangeInfo), args.Error(1)
+}
+
 func (m *MockOpenShiftClient) DeleteNamespace(ctx context.Context, name string) error {
 	args := m.Called(ctx, name)
 	return args.Error(0)

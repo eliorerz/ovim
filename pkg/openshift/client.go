@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/config"
+	"github.com/eliorerz/ovim-updated/pkg/models"
 	templatev1 "github.com/openshift/api/template/v1"
 	templateclient "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -676,4 +677,136 @@ func (c *Client) extractImageURL(template *templatev1.Template) string {
 	// This is a stub implementation to fix test compilation
 	// TODO: Implement actual image URL extraction logic
 	return ""
+}
+
+// UpdateLimitRange updates an existing LimitRange or creates it if it doesn't exist
+func (c *Client) UpdateLimitRange(ctx context.Context, namespace string, minCPU, maxCPU, minMemory, maxMemory int) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	// Try to get existing LimitRange first
+	_, err := c.kubeClient.CoreV1().LimitRanges(namespace).Get(ctx, "vm-limits", metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// LimitRange doesn't exist, create it
+			return c.CreateLimitRange(ctx, namespace, minCPU, maxCPU, minMemory, maxMemory)
+		}
+		return fmt.Errorf("failed to check existing LimitRange: %w", err)
+	}
+
+	// LimitRange exists, update it
+	limitRange := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vm-limits",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "limitrange",
+				"app.kubernetes.io/managed-by": "ovim",
+			},
+		},
+		Spec: corev1.LimitRangeSpec{
+			Limits: []corev1.LimitRangeItem{
+				{
+					Type: corev1.LimitTypeContainer,
+					Default: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", maxCPU*1000)),
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", maxMemory)),
+					},
+					DefaultRequest: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", minCPU*1000)),
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", minMemory)),
+					},
+					Min: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", minCPU*1000)),
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", minMemory)),
+					},
+					Max: corev1.ResourceList{
+						"cpu":    resource.MustParse(fmt.Sprintf("%dm", maxCPU*1000)),
+						"memory": resource.MustParse(fmt.Sprintf("%dGi", maxMemory)),
+					},
+				},
+			},
+		},
+	}
+
+	// Update the LimitRange
+	_, err = c.kubeClient.CoreV1().LimitRanges(namespace).Update(ctx, limitRange, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update LimitRange for namespace %s: %w", namespace, err)
+	}
+
+	return nil
+}
+
+// DeleteLimitRange deletes the LimitRange for a namespace
+func (c *Client) DeleteLimitRange(ctx context.Context, namespace string) error {
+	if c.kubeClient == nil {
+		return fmt.Errorf("kubernetes client not initialized")
+	}
+
+	err := c.kubeClient.CoreV1().LimitRanges(namespace).Delete(ctx, "vm-limits", metav1.DeleteOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// LimitRange doesn't exist, that's OK
+			return nil
+		}
+		return fmt.Errorf("failed to delete LimitRange for namespace %s: %w", namespace, err)
+	}
+
+	return nil
+}
+
+// GetLimitRange retrieves the current LimitRange information for a namespace
+func (c *Client) GetLimitRange(ctx context.Context, namespace string) (*models.LimitRangeInfo, error) {
+	if c.kubeClient == nil {
+		return nil, fmt.Errorf("kubernetes client not initialized")
+	}
+
+	limitRange, err := c.kubeClient.CoreV1().LimitRanges(namespace).Get(ctx, "vm-limits", metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// LimitRange doesn't exist
+			return &models.LimitRangeInfo{
+				Exists:    false,
+				MinCPU:    0,
+				MaxCPU:    0,
+				MinMemory: 0,
+				MaxMemory: 0,
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to get LimitRange for namespace %s: %w", namespace, err)
+	}
+
+	// Parse the LimitRange to extract values
+	info := &models.LimitRangeInfo{
+		Exists: true,
+	}
+
+	// Find the container limit item
+	for _, limit := range limitRange.Spec.Limits {
+		if limit.Type == corev1.LimitTypeContainer {
+			// Extract CPU values (convert from millicores to cores)
+			if minCPU, exists := limit.Min["cpu"]; exists {
+				info.MinCPU = int(minCPU.MilliValue() / 1000)
+			}
+			if maxCPU, exists := limit.Max["cpu"]; exists {
+				info.MaxCPU = int(maxCPU.MilliValue() / 1000)
+			}
+
+			// Extract memory values (parse as GB)
+			if minMemory, exists := limit.Min["memory"]; exists {
+				// Convert bytes to GB (using binary GB = 1024^3 bytes)
+				info.MinMemory = int(minMemory.Value() / (1024 * 1024 * 1024))
+			}
+			if maxMemory, exists := limit.Max["memory"]; exists {
+				// Convert bytes to GB (using binary GB = 1024^3 bytes)
+				info.MaxMemory = int(maxMemory.Value() / (1024 * 1024 * 1024))
+			}
+			break
+		}
+	}
+
+	return info, nil
 }
