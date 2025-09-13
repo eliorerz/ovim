@@ -113,8 +113,8 @@ func (h *VDCHandlers) Get(c *gin.Context) {
 func (h *VDCHandlers) Create(c *gin.Context) {
 	var req models.CreateVDCRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		klog.V(4).Infof("Invalid create VDC request: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		klog.Errorf("Invalid create VDC request JSON binding failed: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid request format: %v", err)})
 		return
 	}
 
@@ -529,4 +529,62 @@ func (h *VDCHandlers) GetResourceUsage(c *gin.Context) {
 		vdc.Name, usage.CPUUsed, usage.CPUQuota, usage.MemoryUsed, usage.MemoryQuota, usage.StorageUsed, usage.StorageQuota, usage.VMCount)
 
 	c.JSON(http.StatusOK, usage)
+}
+
+// CheckVDCRequirements handles checking if an organization has functioning VDCs for VM deployment
+func (h *VDCHandlers) CheckVDCRequirements(c *gin.Context) {
+	orgID := c.Param("id")
+	if orgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - system admin can check any org, others can only check their own org
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != orgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only check VDC requirements for your own organization"})
+			return
+		}
+	}
+
+	// Get VDCs for the organization
+	vdcs, err := h.storage.GetVDCsByOrganization(orgID)
+	if err != nil {
+		klog.Errorf("Failed to get VDCs for organization %s: %v", orgID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VDC requirements"})
+		return
+	}
+
+	// Check if there's at least one functioning VDC (Active or Ready phase)
+	hasFunctioningVDC := false
+	functioningVDCs := []string{}
+	for _, vdc := range vdcs {
+		if vdc.Phase == "Active" || vdc.Phase == "Ready" {
+			hasFunctioningVDC = true
+			functioningVDCs = append(functioningVDCs, vdc.Name)
+		}
+	}
+
+	klog.V(6).Infof("Checked VDC requirements for org %s by user %s (%s): %d total VDCs, %d functioning",
+		orgID, username, userID, len(vdcs), len(functioningVDCs))
+
+	c.JSON(http.StatusOK, gin.H{
+		"canDeployVMs":      hasFunctioningVDC,
+		"totalVDCs":         len(vdcs),
+		"functioningVDCs":   len(functioningVDCs),
+		"functioningVDCNames": functioningVDCs,
+		"message": func() string {
+			if hasFunctioningVDC {
+				return "Organization has functioning VDCs and can deploy VMs"
+			}
+			return "Organization requires at least one active Virtual Data Center (VDC) before deploying virtual machines"
+		}(),
+	})
 }

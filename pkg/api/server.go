@@ -185,6 +185,8 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id", orgHandlers.Get)
 				orgs.PUT("/:id", orgHandlers.Update)
 				orgs.DELETE("/:id", orgHandlers.Delete)
+				orgs.GET("/:id/status", orgHandlers.GetStatus)
+				orgs.POST("/:id/reconcile", orgHandlers.ForceReconcile)
 				orgs.GET("/:id/templates", catalogHandlers.ListTemplatesByOrg)
 				orgs.GET("/:id/users", userHandlers.ListByOrganization)
 				orgs.POST("/:id/users/:userId", userHandlers.AssignToOrganization)
@@ -203,6 +205,10 @@ func (s *Server) setupRoutes() {
 
 				// Organization catalog templates endpoint (based on assigned catalog sources)
 				orgs.GET("/:id/catalog/templates", catalogHandlers.GetOrganizationCatalogTemplates)
+
+				// VDC requirements check endpoint for VM deployment
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient)
+				orgs.GET("/:id/vdc-requirements", vdcHandlers.CheckVDCRequirements)
 			}
 
 			// User management (system admin only)

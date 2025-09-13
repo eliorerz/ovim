@@ -511,3 +511,113 @@ func (h *OrganizationHandlers) ValidateResourceAllocation(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
+// ForceReconcile handles forcing reconciliation of an organization
+func (h *OrganizationHandlers) ForceReconcile(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can force reconcile organizations
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can force reconcile organizations"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Get existing Organization CRD
+	orgCR := &ovimv1.Organization{}
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, cannot force reconcile organization %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client not available"})
+		return
+	}
+
+	// Add force reconcile annotation
+	if orgCR.Annotations == nil {
+		orgCR.Annotations = make(map[string]string)
+	}
+	orgCR.Annotations["ovim.io/force-reconcile"] = time.Now().Format(time.RFC3339)
+	orgCR.Annotations["ovim.io/force-reconcile-by"] = username
+
+	// Update the Organization CRD to trigger reconciliation
+	if err := h.k8sClient.Update(ctx, orgCR); err != nil {
+		klog.Errorf("Failed to update Organization CRD %s for force reconcile: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to trigger reconciliation"})
+		return
+	}
+
+	klog.Infof("Force reconcile triggered for Organization %s by user %s (%s)", id, username, userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Force reconcile triggered successfully",
+		"organization": id,
+		"triggered_by": username,
+		"triggered_at": time.Now().Format(time.RFC3339),
+	})
+}
+
+// GetStatus handles getting organization CRD status
+func (h *OrganizationHandlers) GetStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Organization ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, _, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Check permissions - only system admin can get organization status
+	if role != models.RoleSystemAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only system administrators can view organization status"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Get existing Organization CRD
+	orgCR := &ovimv1.Organization{}
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, cannot get organization status for %s", id)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client not available"})
+		return
+	}
+
+	klog.V(6).Infof("Retrieved Organization CRD status for %s by user %s (%s)", id, username, userID)
+
+	// Return the CRD status
+	c.JSON(http.StatusOK, gin.H{
+		"phase":      orgCR.Status.Phase,
+		"conditions": orgCR.Status.Conditions,
+		"namespace":  orgCR.Status.Namespace,
+	})
+}

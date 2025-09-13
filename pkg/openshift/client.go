@@ -24,17 +24,18 @@ import (
 
 // Template represents a VM template from OpenShift
 type Template struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OSType      string `json:"osType"`
-	OSVersion   string `json:"osVersion"`
-	CPU         int    `json:"cpu"`
-	Memory      string `json:"memory"`
-	DiskSize    string `json:"diskSize"`
-	Namespace   string `json:"namespace"`
-	ImageURL    string `json:"imageUrl"`
-	IconClass   string `json:"iconClass"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`         // Display name for UI
+	TemplateName string `json:"templateName"` // Actual OpenShift template name
+	Description  string `json:"description"`
+	OSType       string `json:"osType"`
+	OSVersion    string `json:"osVersion"`
+	CPU          int    `json:"cpu"`
+	Memory       string `json:"memory"`
+	DiskSize     string `json:"diskSize"`
+	Namespace    string `json:"namespace"`
+	ImageURL     string `json:"imageUrl"`
+	IconClass    string `json:"iconClass"`
 }
 
 // VirtualMachine represents a VM instance
@@ -134,14 +135,15 @@ func (c *Client) GetTemplatesFromNamespace(ctx context.Context, namespace string
 // convertTemplate converts an OpenShift Template to our Template struct
 func (c *Client) convertTemplate(tmpl *templatev1.Template) Template {
 	template := Template{
-		ID:        string(tmpl.UID),
-		Name:      c.extractDisplayName(tmpl),
-		Namespace: tmpl.Namespace,
-		OSType:    "Unknown",
-		CPU:       1,
-		Memory:    "2Gi",
-		DiskSize:  "20Gi",
-		ImageURL:  "",
+		ID:           string(tmpl.UID),
+		Name:         c.extractDisplayName(tmpl),
+		TemplateName: tmpl.Name, // Actual OpenShift template name
+		Namespace:    tmpl.Namespace,
+		OSType:       "Unknown",
+		CPU:          1,
+		Memory:       "2Gi",
+		DiskSize:     "20Gi",
+		ImageURL:     "",
 	}
 
 	// Extract description from various annotation keys

@@ -754,6 +754,9 @@ stack-logs:
 ## stack-port-forward: Set up port forwarding for local access
 stack-port-forward:
 	@echo "Setting up port forwarding for OVIM stack..."
+	@echo "Cleaning up any existing port-forward processes..."
+	@-pkill -f "kubectl port-forward" 2>/dev/null || true
+	@sleep 2
 	@echo "Cluster UI will be available at: https://localhost:8445"
 	@echo "Cluster API will be available at: https://localhost:8446"
 	@echo "Database will be available at: localhost:5433"

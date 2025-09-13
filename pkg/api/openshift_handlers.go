@@ -90,6 +90,35 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 			klog.Errorf("Failed to get organization %s for user %s (%s): %v", userOrgID, username, userID, err)
 			// Don't fail deployment - use provided namespace as fallback
 		} else {
+			// Check if organization has at least one functioning VDC
+			vdcs, err := h.storage.GetVDCsByOrganization(userOrgID)
+			if err != nil {
+				klog.Errorf("Failed to get VDCs for organization %s: %v", userOrgID, err)
+				c.JSON(http.StatusInternalServerError, ErrorResponse{
+					Error:   "Failed to validate organization VDCs",
+					Message: "Unable to check VDC status for VM deployment",
+				})
+				return
+			}
+
+			// Check if there's at least one functioning VDC (Active phase)
+			hasFunctioningVDC := false
+			for _, vdc := range vdcs {
+				if vdc.Phase == "Active" || vdc.Phase == "Ready" {
+					hasFunctioningVDC = true
+					break
+				}
+			}
+
+			if !hasFunctioningVDC {
+				klog.Warningf("User %s (%s) attempted to deploy VM but organization %s has no functioning VDCs", username, userID, userOrgID)
+				c.JSON(http.StatusBadRequest, ErrorResponse{
+					Error:   "No functioning Virtual Data Center available",
+					Message: "Your organization must have at least one active Virtual Data Center (VDC) before deploying virtual machines. Please contact your organization administrator to create a VDC.",
+				})
+				return
+			}
+
 			// Override target namespace with organization's namespace
 			originalNamespace := req.TargetNamespace
 			req.TargetNamespace = org.Namespace
