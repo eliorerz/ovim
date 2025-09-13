@@ -188,10 +188,10 @@ func (r *VirtualDataCenterReconciler) ensureVDCNamespace(ctx context.Context, vd
 		},
 	}
 
-	// Set owner reference
-	if err := controllerutil.SetControllerReference(vdc, namespace, r.Scheme); err != nil {
-		return err
-	}
+	// Note: Cannot set owner reference for cluster-scoped resources (Namespace)
+	// from namespace-scoped resources (VDC). Using labels for tracking instead.
+	namespace.Labels["ovim.io/vdc-id"] = vdc.Name
+	namespace.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
 
 	if err := r.Create(ctx, namespace); err != nil {
 		return err
@@ -272,12 +272,12 @@ func (r *VirtualDataCenterReconciler) ensureLimitRange(ctx context.Context, vdc 
 			Limits: []corev1.LimitRangeItem{{
 				Type: corev1.LimitTypeContainer,
 				Min: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", vdc.Spec.LimitRange.MinCpu)),
-					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", vdc.Spec.LimitRange.MinMemory)),
+					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", vdc.Spec.LimitRange.MinCpu)),
+					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", vdc.Spec.LimitRange.MinMemory)),
 				},
 				Max: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", vdc.Spec.LimitRange.MaxCpu)),
-					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", vdc.Spec.LimitRange.MaxMemory)),
+					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", vdc.Spec.LimitRange.MaxCpu)),
+					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", vdc.Spec.LimitRange.MaxMemory)),
 				},
 			}},
 		},
@@ -510,7 +510,8 @@ func parseResourceQuantity(quantityStr string) (int, error) {
 func (r *VirtualDataCenterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.VirtualDataCenter{}).
-		Owns(&corev1.Namespace{}).
+		// Note: Cannot use Owns() for cluster-scoped resources like Namespace
+		// due to cross-scope ownership restrictions. Using labels for tracking.
 		Owns(&corev1.ResourceQuota{}).
 		Owns(&corev1.LimitRange{}).
 		Owns(&rbacv1.RoleBinding{}).

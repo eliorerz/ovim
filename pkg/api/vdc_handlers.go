@@ -14,21 +14,24 @@ import (
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
+	"github.com/eliorerz/ovim-updated/pkg/openshift"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/eliorerz/ovim-updated/pkg/util"
 )
 
 // VDCHandlers handles VDC-related requests
 type VDCHandlers struct {
-	storage   storage.Storage
-	k8sClient client.Client
+	storage         storage.Storage
+	k8sClient       client.Client
+	openShiftClient *openshift.Client
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
-func NewVDCHandlers(storage storage.Storage, k8sClient client.Client) *VDCHandlers {
+func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, openShiftClient *openshift.Client) *VDCHandlers {
 	return &VDCHandlers{
-		storage:   storage,
-		k8sClient: k8sClient,
+		storage:         storage,
+		k8sClient:       k8sClient,
+		openShiftClient: openShiftClient,
 	}
 }
 
@@ -171,7 +174,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 			Quota: ovimv1.ResourceQuota{
 				CPU:     fmt.Sprintf("%d", req.CPUQuota),
 				Memory:  fmt.Sprintf("%dGi", req.MemoryQuota),
-				Storage: fmt.Sprintf("%dGi", req.StorageQuota),
+				Storage: fmt.Sprintf("%dTi", req.StorageQuota/1024), // Convert GB to TB
 			},
 			NetworkPolicy: req.NetworkPolicy,
 		},
@@ -180,10 +183,10 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 	// Add LimitRange if provided
 	if req.MinCPU != nil || req.MaxCPU != nil || req.MinMemory != nil || req.MaxMemory != nil {
 		vdcCR.Spec.LimitRange = &ovimv1.LimitRange{
-			MinCpu:    *req.MinCPU,
-			MaxCpu:    *req.MaxCPU,
-			MinMemory: *req.MinMemory,
-			MaxMemory: *req.MaxMemory,
+			MinCpu:    *req.MinCPU * 1000,    // Convert CPU cores to millicores
+			MaxCpu:    *req.MaxCPU * 1000,    // Convert CPU cores to millicores
+			MinMemory: *req.MinMemory * 1024, // Convert GB to MB
+			MaxMemory: *req.MaxMemory * 1024, // Convert GB to MB
 		}
 	}
 
@@ -300,7 +303,7 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 		vdcCR.Spec.Quota.Memory = fmt.Sprintf("%dGi", *req.MemoryQuota)
 	}
 	if req.StorageQuota != nil {
-		vdcCR.Spec.Quota.Storage = fmt.Sprintf("%dGi", *req.StorageQuota)
+		vdcCR.Spec.Quota.Storage = fmt.Sprintf("%dTi", *req.StorageQuota/1024) // Convert GB to TB
 	}
 	if req.NetworkPolicy != nil {
 		vdcCR.Spec.NetworkPolicy = *req.NetworkPolicy
@@ -555,7 +558,7 @@ func (h *VDCHandlers) CheckVDCRequirements(c *gin.Context) {
 	}
 
 	// Get VDCs for the organization
-	vdcs, err := h.storage.GetVDCsByOrganization(orgID)
+	vdcs, err := h.storage.ListVDCs(orgID)
 	if err != nil {
 		klog.Errorf("Failed to get VDCs for organization %s: %v", orgID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check VDC requirements"})
@@ -576,9 +579,9 @@ func (h *VDCHandlers) CheckVDCRequirements(c *gin.Context) {
 		orgID, username, userID, len(vdcs), len(functioningVDCs))
 
 	c.JSON(http.StatusOK, gin.H{
-		"canDeployVMs":      hasFunctioningVDC,
-		"totalVDCs":         len(vdcs),
-		"functioningVDCs":   len(functioningVDCs),
+		"canDeployVMs":        hasFunctioningVDC,
+		"totalVDCs":           len(vdcs),
+		"functioningVDCs":     len(functioningVDCs),
 		"functioningVDCNames": functioningVDCs,
 		"message": func() string {
 			if hasFunctioningVDC {
@@ -587,4 +590,128 @@ func (h *VDCHandlers) CheckVDCRequirements(c *gin.Context) {
 			return "Organization requires at least one active Virtual Data Center (VDC) before deploying virtual machines"
 		}(),
 	})
+}
+
+// GetStatus handles getting VDC status from CRD
+func (h *VDCHandlers) GetStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VDC ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// First, find the VDC CRD
+	var vdcCR *ovimv1.VirtualDataCenter
+	var orgNamespace string
+
+	// Try to find the VDC by listing all VDCs and finding the one with matching name
+	vdcList := &ovimv1.VirtualDataCenterList{}
+	if err := h.k8sClient.List(ctx, vdcList); err != nil {
+		klog.Errorf("Failed to list VDCs to find %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+		return
+	}
+
+	for _, vdc := range vdcList.Items {
+		if vdc.Name == id {
+			vdcCR = &vdc
+			orgNamespace = vdc.Namespace
+			break
+		}
+	}
+
+	if vdcCR == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+		return
+	}
+
+	// Check permissions - only system admin and org admin can access VDC status
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to view VDC status"})
+		return
+	}
+
+	// For org admin, ensure they can only access VDCs in their own organization
+	if role == models.RoleOrgAdmin {
+		expectedOrgNamespace := fmt.Sprintf("org-%s", userOrgID)
+		if userOrgID == "" || orgNamespace != expectedOrgNamespace {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only view VDC status in your own organization"})
+			return
+		}
+	}
+
+	klog.V(6).Infof("Retrieved VDC status for %s by user %s (%s)", id, username, userID)
+
+	// Return CRD status
+	response := gin.H{
+		"phase":      string(vdcCR.Status.Phase),
+		"conditions": vdcCR.Status.Conditions,
+		"namespace":  vdcCR.Status.Namespace,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetLimitRange handles getting VDC LimitRange information
+func (h *VDCHandlers) GetLimitRange(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VDC ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Get VDC
+	vdc, err := h.storage.GetVDC(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+			return
+		}
+		klog.Errorf("Failed to get VDC %s for user %s (%s): %v", id, username, userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+		return
+	}
+
+	// Check permissions - only system admin can view any VDC, others can only view VDCs from their org
+	if role != models.RoleSystemAdmin {
+		if userOrgID == "" || userOrgID != vdc.OrgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only view LimitRange for VDCs in your organization"})
+			return
+		}
+	}
+
+	// Use OpenShift client to get LimitRange information from the VDC workload namespace
+	if h.openShiftClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenShift integration not available"})
+		return
+	}
+
+	ctx := context.Background()
+	limitRangeInfo, err := h.openShiftClient.GetLimitRange(ctx, vdc.WorkloadNamespace)
+	if err != nil {
+		klog.Errorf("Failed to get LimitRange for VDC %s namespace %s: %v", id, vdc.WorkloadNamespace, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get LimitRange information"})
+		return
+	}
+
+	klog.V(6).Infof("Retrieved LimitRange for VDC %s by user %s (%s)", id, username, userID)
+
+	c.JSON(http.StatusOK, limitRangeInfo)
 }

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
 	"github.com/eliorerz/ovim-updated/pkg/auth"
+	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/openshift"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 )
@@ -83,48 +85,133 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 		return
 	}
 
-	// If user has an organization, override the target namespace with organization's namespace
-	if userOrgID != "" && h.storage != nil {
-		org, err := h.storage.GetOrganization(userOrgID)
+	// Validate that VDCID is provided
+	if req.VDCID == "" {
+		klog.Errorf("VDC ID not provided for VM deployment by user %s (%s)", username, userID)
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "VDC selection required",
+			Message: "You must select a Virtual Data Center (VDC) for VM deployment",
+		})
+		return
+	}
+
+	// Get the selected VDC and validate resource availability
+	if h.storage != nil {
+		vdc, err := h.storage.GetVDC(req.VDCID)
 		if err != nil {
-			klog.Errorf("Failed to get organization %s for user %s (%s): %v", userOrgID, username, userID, err)
-			// Don't fail deployment - use provided namespace as fallback
-		} else {
-			// Check if organization has at least one functioning VDC
-			vdcs, err := h.storage.GetVDCsByOrganization(userOrgID)
-			if err != nil {
-				klog.Errorf("Failed to get VDCs for organization %s: %v", userOrgID, err)
-				c.JSON(http.StatusInternalServerError, ErrorResponse{
-					Error:   "Failed to validate organization VDCs",
-					Message: "Unable to check VDC status for VM deployment",
-				})
-				return
-			}
-
-			// Check if there's at least one functioning VDC (Active phase)
-			hasFunctioningVDC := false
-			for _, vdc := range vdcs {
-				if vdc.Phase == "Active" || vdc.Phase == "Ready" {
-					hasFunctioningVDC = true
-					break
-				}
-			}
-
-			if !hasFunctioningVDC {
-				klog.Warningf("User %s (%s) attempted to deploy VM but organization %s has no functioning VDCs", username, userID, userOrgID)
+			if err == storage.ErrNotFound {
+				klog.Errorf("Selected VDC %s not found for user %s (%s)", req.VDCID, username, userID)
 				c.JSON(http.StatusBadRequest, ErrorResponse{
-					Error:   "No functioning Virtual Data Center available",
-					Message: "Your organization must have at least one active Virtual Data Center (VDC) before deploying virtual machines. Please contact your organization administrator to create a VDC.",
+					Error:   "Selected VDC not found",
+					Message: "The selected Virtual Data Center does not exist",
 				})
-				return
+			} else {
+				klog.Errorf("Failed to get VDC %s for user %s (%s): %v", req.VDCID, username, userID, err)
+				c.JSON(http.StatusInternalServerError, ErrorResponse{
+					Error:   "Failed to validate VDC",
+					Message: "Unable to verify the selected Virtual Data Center",
+				})
 			}
-
-			// Override target namespace with organization's namespace
-			originalNamespace := req.TargetNamespace
-			req.TargetNamespace = org.Namespace
-			klog.Infof("Overriding VM deployment namespace from %s to organization namespace %s for user %s",
-				originalNamespace, req.TargetNamespace, username)
+			return
 		}
+
+		// Handle VDCs with zero storage quota (not yet configured) by providing a reasonable default
+		if vdc.StorageQuota == 0 {
+			klog.Infof("VDC %s has zero storage quota, setting default to 500GB for validation", req.VDCID)
+			vdc.StorageQuota = 500 // 500GB default for validation purposes
+		}
+
+		// Verify VDC belongs to user's organization (if user has organization)
+		if userOrgID != "" && vdc.OrgID != userOrgID {
+			klog.Errorf("User %s (%s) attempted to deploy VM in VDC %s belonging to different organization", username, userID, req.VDCID)
+			c.JSON(http.StatusForbidden, ErrorResponse{
+				Error:   "Access denied to selected VDC",
+				Message: "You can only deploy VMs in VDCs belonging to your organization",
+			})
+			return
+		}
+
+		// Check VDC phase - must be Active or Ready
+		if vdc.Phase != "Active" && vdc.Phase != "Ready" {
+			klog.Errorf("VDC %s is in phase %s, cannot deploy VM for user %s (%s)", req.VDCID, vdc.Phase, username, userID)
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "VDC not ready for VM deployment",
+				Message: fmt.Sprintf("The selected VDC is in '%s' phase and cannot accept new VMs. Please wait for the VDC to become ready or select a different VDC.", vdc.Phase),
+			})
+			return
+		}
+
+		// Get current VMs in the VDC to calculate resource usage
+		allVMs, err := h.storage.ListVMs(vdc.OrgID)
+		if err != nil {
+			klog.Errorf("Failed to list VMs for resource validation in VDC %s: %v", req.VDCID, err)
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error:   "Failed to validate VDC resources",
+				Message: "Unable to check current resource usage in the selected VDC",
+			})
+			return
+		}
+
+		// Calculate current resource usage for this VDC
+		usage := vdc.GetResourceUsage(allVMs)
+		klog.Infof("VDC %s current usage: CPU %d/%d, Memory %d/%d GB, Storage %d/%d GB, VMs: %d",
+			req.VDCID, usage.CPUUsed, usage.CPUQuota, usage.MemoryUsed, usage.MemoryQuota, usage.StorageUsed, usage.StorageQuota, usage.VMCount)
+
+		// Get resource requirements for the new VM from request
+		// Use conservative defaults for CPU and memory, but parse actual disk size
+		newVMCPU := 1                                           // 1 CPU core (could be enhanced to extract from template)
+		newVMMemory := 2                                        // 2 GB memory (could be enhanced to extract from template)
+		newVMStorage := models.ParseStorageString(req.DiskSize) // Parse actual disk size from request
+		klog.Infof("Parsed disk size '%s' as %d GB for new VM", req.DiskSize, newVMStorage)
+
+		// Validate parsed storage size
+		if newVMStorage <= 0 {
+			klog.Errorf("Invalid disk size %s for VM deployment in VDC %s by user %s (%s)", req.DiskSize, req.VDCID, username, userID)
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "Invalid disk size format",
+				Message: fmt.Sprintf("Unable to parse disk size '%s'. Please use valid formats like '20Gi', '50GB', etc.", req.DiskSize),
+			})
+			return
+		}
+
+		// Check if VDC has enough available resources
+		availableCPU := usage.CPUQuota - usage.CPUUsed
+		availableMemory := usage.MemoryQuota - usage.MemoryUsed
+		availableStorage := usage.StorageQuota - usage.StorageUsed
+
+		if availableCPU < newVMCPU {
+			klog.Warningf("Insufficient CPU in VDC %s for VM deployment: need %d, available %d", req.VDCID, newVMCPU, availableCPU)
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "Insufficient CPU resources in selected VDC",
+				Message: fmt.Sprintf("The selected VDC does not have enough CPU resources. Required: %d cores, Available: %d cores. Current usage: %d/%d cores.", newVMCPU, availableCPU, usage.CPUUsed, usage.CPUQuota),
+			})
+			return
+		}
+
+		if availableMemory < newVMMemory {
+			klog.Warningf("Insufficient memory in VDC %s for VM deployment: need %d GB, available %d GB", req.VDCID, newVMMemory, availableMemory)
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "Insufficient memory resources in selected VDC",
+				Message: fmt.Sprintf("The selected VDC does not have enough memory resources. Required: %d GB, Available: %d GB. Current usage: %d/%d GB.", newVMMemory, availableMemory, usage.MemoryUsed, usage.MemoryQuota),
+			})
+			return
+		}
+
+		if availableStorage < newVMStorage {
+			klog.Warningf("Insufficient storage in VDC %s for VM deployment: need %d GB, available %d GB", req.VDCID, newVMStorage, availableStorage)
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "Insufficient storage resources in selected VDC",
+				Message: fmt.Sprintf("The selected VDC does not have enough storage resources. Required: %d GB, Available: %d GB. Current usage: %d/%d GB.", newVMStorage, availableStorage, usage.StorageUsed, usage.StorageQuota),
+			})
+			return
+		}
+
+		klog.Infof("VDC %s resource validation passed for VM deployment by user %s (%s): CPU %d/%d, Memory %d/%d GB, Storage %d/%d GB",
+			req.VDCID, username, userID, usage.CPUUsed+newVMCPU, usage.CPUQuota, usage.MemoryUsed+newVMMemory, usage.MemoryQuota, usage.StorageUsed+newVMStorage, usage.StorageQuota)
+
+		// Use VDC's workload namespace as target namespace
+		req.TargetNamespace = vdc.WorkloadNamespace
+		klog.Infof("Using VDC workload namespace %s for VM deployment", req.TargetNamespace)
 	}
 
 	klog.Infof("Deploying VM %s from template %s to namespace %s for user %s (%s)",

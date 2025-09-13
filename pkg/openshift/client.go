@@ -54,6 +54,7 @@ type DeployVMRequest struct {
 	VMName          string `json:"vmName"`
 	TargetNamespace string `json:"targetNamespace"`
 	DiskSize        string `json:"diskSize"`
+	VDCID           string `json:"vdcId"` // Required VDC selection for resource validation
 }
 
 // Client provides OpenShift integration capabilities

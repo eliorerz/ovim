@@ -207,7 +207,7 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/catalog/templates", catalogHandlers.GetOrganizationCatalogTemplates)
 
 				// VDC requirements check endpoint for VM deployment
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				orgs.GET("/:id/vdc-requirements", vdcHandlers.CheckVDCRequirements)
 			}
 
@@ -227,7 +227,7 @@ func (s *Server) setupRoutes() {
 			userProfile := protected.Group("/profile")
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient)
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -247,7 +247,7 @@ func (s *Server) setupRoutes() {
 			vdcs := protected.Group("/vdcs")
 			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
 			{
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
 				vdcs.GET("/:id", vdcHandlers.Get)
@@ -256,6 +256,10 @@ func (s *Server) setupRoutes() {
 
 				// VDC resource usage endpoint
 				vdcs.GET("/:id/resources", vdcHandlers.GetResourceUsage)
+
+				// VDC status and limitrange endpoints
+				vdcs.GET("/:id/status", vdcHandlers.GetStatus)
+				vdcs.GET("/:id/limitrange", vdcHandlers.GetLimitRange)
 			}
 
 			// VM catalog (all authenticated users)
