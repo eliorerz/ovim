@@ -56,6 +56,14 @@ spec:
               value: "/certs/server.crt"
             - name: OVIM_TLS_KEY_FILE
               value: "/certs/server.key"
+            - name: OVIM_OPENSHIFT_ENABLED
+              value: "true"
+            - name: OVIM_OPENSHIFT_IN_CLUSTER
+              value: "true"
+            - name: OVIM_OPENSHIFT_TEMPLATE_NAMESPACE
+              value: "openshift"
+            - name: OVIM_KUBERNETES_IN_CLUSTER
+              value: "true"
           ports:
             - name: https
               containerPort: 8443
