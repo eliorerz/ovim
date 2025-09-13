@@ -272,6 +272,20 @@ func (s *Server) setupRoutes() {
 				vms.DELETE("/:id", vmHandlers.Delete)
 			}
 
+			// Dashboard (all authenticated users)
+			dashboard := protected.Group("/dashboard")
+			{
+				dashboardHandlers := NewDashboardHandlers(s.storage)
+				dashboard.GET("/summary", dashboardHandlers.GetSummary)
+			}
+
+			// Alerts (all authenticated users)
+			alerts := protected.Group("/alerts")
+			{
+				alertsHandlers := NewAlertsHandlers()
+				alerts.GET("/summary", alertsHandlers.GetAlertSummary)
+			}
+
 			// OpenShift integration (all authenticated users)
 			if s.openshiftClient != nil {
 				openshift := protected.Group("/openshift")
