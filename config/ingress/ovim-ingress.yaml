@@ -1,0 +1,88 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ovim-ingress
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Nginx ingress controller specific annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    
+    # Optional: cert-manager for automatic TLS certificates
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # Optional: external-dns for automatic DNS management
+    # external-dns.alpha.kubernetes.io/hostname: "ovim.example.com"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ovim.local
+        - localhost
+      secretName: ovim-tls-secret
+  rules:
+    - host: ovim.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: ovim-server
+                port:
+                  number: 8443
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ovim-ui
+                port:
+                  number: 443
+    - host: localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: ovim-server
+                port:
+                  number: 8443
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ovim-ui
+                port:
+                  number: 443
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ovim-tls-secret
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: ingress
+type: kubernetes.io/tls
+data:
+  # Self-signed certificate for development
+  # In production, use cert-manager or provide real certificates
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURMVENDQWhXZ0F3SUJBZ0lKQUl2ZjdOWTVtQWdSTUEwR0NTcUdTSWIzRFFFQkN3VUFNQzB4RkRBU0JnTlYKQkFNTUMydHZiblJoYVc1bGNpNWpiMjB4RkRBU0JnTlZCQW9NQzJ0dmJuUmhhVzVsY2k1amIyMHdIaGNOTWpNdwpNREEzTVRJd01qVXdXaGNOTWpRd01EQTNNVEl3TWpVd1dqQXlNUTR3REFZRFZRUUtEQVZ2ZG1sdE1URXdMd1lKCktvWklodmNOQVFrQkZpSjBaWE4wVEc5aGJEZzVaV2htTURsa2NteGlhVzFxYzJ4dE9UbGtiemxTYmpOd2IySkYKTnpBZUZ3MHlNekF3TURjeE1qQXlOVEJhRncweU5EQXdNRGN4TWpBeU5UQmFNREl4RGpBTUJnTlZCQW9NQlc5MgphVzB4TVRBdkJna3Foa2lHOXcwQkNRRVdJblJsYzNSTGIyRmtPRGxsYUdZd09XUnliR0pwYldwemJHMDVPV1J2Ck9WSnVNM0JpYWtVM01JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBekw0K0k3TXAKbUlCdE9wTFhCaUNGV3JpODVxdjA2eDVhZk9DNzZVOWFQOVJMcGFUV01GYmdGVGdZZSsxOStUMVNZWkptdUJndQpIVkRCRk9HMVhYUi9pblBoWGtoaHlwaHFGZU9uZXcvdmd6UzFYMWw1OXJVUmRQNTdIOExYL1EwSGQvNDFKbktsCkQ4ZTI0ejlTSnZwMHNrRWg5THFpOHdXV2g5WnRLWUlsOXZzc2NEdVNlK0VNUGM4RjgzVDg1NHZGQ29wNDZaOEIKWDJYQ3l6aGJuNHg4SFZOZWI5U0hNVFVRUnZ6Y1VYajN5QkJWRnFQZTZvb3FmY0RqMHhzaHB5WmFFbzRFdXNZTgpLZDNUdFdqbVVFckVOd3BoTXh4VkppU2xpZnluM05ZS2hrZm9VQ2l6SGZGbXBVTk5tUnJXV1FPWmpkd0lHQ0hSCmFGV2Qxc09SbEtXbjV3SURBUUFCbzFNd1VUQWRCZ05WSFE0RUZnUVVLNUVyaTBiT1NsZXdBUEJ3NVVlWkdKS2oKTFlBd0h3WURWUjBqQkJnd0ZvQVVLNUVyaTBiT1NsZXdBUEJ3NVVlWkdKS2pMWUF3RHdZRFZSMFRBUUgvQkFVdwpBd0VCL3pBTkJna3Foa2lHOXcwQkFRc0ZBQU9DQVFFQXJjQW5QZVFXb0ZqR3dQOEZWc0FkYWZ6V3JqMHROZWNUCkRzV29DNllNZ2prZHFWdkhyRWpsQUtVWjd2WU8rd2g5L1JFSE85WWFzT1lDdzdWakxhSkdBY3NVbU5qZXFCNisKd1dncnNZaDFjVGlOMlFqN3gzN3FQdWpiUnkxVXFOMlVINzVoU0VlV2JWUlMrUFBEekFmWGF6dXdxOU0xL0gxKwpVRTVUajE3L1VVVjlWSEJPQ3dDRXYvMUs5cFZHanVpOWJZTlpkaUhOWnN1azNLU2RPRkZhaXVVS3pxZ04vbWFrCnJ6blVqOGVNamNnSlJERmE3UE1zUFpSb0lJNjlOSFlmVUt3OE9MVFdMQWpxalJLbVZGTktJRFdEQnBwdGZaelEKRG5qQ0hFOGZiYWVSY3RlcTJBRWNqbDNDZHFEQVNFUGZaR1ZXMWxtSjZOSTFjczJhbkE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0t
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2Z0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktnd2dnU2tBZ0VBQW9JQkFRRE12ajRqc3ltWWdHMDYKa3RjR0lJVmF1THptcS9UckhscDg0THZwVDFvLzFFdWxwTll3VnVBVk9CaDc3WDM1UFZKaGttYTRHQzRkVU1FVQo0YlZkZEgrS2MrRmVTR0hLbUdvVjQ2ZDdEKytETkxWZldYbjJ0UkYwL25zZnd0ZjlEUWQzL2pVbWNxVVB4N2JqClAxSW0rblN5UVNIMHVxTHpCWmFIMW0wcGdpWDIreXh3TzVKNzRRdzl6d1h6ZFB6bmk4VUtpbmpwbndGZlpjTEwKT0Z1ZmpId2RVMTVuMUljeE5SQkcvTnhSZVBmSUVGVVdvOTdxaWlwOXdPUFRHeUduSmxvU2pnUzZ4ZzBwM2RPMQphT1pRU3NRM0NtRXpIRlVtSktXSi9LZmMxZ3FHUitoUUtMTWQ4V2FsUTAyWkd0WlpBNW1OM0FnWUlkRm9WWjNXCnc1R1VwYWZuQWdNQkFBRUNnZ0VBQ3h1YlNGMUJ1a0JJbGZVZGc2Sk9sVG1TZGNsekRlNm9oRy9uY0pSckVaTG8KbnNNQ25EbHN5T1BxdWtKQ3JZQXFEQmlSemlzZjhGSjNpSlJLeE5JWi84UDNFT0FPNHNLRkE5SUowWkxLQmhVMwpYRzMwVFdlRzR0Zi84bFBPNktaM2VaSU9nNzI3ZGxVdHloZi9NVVJMM1lDenpoRVRSR3JOVWN3Zi9WQ1lvbmJoCkJwTUp5UDV5N29XOG1sVWN1KzZBc2YrV3hrOFJXMFB4NGRmWnV3K2Z5dDJvK0lEaDlPSlUrb0pHcVorck54Q2YKZ1VvWFNwRnNEVENReDZLSWkyOWV1WW5FQmhJQ1VpV0F3T2wrenVnMzBVNUpIZFJSSjI1dUJhRWkrd1N1V0NXcAp1YWJrRWZjNklGaHlqQVV3UDJSV1ltVFVGUFZGN1lJSkliUkVJUUtCZ1FEZ1pxQ2ljUHdqY2FxWVZYYWVBY3F0CmV3aGJlOVlTZGZ2Y0Npc2ZpUC95VnZNM2pGR2MreUMxRWRxYUFMWFFXQzc4eHR4K3V6TGt5T0Z4cjV2T3BiMnoKZytTTEcwZE5WaGtlUUgrdExoRUNJclAzUkpqU3JJTEJnYmdjQjhOeTRBNm45YWtKS3I1ZDNqdERBeW9yeFhVKwphRWZ0aDQ2Rmg3M2VqSktmMmk4THlRS0JnUUR6M0Y4QVR0L3Fib0tXWGhlWGNKMVBtcXpGaG02TDRXVS9HQ0RLCjlqSTU4ZDNhNnN0cVhZR3Bldld0QnNJNUkrMG5vUTZKYVdSbmhRTy9mYWZiRGx5VjJYb3Y3YlFIWnVjeGk5WkEKMkhISjl0MzU3S0hySUhwcGRpeUJjVkk1U2NSSVIwSmZNYUYzbS80ZGlBelljU2x0cWFweFA0c0FUOVRTeEN5KwpJbnJHT1FLQmdRRE5nVklLWjFJT0tqWGt0L2tIdktOb1ljVDdIcE5LTGdVL0NzdjZPKzIwaGdXNjE3NkNzMVFOCkxrMmpxZGkraXVQNjZaVG5FcVpZT2o3cGdVQ2NEVjM5UnJKOWVLZTNzRUtjZStZVGMzdDE5VU9TMkhsV3AraDcKck1qZzJhS0ZJNDlQU1JHNjM3SlpFSWJPTWI4OG9Ga0YzcFY4VTlrSlBHWGVwUElka1dWL1ZRS0JnSFNDL09VdgpCcjJRb3VRL1BnNEthRUJGTGpsSXdyejB4QzFYdXdydU4wbHJmbzRVVmRJOGJNS3d5WDhPV2hiMHVGeDZsVUhxCmJIcVlOMFQvSjBTSk81QnN2VjdlUzZIYWNjSm1OTEMvN3VrbUJxbmczazlycmNlVEFYSVVGTk8wQTIxSzJ5Y2oKbGovNkRjRk83dnVHc2FvT3h5cCt6Q2FYTjVEaHNUcUVkZGFwQW9HQkFOYWo1YXlWRmVGQUNjNmFxdEFycWl0RQpRSW5nRVZDWGh0YTdEYnJsWGZHSWVudVcwbmJoMFY2TjBZTW1iVzR3c0dOSlk5dkpyZFcxYkVaZUYzeTBqdUNDCkcwMXBWbzRnODlDQ005VlJoSUFLLytkUjVDQkxqaTVhZ2ZuWCtqRUNpMHZJOTRzN1AweWhYTjZZczJKN2c0QmoKT3FpMGx5aTBYQWJzUWM4a3lyTGMKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQ==

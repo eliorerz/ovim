@@ -1,0 +1,60 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovim-ui
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: ui
+    app.kubernetes.io/part-of: ovim
+  annotations:
+    # Route-specific annotations for better handling
+    haproxy.router.openshift.io/timeout: "600s"
+    haproxy.router.openshift.io/balance: "roundrobin"
+    # Security headers
+    haproxy.router.openshift.io/set-header: |
+      X-Frame-Options: SAMEORIGIN
+      X-Content-Type-Options: nosniff
+      X-XSS-Protection: 1; mode=block
+      Referrer-Policy: no-referrer-when-downgrade
+spec:
+  # Specify hostname for consistent access
+  host: ovim-ui-ovim-system.apps-crc.testing
+  to:
+    kind: Service
+    name: ovim-ui
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    # Use edge termination - OpenShift router handles TLS, backend can be HTTP or HTTPS
+    termination: passthrough
+    # For edge termination, uncomment below and adjust backend service accordingly:
+    # termination: edge
+    # insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovim-ui-localhost
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: ui
+    app.kubernetes.io/part-of: ovim
+  annotations:
+    haproxy.router.openshift.io/timeout: "600s"
+    haproxy.router.openshift.io/balance: "roundrobin"
+spec:
+  # Alternative hostname for localhost testing
+  host: localhost-ovim-system.apps-crc.testing
+  to:
+    kind: Service
+    name: ovim-ui
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    termination: passthrough
+  wildcardPolicy: None

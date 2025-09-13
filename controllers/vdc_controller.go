@@ -514,5 +514,6 @@ func (r *VirtualDataCenterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ResourceQuota{}).
 		Owns(&corev1.LimitRange{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Named("ovim-vdc-controller").
 		Complete(r)
 }

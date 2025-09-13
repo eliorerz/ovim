@@ -1,0 +1,202 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ovim-postgresql-secret
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+type: Opaque
+data:
+  # Default credentials (base64 encoded)
+  # Username: ovim
+  # Password: ovim123
+  # Database: ovim
+  POSTGRES_USER: b3ZpbQ==
+  POSTGRES_PASSWORD: b3ZpbTEyMw==
+  POSTGRES_DB: b3ZpbQ==
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovim-postgresql-config
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+data:
+  POSTGRES_HOST: "ovim-postgresql"
+  POSTGRES_PORT: "5432"
+  postgres.conf: |
+    # PostgreSQL configuration for OVIM
+    max_connections = 100
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-postgresql
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-postgresql-headless
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ovim-postgresql
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: database
+    app.kubernetes.io/version: "16"
+spec:
+  replicas: 1
+  serviceName: ovim-postgresql-headless
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ovim
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ovim
+        app.kubernetes.io/component: database
+        app.kubernetes.io/version: "16"
+    spec:
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ovim-postgresql-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ovim-postgresql-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: ovim-postgresql-secret
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - -e
+                - |
+                  exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+                  [ -f /opt/bitnami/postgresql/tmp/.initialized ] || [ -f /bitnami/postgresql/.initialized ]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 6
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgres.conf
+              readOnly: true
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: 500m
+            requests:
+              memory: 256Mi
+              cpu: 100m
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: ovim-postgresql-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+        labels:
+          app.kubernetes.io/name: ovim
+          app.kubernetes.io/component: database
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        resources:
+          requests:
+            storage: 10Gi

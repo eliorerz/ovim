@@ -218,5 +218,6 @@ func (r *VMReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.VirtualDataCenter{}).
+		Named("ovim-vm-controller").
 		Complete(r)
 }

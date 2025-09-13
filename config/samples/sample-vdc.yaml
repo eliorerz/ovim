@@ -1,0 +1,22 @@
+apiVersion: ovim.io/v1
+kind: VirtualDataCenter
+metadata:
+  name: development-vdc
+  namespace: org-example-org
+  labels:
+    environment: development
+    team: platform
+spec:
+  organizationRef: "example-org"
+  displayName: "Development VDC"
+  description: "Development environment for the platform team"
+  quota:
+    cpu: "4"
+    memory: "8Gi"
+    storage: "100Gi"
+  limitRange:
+    minCpu: 1
+    maxCpu: 2
+    minMemory: 1
+    maxMemory: 4
+  networkPolicy: "isolated"

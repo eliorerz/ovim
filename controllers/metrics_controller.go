@@ -223,5 +223,6 @@ func (r *MetricsReconciler) collectStorageMetrics(ctx context.Context, namespace
 func (r *MetricsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.VirtualDataCenter{}).
+		Named("ovim-metrics-controller").
 		Complete(r)
 }

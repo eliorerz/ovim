@@ -1,0 +1,16 @@
+apiVersion: ovim.io/v1
+kind: Catalog
+metadata:
+  name: vm-templates
+  namespace: org-example-org
+  labels:
+    catalog-type: vm-template
+spec:
+  organizationRef: "example-org"
+  displayName: "VM Template Catalog"
+  description: "Curated collection of VM templates for development"
+  type: "vm-template"
+  source:
+    type: "git"
+    url: "https://github.com/example/vm-templates.git"
+    credentials: "git-credentials-secret"

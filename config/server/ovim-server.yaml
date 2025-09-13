@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovim-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ovim
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ovim
+        app.kubernetes.io/component: server
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: quay.io/eerez/ovim:latest
+          imagePullPolicy: Always
+          command:
+            - ovim_server
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: OVIM_PORT
+              value: "8443"
+            - name: OVIM_TLS_ENABLED
+              value: "true"
+            - name: OVIM_DATABASE_URL
+              value: "postgres://ovim:ovim123@ovim-postgresql:5432/ovim?sslmode=disable"
+            - name: OVIM_ENVIRONMENT
+              value: "production"
+            - name: OVIM_LOG_LEVEL
+              value: "info"
+            - name: OVIM_JWT_SECRET
+              value: "ovim-production-jwt-secret-change-me-in-real-deployment"
+            - name: OVIM_TLS_CERT_FILE
+              value: "/certs/server.crt"
+            - name: OVIM_TLS_KEY_FILE
+              value: "/certs/server.key"
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: 500m
+            requests:
+              memory: 256Mi
+              cpu: 100m
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: certs
+              mountPath: /certs
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: certs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 8443
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server

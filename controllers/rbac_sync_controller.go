@@ -227,5 +227,6 @@ func (r *RBACReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.Organization{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Named("ovim-rbac-sync-controller").
 		Complete(r)
 }

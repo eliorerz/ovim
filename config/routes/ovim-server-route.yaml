@@ -1,0 +1,57 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovim-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: ovim
+  annotations:
+    # Route-specific annotations for API server
+    haproxy.router.openshift.io/timeout: "600s"
+    haproxy.router.openshift.io/balance: "roundrobin"
+    # Security headers for API
+    haproxy.router.openshift.io/set-header: |
+      X-Frame-Options: SAMEORIGIN
+      X-Content-Type-Options: nosniff
+      X-XSS-Protection: 1; mode=block
+      Referrer-Policy: no-referrer-when-downgrade
+spec:
+  # Specify hostname for consistent API access
+  host: ovim-server-ovim-system.apps-crc.testing
+  to:
+    kind: Service
+    name: ovim-server
+    weight: 100
+  port:
+    targetPort: 8443
+  tls:
+    # Use passthrough termination for API server that expects HTTPS
+    termination: passthrough
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovim-api
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: ovim
+  annotations:
+    haproxy.router.openshift.io/timeout: "600s"
+    haproxy.router.openshift.io/balance: "roundrobin"
+spec:
+  # API-specific hostname without path (passthrough termination doesn't support paths)
+  host: ovim-api-ovim-system.apps-crc.testing
+  to:
+    kind: Service
+    name: ovim-server
+    weight: 100
+  port:
+    targetPort: 8443
+  tls:
+    termination: passthrough
+  wildcardPolicy: None

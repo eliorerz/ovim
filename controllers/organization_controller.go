@@ -351,5 +351,6 @@ func (r *OrganizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&ovimv1.Organization{}).
 		Owns(&corev1.Namespace{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Named("ovim-organization-controller").
 		Complete(r)
 }
