@@ -1,0 +1,73 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovim-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovim-server
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+rules:
+  # Organization CRD permissions
+  - apiGroups: ["ovim.io"]
+    resources: ["organizations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # VDC CRD permissions
+  - apiGroups: ["ovim.io"]
+    resources: ["virtualdatacenters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Namespace management permissions
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ResourceQuota permissions
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # LimitRange permissions
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # NetworkPolicy permissions (if using network policies)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # RBAC permissions for organization namespace management
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Events permissions for debugging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovim-server
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: server
+subjects:
+  - kind: ServiceAccount
+    name: ovim-server
+    namespace: ovim-system
+roleRef:
+  kind: ClusterRole
+  name: ovim-server
+  apiGroup: rbac.authorization.k8s.io

@@ -20,13 +20,14 @@ spec:
         app.kubernetes.io/component: server
         app.kubernetes.io/version: "1.0.0"
     spec:
+      serviceAccountName: ovim-server
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: server
-          image: quay.io/eerez/ovim:latest
+          image: quay.io/eerez/ovim:k8s-access
           imagePullPolicy: Always
           command:
             - ovim_server

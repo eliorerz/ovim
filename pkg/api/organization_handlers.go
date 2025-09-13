@@ -114,10 +114,14 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := h.k8sClient.Create(ctx, orgCR); err != nil {
-		klog.Errorf("Failed to create Organization CRD %s: %v", orgID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization CRD"})
-		return
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Create(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to create Organization CRD %s: %v", orgID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create organization CRD"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping CRD creation for organization %s", orgID)
 	}
 
 	klog.Infof("Created Organization CRD %s by user %s (%s)", orgID, username, userID)
@@ -173,8 +177,14 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 
 	// Get existing Organization CRD
 	orgCR := &ovimv1.Organization{}
-	if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
-		klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping organization retrieval for %s", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
 		return
 	}
@@ -200,10 +210,14 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 	orgCR.Annotations["ovim.io/updated-by"] = username
 	orgCR.Annotations["ovim.io/updated-at"] = time.Now().Format(time.RFC3339)
 
-	if err := h.k8sClient.Update(ctx, orgCR); err != nil {
-		klog.Errorf("Failed to update Organization CRD %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update organization CRD"})
-		return
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Update(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to update Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update organization CRD"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping organization update for %s", id)
 	}
 
 	klog.Infof("Updated Organization CRD %s by user %s (%s)", id, username, userID)
@@ -265,8 +279,14 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 
 	// Get existing Organization CRD
 	orgCR := &ovimv1.Organization{}
-	if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
-		klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Get(ctx, client.ObjectKey{Name: id}, orgCR); err != nil {
+			klog.Errorf("Failed to get Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping organization deletion for %s", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
 		return
 	}
@@ -278,15 +298,23 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 	orgCR.Annotations["ovim.io/deleted-by"] = username
 	orgCR.Annotations["ovim.io/deleted-at"] = time.Now().Format(time.RFC3339)
 
-	if err := h.k8sClient.Update(ctx, orgCR); err != nil {
-		klog.Warningf("Failed to add deletion annotation to Organization CRD %s: %v", id, err)
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Update(ctx, orgCR); err != nil {
+			klog.Warningf("Failed to add deletion annotation to Organization CRD %s: %v", id, err)
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping deletion annotation for %s", id)
 	}
 
 	// Delete the Organization CRD
-	if err := h.k8sClient.Delete(ctx, orgCR); err != nil {
-		klog.Errorf("Failed to delete Organization CRD %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization CRD"})
-		return
+	if h.k8sClient != nil {
+		if err := h.k8sClient.Delete(ctx, orgCR); err != nil {
+			klog.Errorf("Failed to delete Organization CRD %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete organization CRD"})
+			return
+		}
+	} else {
+		klog.Warningf("k8sClient not available, skipping organization CRD deletion for %s", id)
 	}
 
 	klog.Infof("Deleted Organization CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)

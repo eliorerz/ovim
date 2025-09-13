@@ -1,0 +1,54 @@
+---
+# ClusterRole for organization administrators
+# This role allows org admins to manage resources within their organization namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovim:org-admin
+  labels:
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/component: rbac
+    rbac.ovim.io/aggregate-to-admin: "true"
+rules:
+  # Organization namespace management
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  
+  # Resource quotas and limits in organization namespace
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Basic namespace resources
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch"]
+  
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # OVIM VDC management within organization
+  - apiGroups: ["ovim.io"]
+    resources: ["virtualdatacenters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["ovim.io"]
+    resources: ["virtualdatacenters/status"]
+    verbs: ["get", "update", "patch"]
+  
+  # RBAC within organization namespace
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Events for debugging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  
+  # Network policies (if using network segmentation)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -37,7 +37,7 @@ type Server struct {
 }
 
 // NewServer creates a new API server instance
-func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt.VMProvisioner) *Server {
+func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client) *Server {
 	// Set gin mode based on environment
 	if cfg.Server.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -103,6 +103,7 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		authManager:     authManager,
 		tokenManager:    tokenManager,
 		oidcProvider:    oidcProvider,
+		k8sClient:       k8sClient,
 		openshiftClient: openshiftClient,
 		catalogService:  catalogService,
 		router:          gin.New(),

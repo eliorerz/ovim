@@ -11,9 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/eliorerz/ovim-updated/pkg/api"
+	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/config"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -107,7 +112,60 @@ func main() {
 		provisioner = kubevirt.NewMockClient()
 	}
 
-	server := api.NewServer(cfg, storageImpl, provisioner)
+	// Initialize Kubernetes client if enabled
+	var k8sClient client.Client
+	if cfg.Kubernetes.InCluster || cfg.Kubernetes.ConfigPath != "" {
+		var restConfig *rest.Config
+		var err error
+
+		if cfg.Kubernetes.InCluster {
+			klog.Info("Initializing in-cluster Kubernetes client")
+			restConfig, err = rest.InClusterConfig()
+		} else {
+			klog.Infof("Initializing Kubernetes client with kubeconfig: %s", cfg.Kubernetes.ConfigPath)
+			// TODO: Implement kubeconfig loading if needed
+			// For now, try in-cluster as fallback
+			restConfig, err = rest.InClusterConfig()
+		}
+
+		if err != nil {
+			klog.Warningf("Failed to initialize Kubernetes config: %v", err)
+			klog.Info("OVIM will run without Kubernetes integration (CRDs disabled)")
+		} else {
+			// Create a new scheme with OVIM CRDs registered
+			clientScheme := runtime.NewScheme()
+
+			// Add the default Kubernetes scheme
+			if err := scheme.AddToScheme(clientScheme); err != nil {
+				klog.Warningf("Failed to add Kubernetes scheme: %v", err)
+				klog.Info("OVIM will run without Kubernetes integration (CRDs disabled)")
+				k8sClient = nil
+			} else {
+				// Add OVIM CRDs to the scheme
+				if err := ovimv1.AddToScheme(clientScheme); err != nil {
+					klog.Warningf("Failed to add OVIM scheme: %v", err)
+					klog.Info("OVIM will run without Kubernetes integration (CRDs disabled)")
+					k8sClient = nil
+				} else {
+					// Create the controller-runtime client with our custom scheme
+					k8sClient, err = client.New(restConfig, client.Options{
+						Scheme: clientScheme,
+					})
+					if err != nil {
+						klog.Warningf("Failed to create Kubernetes client: %v", err)
+						klog.Info("OVIM will run without Kubernetes integration (CRDs disabled)")
+						k8sClient = nil
+					} else {
+						klog.Info("Kubernetes client initialized successfully with OVIM CRDs")
+					}
+				}
+			}
+		}
+	} else {
+		klog.Info("Kubernetes integration disabled in configuration")
+	}
+
+	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient)
 	handler := server.Handler()
 
 	// Channel to collect server errors

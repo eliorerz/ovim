@@ -47,7 +47,7 @@ func setupTestSuite(t *testing.T) *IntegrationTestSuite {
 	// Create mock KubeVirt provisioner for testing
 	provisioner := kubevirt.NewMockClient()
 
-	server := api.NewServer(cfg, storage, provisioner)
+	server := api.NewServer(cfg, storage, provisioner, nil)
 
 	httpServer := httptest.NewServer(server.Handler())
 
