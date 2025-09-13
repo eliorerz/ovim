@@ -611,6 +611,7 @@ spec:
         - --metrics-bind-address=:8080
         - --health-probe-bind-address=:8081
         - --leader-elect=true
+        - --database-url=postgres://ovim:ovim123@ovim-postgresql:5432/ovim?sslmode=disable
         env:
         - name: OVIM_ENVIRONMENT
           value: "production"

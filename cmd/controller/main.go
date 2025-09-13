@@ -76,9 +76,13 @@ func main() {
 	var store storage.Storage
 	if dbURL != "" {
 		setupLog.Info("Initializing database connection", "url", dbURL)
-		// Note: Database integration will be implemented later
-		setupLog.Info("Database integration placeholder - will be implemented in Phase 3")
-		store = nil
+		var err error
+		store, err = storage.NewPostgresStorage(dbURL)
+		if err != nil {
+			setupLog.Error(err, "failed to initialize database storage")
+			os.Exit(1)
+		}
+		setupLog.Info("Database storage initialized successfully")
 	} else {
 		setupLog.Info("No database URL provided, running without database integration")
 	}
