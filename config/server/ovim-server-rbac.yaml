@@ -51,10 +51,50 @@ rules:
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   
-  # Events permissions for debugging
+  # Core Kubernetes resources needed for VM deployment from templates
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Enhanced events permissions for creation
   - apiGroups: [""]
     resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+
+  # Enhanced KubeVirt permissions for VM management
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines", "virtualmachineinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # KubeVirt VM power control
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines/start", "virtualmachines/stop", "virtualmachines/restart"]
+    verbs: ["update"]
+
+  # CDI DataVolume permissions for VM storage
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # OpenShift template permissions for VM deployment
+  - apiGroups: ["template.openshift.io"]
+    resources: ["templates"]
     verbs: ["get", "list", "watch"]
+
+  # OpenShift template processing permissions
+  - apiGroups: ["template.openshift.io"]
+    resources: ["templateinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Apps API group for deployments, replicasets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # OpenShift Routes (if needed for VM services)
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
