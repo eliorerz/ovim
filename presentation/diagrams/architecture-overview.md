@@ -3,49 +3,49 @@
 ## Overall System Architecture
 
 ```mermaid
-graph TB
-    subgraph "External Users"
+flowchart TB
+    subgraph External["External Users"]
         UI[Web UI]
         CLI[CLI Tools]
         API_CLIENT[API Clients]
     end
 
-    subgraph "OVIM Platform"
-        subgraph "API Layer"
+    subgraph Platform["OVIM Platform"]
+        subgraph APILayer["API Layer"]
             LB[Load Balancer]
             API[OVIM API Server]
             AUTH[Authentication Service]
         end
 
-        subgraph "Control Plane"
+        subgraph ControlPlane["Control Plane"]
             CTRL[OVIM Controller]
             WEBHOOK[Admission Webhooks]
         end
 
-        subgraph "Storage Layer"
+        subgraph StorageLayer["Storage Layer"]
             PG[(PostgreSQL)]
             ETCD[(etcd)]
         end
     end
 
-    subgraph "Kubernetes/OpenShift Cluster"
-        subgraph "System Namespaces"
+    subgraph Cluster["Kubernetes/OpenShift Cluster"]
+        subgraph SystemNS["System Namespaces"]
             OVIM_NS[ovim-system]
             KUBE_NS[kube-system]
         end
 
-        subgraph "Organization Namespaces"
+        subgraph OrgNS["Organization Namespaces"]
             ORG1_NS[acme-corp]
             ORG2_NS[other-org]
         end
 
-        subgraph "VDC Workload Namespaces"
+        subgraph VdcNS["VDC Workload Namespaces"]
             VDC1_NS[acme-corp-dev]
             VDC2_NS[acme-corp-prod]
             VDC3_NS[other-org-test]
         end
 
-        subgraph "Infrastructure"
+        subgraph Infrastructure
             KV[KubeVirt]
             CDI[CDI]
             OCP[OpenShift]
@@ -74,44 +74,44 @@ graph TB
 ## Multi-Tenant Resource Hierarchy
 
 ```mermaid
-graph TD
+flowchart TD
     CLUSTER[Kubernetes Cluster]
 
-    subgraph "Organization Level"
-        ORG1[Organization: acme-corp]
-        ORG2[Organization: other-org]
+    subgraph OrgLevel["Organization Level"]
+        ORG1["Organization: acme-corp"]
+        ORG2["Organization: other-org"]
     end
 
-    subgraph "Organization Namespace: acme-corp"
-        ORG1_NS[Namespace: acme-corp]
-        VDC1_CRD[VDC CRD: development]
-        VDC2_CRD[VDC CRD: production]
-        CAT1_CRD[Catalog CRD: vm-templates]
-        RBAC1[Org Admin RoleBindings]
+    subgraph OrgNS["Organization Namespace: acme-corp"]
+        ORG1_NS["Namespace: acme-corp"]
+        VDC1_CRD["VDC CRD: development"]
+        VDC2_CRD["VDC CRD: production"]
+        CAT1_CRD["Catalog CRD: vm-templates"]
+        RBAC1["Org Admin RoleBindings"]
     end
 
-    subgraph "VDC Workload Namespaces"
-        VDC1_WL[Namespace: acme-corp-dev]
-        VDC2_WL[Namespace: acme-corp-prod]
+    subgraph VdcWorkload["VDC Workload Namespaces"]
+        VDC1_WL["Namespace: acme-corp-dev"]
+        VDC2_WL["Namespace: acme-corp-prod"]
 
-        subgraph "VDC1 Resources"
+        subgraph VDC1Resources["VDC1 Resources"]
             QUOTA1[ResourceQuota]
             LIMIT1[LimitRange]
             NP1[NetworkPolicy]
             VM1[VirtualMachine]
             POD1[Pods]
             SVC1[Services]
-            RBAC_VDC1[VDC Admin RoleBindings]
+            RBAC_VDC1["VDC Admin RoleBindings"]
         end
 
-        subgraph "VDC2 Resources"
+        subgraph VDC2Resources["VDC2 Resources"]
             QUOTA2[ResourceQuota]
             LIMIT2[LimitRange]
             NP2[NetworkPolicy]
             VM2[VirtualMachine]
             POD2[Pods]
             SVC2[Services]
-            RBAC_VDC2[VDC Admin RoleBindings]
+            RBAC_VDC2["VDC Admin RoleBindings"]
         end
     end
 
@@ -146,14 +146,14 @@ graph TD
 ## Controller Architecture
 
 ```mermaid
-graph TB
-    subgraph "Controller Manager"
+flowchart TB
+    subgraph ControllerMgr["Controller Manager"]
         MGR[Controller Manager]
         CACHE[Shared Cache]
         CLIENT[Kubernetes Client]
     end
 
-    subgraph "Controllers"
+    subgraph Controllers
         ORG_CTRL[Organization Controller]
         VDC_CTRL[VDC Controller]
         VM_CTRL[VM Controller]
@@ -162,7 +162,7 @@ graph TB
         RBAC_CTRL[RBAC Sync Controller]
     end
 
-    subgraph "Watched Resources"
+    subgraph WatchedResources["Watched Resources"]
         ORG_CRD[Organization CRDs]
         VDC_CRD[VDC CRDs]
         VM_CRD[VM CRDs]
@@ -172,7 +172,7 @@ graph TB
         RBAC[RoleBindings]
     end
 
-    subgraph "Managed Resources"
+    subgraph ManagedResources["Managed Resources"]
         CREATE_NS[Create Namespaces]
         CREATE_QUOTA[Create ResourceQuotas]
         CREATE_RBAC[Create RoleBindings]
@@ -251,33 +251,33 @@ sequenceDiagram
 ## Authentication & Authorization Flow
 
 ```mermaid
-graph TD
-    subgraph "Authentication Methods"
+flowchart TD
+    subgraph AuthMethods["Authentication Methods"]
         PWD[Username/Password]
         OIDC[OIDC Provider]
         JWT[JWT Token]
     end
 
-    subgraph "Authentication Service"
+    subgraph AuthService["Authentication Service"]
         AUTH_SVC[Auth Service]
         TOKEN_MGR[Token Manager]
         OIDC_MGR[OIDC Manager]
     end
 
-    subgraph "Authorization Engine"
+    subgraph AuthzEngine["Authorization Engine"]
         RBAC_ENGINE[RBAC Engine]
         ROLE_CHECK[Role Verification]
         RESOURCE_CHECK[Resource Access Check]
     end
 
-    subgraph "User Roles"
+    subgraph UserRoles["User Roles"]
         SYS_ADMIN[System Admin]
         ORG_ADMIN[Organization Admin]
         VDC_ADMIN[VDC Admin]
         USER[User]
     end
 
-    subgraph "Resources"
+    subgraph Resources
         ORGS[Organizations]
         VDCS[VDCs]
         VMS[Virtual Machines]
@@ -354,8 +354,8 @@ sequenceDiagram
 ## Catalog Content Management
 
 ```mermaid
-graph TD
-    subgraph "Catalog Sources"
+flowchart TD
+    subgraph CatalogSources["Catalog Sources"]
         GIT[Git Repository]
         OCI[OCI Registry]
         S3[S3 Bucket]
@@ -363,27 +363,27 @@ graph TD
         LOCAL[Local Files]
     end
 
-    subgraph "Catalog Controller"
+    subgraph CatalogController["Catalog Controller"]
         SYNC[Sync Controller]
         PARSER[Content Parser]
         VALIDATOR[Content Validator]
         FILTER[Content Filter]
     end
 
-    subgraph "Content Processing"
+    subgraph ContentProcessing["Content Processing"]
         METADATA[Extract Metadata]
         TEMPLATES[Process Templates]
         IMAGES[Image References]
         TAGS[Tag Processing]
     end
 
-    subgraph "Storage"
+    subgraph Storage
         DB_CAT[(Catalog Database)]
         K8S_TEMPLATES[K8s Templates]
         VM_TEMPLATES[VM Templates]
     end
 
-    subgraph "Access Control"
+    subgraph AccessControl["Access Control"]
         ORG_FILTER[Organization Filter]
         VDC_FILTER[VDC Filter]
         RBAC_FILTER[RBAC Filter]
@@ -416,33 +416,33 @@ graph TD
 ## Resource Quota Management
 
 ```mermaid
-graph TB
-    subgraph "Organization Level"
+flowchart TB
+    subgraph OrgLevel["Organization Level"]
         ORG_QUOTA[Organization Quotas]
         ORG_USAGE[Organization Usage]
     end
 
-    subgraph "VDC Level"
+    subgraph VdcLevel["VDC Level"]
         VDC1_QUOTA[VDC1 Quotas]
         VDC2_QUOTA[VDC2 Quotas]
         VDC1_USAGE[VDC1 Usage]
         VDC2_USAGE[VDC2 Usage]
     end
 
-    subgraph "Workload Level"
+    subgraph WorkloadLevel["Workload Level"]
         VM1[VM1 Resources]
         VM2[VM2 Resources]
         POD1[Pod1 Resources]
         POD2[Pod2 Resources]
     end
 
-    subgraph "Enforcement Points"
+    subgraph EnforcementPoints["Enforcement Points"]
         ADMISSION[Admission Controller]
         SCHEDULER[Scheduler]
         KUBELET[Kubelet]
     end
 
-    subgraph "Monitoring"
+    subgraph Monitoring
         METRICS[Metrics Collector]
         ALERTS[Alert Manager]
         DASHBOARD[Dashboard]
@@ -482,43 +482,43 @@ graph TB
 ## Network Architecture
 
 ```mermaid
-graph TB
-    subgraph "External Access"
+flowchart TB
+    subgraph ExtAccess["External Access"]
         INTERNET[Internet]
         VPN[VPN]
         CORP_NET[Corporate Network]
     end
 
-    subgraph "Ingress Layer"
+    subgraph IngressLayer["Ingress Layer"]
         LB[Load Balancer]
         INGRESS[Ingress Controller]
         ROUTES[OpenShift Routes]
     end
 
-    subgraph "Service Layer"
+    subgraph ServiceLayer["Service Layer"]
         API_SVC[API Service]
         UI_SVC[UI Service]
         DB_SVC[Database Service]
     end
 
-    subgraph "Organization Networks"
+    subgraph OrgNetworks["Organization Networks"]
         ORG1_NET[Org1 Network]
         ORG2_NET[Org2 Network]
     end
 
-    subgraph "VDC Networks"
+    subgraph VdcNetworks["VDC Networks"]
         VDC1_NET[VDC1 Network]
         VDC2_NET[VDC2 Network]
         VDC3_NET[VDC3 Network]
 
-        subgraph "Network Policies"
+        subgraph NetworkPolicies["Network Policies"]
             NP1[VDC1 NetworkPolicy]
             NP2[VDC2 NetworkPolicy]
             NP3[VDC3 NetworkPolicy]
         end
     end
 
-    subgraph "Workload Networks"
+    subgraph WorkloadNetworks["Workload Networks"]
         VM_NET[VM Networks]
         POD_NET[Pod Networks]
         SVC_NET[Service Networks]
@@ -560,29 +560,29 @@ graph TB
 ## Data Flow Architecture
 
 ```mermaid
-graph LR
-    subgraph "Data Sources"
+flowchart LR
+    subgraph DataSources["Data Sources"]
         USER_INPUT[User Input]
         K8S_EVENTS[K8s Events]
         METRICS_API[Metrics API]
         LOGS[Application Logs]
     end
 
-    subgraph "Data Processing"
+    subgraph DataProcessing["Data Processing"]
         API_LAYER[API Layer]
         VALIDATION[Validation Layer]
         BUSINESS_LOGIC[Business Logic]
         CONTROLLER_LOGIC[Controller Logic]
     end
 
-    subgraph "Data Storage"
+    subgraph DataStorage["Data Storage"]
         PG_DB[(PostgreSQL)]
         ETCD_DB[(etcd)]
         METRICS_DB[(Metrics Store)]
         LOG_STORE[(Log Store)]
     end
 
-    subgraph "Data Consumers"
+    subgraph DataConsumers["Data Consumers"]
         WEB_UI[Web UI]
         CLI_TOOLS[CLI Tools]
         DASHBOARDS[Dashboards]
