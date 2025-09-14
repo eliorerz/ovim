@@ -13,21 +13,24 @@ import (
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/auth"
 	"github.com/eliorerz/ovim-updated/pkg/models"
+	"github.com/eliorerz/ovim-updated/pkg/openshift"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/eliorerz/ovim-updated/pkg/util"
 )
 
 // OrganizationHandlers handles organization-related requests
 type OrganizationHandlers struct {
-	storage   storage.Storage
-	k8sClient client.Client
+	storage         storage.Storage
+	k8sClient       client.Client
+	openshiftClient *openshift.Client
 }
 
 // NewOrganizationHandlers creates a new organization handlers instance
-func NewOrganizationHandlers(storage storage.Storage, k8sClient client.Client) *OrganizationHandlers {
+func NewOrganizationHandlers(storage storage.Storage, k8sClient client.Client, openshiftClient *openshift.Client) *OrganizationHandlers {
 	return &OrganizationHandlers{
-		storage:   storage,
-		k8sClient: k8sClient,
+		storage:         storage,
+		k8sClient:       k8sClient,
+		openshiftClient: openshiftClient,
 	}
 }
 
@@ -402,6 +405,54 @@ func (h *OrganizationHandlers) GetResourceUsage(c *gin.Context) {
 		klog.Errorf("Failed to list VMs for organization %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VMs"})
 		return
+	}
+
+	// Also get OpenShift VMs and add them to the VM list with resource specs
+	if h.openshiftClient != nil {
+		for _, vdc := range vdcs {
+			if vdc.WorkloadNamespace != "" {
+				// Get OpenShift VMs from this VDC's namespace
+				osVMs, err := h.openshiftClient.GetVMs(c.Request.Context(), vdc.WorkloadNamespace)
+				if err != nil {
+					klog.Warningf("Failed to get OpenShift VMs from namespace %s: %v", vdc.WorkloadNamespace, err)
+					continue
+				}
+
+				// Get all templates to resolve VM specs
+				templates, err := h.openshiftClient.GetTemplates(c.Request.Context())
+				if err != nil {
+					klog.Warningf("Failed to get OpenShift templates: %v", err)
+					continue
+				}
+
+				// Convert OpenShift VMs to database VM format with resource specs
+				for _, osVM := range osVMs {
+					// Find the template to get resource specs
+					var templateSpec *openshift.Template
+					for _, template := range templates {
+						if template.Name == osVM.Template {
+							templateSpec = &template
+							break
+						}
+					}
+
+					if templateSpec != nil {
+						// Convert template resources to database VM format
+						dbVM := &models.VirtualMachine{
+							ID:       osVM.ID,
+							Name:     osVM.Name,
+							OrgID:    id,
+							VDCID:    &vdc.ID,
+							Status:   osVM.Status,
+							CPU:      templateSpec.CPU,
+							Memory:   templateSpec.Memory,
+							DiskSize: templateSpec.DiskSize,
+						}
+						vms = append(vms, dbVM)
+					}
+				}
+			}
+		}
 	}
 
 	// Calculate actual resource usage

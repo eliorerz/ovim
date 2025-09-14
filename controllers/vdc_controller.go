@@ -836,23 +836,39 @@ func (r *VirtualDataCenterReconciler) updateVDCCondition(vdc *ovimv1.VirtualData
 	vdc.Status.Conditions = append(vdc.Status.Conditions, condition)
 }
 
-// parseResourceQuantity parses a resource quantity string and returns the numeric value
+// parseResourceQuantity parses a resource quantity string and returns the numeric value in decimal units
 func parseResourceQuantity(quantityStr string) (int, error) {
 	quantity, err := resource.ParseQuantity(quantityStr)
 	if err != nil {
 		return 0, err
 	}
 
-	// Convert to base units (cores for CPU, GB for memory/storage)
+	// Convert to decimal base units (cores for CPU, GB for memory/storage)
+	// All conversions get the value in bytes first, then convert to GB
+	bytesValue := quantity.Value()
+
 	switch {
-	case strings.Contains(quantityStr, "Gi") || strings.Contains(quantityStr, "GB"):
-		// Memory/Storage in GB
+	case strings.Contains(quantityStr, "Gi"):
+		// Binary Gibibytes - already in bytes, convert to decimal GB
+		// 1 byte = 1/(1000^3) GB in decimal
+		return int(bytesValue / (1000 * 1000 * 1000)), nil
+	case strings.Contains(quantityStr, "GB"):
+		// Decimal Gigabytes - get GB value directly
 		return int(quantity.ScaledValue(resource.Giga)), nil
-	case strings.Contains(quantityStr, "Ti") || strings.Contains(quantityStr, "TB"):
-		// Storage in TB, convert to GB
+	case strings.Contains(quantityStr, "Ti"):
+		// Binary Tebibytes - already in bytes, convert to decimal GB
+		return int(bytesValue / (1000 * 1000 * 1000)), nil
+	case strings.Contains(quantityStr, "TB"):
+		// Decimal Terabytes - convert to GB
 		return int(quantity.ScaledValue(resource.Tera) / 1000), nil
+	case strings.Contains(quantityStr, "Mi"):
+		// Binary Mebibytes - already in bytes, convert to decimal GB
+		return int(bytesValue / (1000 * 1000 * 1000)), nil
+	case strings.Contains(quantityStr, "MB"):
+		// Decimal Megabytes - convert to GB
+		return int(quantity.ScaledValue(resource.Mega) / 1000), nil
 	default:
-		// CPU cores
+		// CPU cores (no unit or just numbers)
 		return int(quantity.Value()), nil
 	}
 }

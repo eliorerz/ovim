@@ -22,7 +22,7 @@ func TestNewOrganizationHandlers(t *testing.T) {
 	mockStorage := &MockStorage{}
 	mockK8sClient := &MockK8sClient{}
 
-	handlers := NewOrganizationHandlers(mockStorage, mockK8sClient)
+	handlers := NewOrganizationHandlers(mockStorage, mockK8sClient, nil)
 
 	assert.NotNil(t, handlers)
 	assert.Equal(t, mockStorage, handlers.storage)
@@ -62,7 +62,7 @@ func TestOrganizationHandlers_List(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewOrganizationHandlers(mockStorage, nil)
+			handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 			c, w := setupGinContext("GET", "/organizations", nil, "user1", "admin", models.RoleSystemAdmin, "")
 
 			handlers.List(c)
@@ -120,7 +120,7 @@ func TestOrganizationHandlers_Get(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewOrganizationHandlers(mockStorage, nil)
+			handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/organizations/%s", tt.orgID), nil, "user1", "admin", models.RoleSystemAdmin, "")
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 
@@ -237,7 +237,7 @@ func TestOrganizationHandlers_Create_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient)
+			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient, nil)
 			c, w := setupGinContext("POST", "/organizations", tt.requestBody, tt.userID, tt.username, tt.role, tt.orgID)
 
 			handlers.Create(c)
@@ -327,7 +327,7 @@ func TestOrganizationHandlers_Update_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient)
+			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient, nil)
 			c, w := setupGinContext("PUT", fmt.Sprintf("/organizations/%s", tt.orgID), tt.requestBody, tt.userID, "admin", tt.role, "")
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 
@@ -418,7 +418,7 @@ func TestOrganizationHandlers_Delete_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient)
+			handlers := NewOrganizationHandlers(mockStorage, mockK8sClient, nil)
 			c, w := setupGinContext("DELETE", fmt.Sprintf("/organizations/%s", tt.orgID), nil, "user1", "admin", tt.userRole, "")
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 
@@ -472,7 +472,7 @@ func TestOrganizationHandlers_GetUserOrganization(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewOrganizationHandlers(mockStorage, nil)
+			handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 			c, w := setupGinContext("GET", "/user/organization", nil, "user1", "user", models.RoleOrgMember, tt.userOrgID)
 
 			handlers.GetUserOrganization(c)
@@ -627,7 +627,7 @@ func TestOrganizationHandlers_GetResourceUsage(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewOrganizationHandlers(mockStorage, nil)
+			handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/organizations/%s/usage", tt.orgID), nil, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 
@@ -649,7 +649,7 @@ func TestOrganizationHandlers_GetResourceUsage(t *testing.T) {
 
 func TestOrganizationHandlers_UpdateResourceQuotas(t *testing.T) {
 	mockStorage := &MockStorage{}
-	handlers := NewOrganizationHandlers(mockStorage, nil)
+	handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 	c, w := setupGinContext("PUT", "/organizations/test-org/quotas", nil, "user1", "admin", models.RoleSystemAdmin, "")
 
 	handlers.UpdateResourceQuotas(c)
@@ -811,7 +811,7 @@ func TestOrganizationHandlers_ValidateResourceAllocation(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewOrganizationHandlers(mockStorage, nil)
+			handlers := NewOrganizationHandlers(mockStorage, nil, nil)
 			c, w := setupGinContext("POST", fmt.Sprintf("/organizations/%s/validate", tt.orgID), tt.requestBody, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.orgID}}
 

@@ -177,7 +177,7 @@ func (s *Server) setupRoutes() {
 			orgs := protected.Group("/organizations")
 			orgs.Use(s.authManager.RequireRole("system_admin"))
 			{
-				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient)
+				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				userHandlers := NewUserHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
@@ -226,7 +226,7 @@ func (s *Server) setupRoutes() {
 			// User profile and organization access (all authenticated users)
 			userProfile := protected.Group("/profile")
 			{
-				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient)
+				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
