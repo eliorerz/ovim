@@ -308,7 +308,12 @@ func (s *Server) setupRoutes() {
 			dashboard := protected.Group("/dashboard")
 			{
 				dashboardHandlers := NewDashboardHandlers(s.storage)
+				// Set Kubernetes client for health checks if available
+				if s.k8sClient != nil {
+					dashboardHandlers.SetKubernetesClient(s.k8sClient)
+				}
 				dashboard.GET("/summary", dashboardHandlers.GetSummary)
+				dashboard.GET("/system-health", dashboardHandlers.GetSystemHealth)
 			}
 
 			// Alerts (all authenticated users)
