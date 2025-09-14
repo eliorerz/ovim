@@ -24,6 +24,7 @@ type VDCHandlers struct {
 	storage         storage.Storage
 	k8sClient       client.Client
 	openShiftClient *openshift.Client
+	eventRecorder   *EventRecorder
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
@@ -33,6 +34,11 @@ func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, openShiftC
 		k8sClient:       k8sClient,
 		openShiftClient: openShiftClient,
 	}
+}
+
+// SetEventRecorder sets the event recorder for this handler
+func (h *VDCHandlers) SetEventRecorder(recorder *EventRecorder) {
+	h.eventRecorder = recorder
 }
 
 // List handles listing VDCs
@@ -221,6 +227,11 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 	klog.Infof("VDC %s (%s) creation initiated in org %s by user %s (%s) - controller will handle resource creation",
 		req.DisplayName, vdcID, req.OrgID, username, userID)
 
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordVDCCreated(ctx, vdcID, req.OrgID, username)
+	}
+
 	c.JSON(http.StatusCreated, response)
 }
 
@@ -323,6 +334,11 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 	}
 
 	klog.Infof("Updated VirtualDataCenter CRD %s by user %s (%s)", id, username, userID)
+
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordVDCUpdated(ctx, id, vdcCR.Spec.OrganizationRef, username)
+	}
 
 	// Return updated VDC data from CRD
 	response := &models.VirtualDataCenter{
@@ -442,6 +458,11 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 	}
 
 	klog.Infof("Deleted VirtualDataCenter CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
+
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordVDCDeleted(ctx, id, vdcCR.Spec.OrganizationRef, username)
+	}
 
 	c.JSON(http.StatusNoContent, nil)
 }

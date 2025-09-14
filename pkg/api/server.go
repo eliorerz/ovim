@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -31,13 +33,15 @@ type Server struct {
 	tokenManager    *auth.TokenManager
 	oidcProvider    *auth.OIDCProvider
 	k8sClient       client.Client
+	k8sClientset    kubernetes.Interface
 	openshiftClient *openshift.Client
 	catalogService  *catalog.Service
+	eventRecorder   *EventRecorder
 	router          *gin.Engine
 }
 
 // NewServer creates a new API server instance
-func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client) *Server {
+func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client, k8sClientset kubernetes.Interface, recorder record.EventRecorder) *Server {
 	// Set gin mode based on environment
 	if cfg.Server.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -96,6 +100,15 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		klog.Infof("Catalog service will use database-only mode (OpenShift not available)")
 	}
 
+	// Create event recorder
+	var eventRecorder *EventRecorder
+	if recorder != nil && k8sClient != nil {
+		eventRecorder = NewEventRecorder(recorder, k8sClient)
+		klog.Infof("API Event recorder initialized")
+	} else {
+		klog.Warningf("Event recorder or k8s client not available, API events will not be recorded")
+	}
+
 	server := &Server{
 		config:          cfg,
 		storage:         storage,
@@ -104,8 +117,10 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		tokenManager:    tokenManager,
 		oidcProvider:    oidcProvider,
 		k8sClient:       k8sClient,
+		k8sClientset:    k8sClientset,
 		openshiftClient: openshiftClient,
 		catalogService:  catalogService,
+		eventRecorder:   eventRecorder,
 		router:          gin.New(),
 	}
 
@@ -178,6 +193,9 @@ func (s *Server) setupRoutes() {
 			orgs.Use(s.authManager.RequireRole("system_admin"))
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				if s.eventRecorder != nil {
+					orgHandlers.SetEventRecorder(s.eventRecorder)
+				}
 				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				userHandlers := NewUserHandlers(s.storage)
 				orgs.GET("/", orgHandlers.List)
@@ -248,6 +266,9 @@ func (s *Server) setupRoutes() {
 			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
 			{
 				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				if s.eventRecorder != nil {
+					vdcHandlers.SetEventRecorder(s.eventRecorder)
+				}
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
 				vdcs.GET("/:id", vdcHandlers.Get)
@@ -295,6 +316,14 @@ func (s *Server) setupRoutes() {
 			{
 				alertsHandlers := NewAlertsHandlers()
 				alerts.GET("/summary", alertsHandlers.GetAlertSummary)
+			}
+
+			// Events (all authenticated users)
+			events := protected.Group("/events")
+			{
+				eventsHandlers := NewEventsHandlers(s.k8sClient, s.k8sClientset)
+				events.GET("/", eventsHandlers.GetEvents)
+				events.GET("/recent", eventsHandlers.GetRecentEvents)
 			}
 
 			// OpenShift integration (all authenticated users)

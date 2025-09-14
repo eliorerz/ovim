@@ -11,9 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -114,6 +118,8 @@ func main() {
 
 	// Initialize Kubernetes client if enabled
 	var k8sClient client.Client
+	var kubernetesClient kubernetes.Interface
+	var eventRecorder record.EventRecorder
 	if cfg.Kubernetes.InCluster || cfg.Kubernetes.ConfigPath != "" {
 		var restConfig *rest.Config
 		var err error
@@ -157,6 +163,20 @@ func main() {
 						k8sClient = nil
 					} else {
 						klog.Info("Kubernetes client initialized successfully with OVIM CRDs")
+
+						// Create event recorder if k8s client is available
+						kubernetesClient, err = kubernetes.NewForConfig(restConfig)
+						if err != nil {
+							klog.Warningf("Failed to create Kubernetes clientset for event recorder: %v", err)
+						} else {
+							eventBroadcaster := record.NewBroadcaster()
+							eventBroadcaster.StartLogging(klog.Infof)
+							eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{
+								Interface: kubernetesClient.CoreV1().Events(""),
+							})
+							eventRecorder = eventBroadcaster.NewRecorder(clientScheme, corev1.EventSource{Component: "ovim-server"})
+							klog.Info("Event recorder initialized successfully")
+						}
 					}
 				}
 			}
@@ -165,7 +185,7 @@ func main() {
 		klog.Info("Kubernetes integration disabled in configuration")
 	}
 
-	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient)
+	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient, kubernetesClient, eventRecorder)
 	handler := server.Handler()
 
 	// Channel to collect server errors

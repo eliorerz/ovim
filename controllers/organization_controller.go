@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -36,8 +37,9 @@ const (
 // OrganizationReconciler reconciles a Organization object
 type OrganizationReconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Storage storage.Storage
+	Scheme   *runtime.Scheme
+	Storage  storage.Storage
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ovim.io,resources=organizations,verbs=get;list;watch;create;update;patch;delete
@@ -72,8 +74,10 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		controllerutil.AddFinalizer(&org, OrganizationFinalizer)
 		if err := r.Update(ctx, &org); err != nil {
 			logger.Error(err, "unable to add finalizer")
+			r.recordEvent(&org, corev1.EventTypeWarning, "FinalizerFailed", fmt.Sprintf("Failed to add finalizer: %v", err))
 			return ctrl.Result{}, err
 		}
+		r.recordEvent(&org, corev1.EventTypeNormal, "OrganizationCreated", "Organization created and finalizer added")
 		return ctrl.Result{}, nil
 	}
 
@@ -81,6 +85,7 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	orgNamespace := fmt.Sprintf("org-%s", strings.ToLower(org.Name))
 	if err := r.ensureOrgNamespace(ctx, &org, orgNamespace); err != nil {
 		logger.Error(err, "unable to ensure organization namespace")
+		r.recordEvent(&org, corev1.EventTypeWarning, "NamespaceCreationFailed", fmt.Sprintf("Failed to create namespace %s: %v", orgNamespace, err))
 		r.updateOrgCondition(&org, ConditionReady, metav1.ConditionFalse, "NamespaceCreationFailed", err.Error())
 		if err := r.Status().Update(ctx, &org); err != nil {
 			logger.Error(err, "unable to update status")
@@ -91,6 +96,7 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Set up RBAC for org admins
 	if err := r.setupOrgRBAC(ctx, &org, orgNamespace); err != nil {
 		logger.Error(err, "unable to setup organization RBAC")
+		r.recordEvent(&org, corev1.EventTypeWarning, "RBACSetupFailed", fmt.Sprintf("Failed to setup RBAC for namespace %s: %v", orgNamespace, err))
 		r.updateOrgCondition(&org, ConditionReady, metav1.ConditionFalse, "RBACSetupFailed", err.Error())
 		if err := r.Status().Update(ctx, &org); err != nil {
 			logger.Error(err, "unable to update status")
@@ -107,6 +113,9 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Error(err, "unable to update status")
 		return ctrl.Result{}, err
 	}
+
+	// Record successful organization activation
+	r.recordEvent(&org, corev1.EventTypeNormal, "OrganizationActivated", fmt.Sprintf("Organization %s is now active with namespace %s", org.Name, orgNamespace))
 
 	// Sync to database
 	if err := r.syncToDatabase(ctx, &org); err != nil {
@@ -165,6 +174,7 @@ func (r *OrganizationReconciler) ensureOrgNamespace(ctx context.Context, org *ov
 	}
 
 	logger.Info("Created organization namespace", "namespace", namespaceName)
+	r.recordEvent(org, corev1.EventTypeNormal, "NamespaceCreated", fmt.Sprintf("Created namespace %s for organization", namespaceName))
 	return nil
 }
 
@@ -221,6 +231,7 @@ func (r *OrganizationReconciler) setupOrgRBAC(ctx context.Context, org *ovimv1.O
 	}
 
 	logger.Info("Set up organization RBAC", "namespace", namespaceName, "admins", len(org.Spec.Admins))
+	r.recordEvent(org, corev1.EventTypeNormal, "RBACConfigured", fmt.Sprintf("Configured RBAC for %d admin groups in namespace %s", len(org.Spec.Admins), namespaceName))
 	return nil
 }
 
@@ -245,6 +256,7 @@ func (r *OrganizationReconciler) handleOrgDeletion(ctx context.Context, org *ovi
 			logger.Error(err, "unable to update status")
 		}
 
+		r.recordEvent(org, corev1.EventTypeWarning, "DeletionBlocked", fmt.Sprintf("Cannot delete organization: %d VDCs must be removed first", len(vdcList.Items)))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -259,6 +271,7 @@ func (r *OrganizationReconciler) handleOrgDeletion(ctx context.Context, org *ovi
 				return ctrl.Result{}, err
 			}
 			logger.Info("Deleted organization namespace", "namespace", org.Status.Namespace)
+			r.recordEvent(org, corev1.EventTypeNormal, "NamespaceDeleted", fmt.Sprintf("Deleted namespace %s during organization cleanup", org.Status.Namespace))
 		} else if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -280,6 +293,7 @@ func (r *OrganizationReconciler) handleOrgDeletion(ctx context.Context, org *ovi
 	}
 
 	logger.Info("Organization deleted successfully")
+	r.recordEvent(org, corev1.EventTypeNormal, "OrganizationDeleted", fmt.Sprintf("Organization %s has been successfully deleted", org.Name))
 	return ctrl.Result{}, nil
 }
 
@@ -343,6 +357,13 @@ func (r *OrganizationReconciler) updateOrgCondition(org *ovimv1.Organization, co
 	}
 
 	org.Status.Conditions = append(org.Status.Conditions, condition)
+}
+
+// recordEvent records an event for the given organization
+func (r *OrganizationReconciler) recordEvent(org *ovimv1.Organization, eventType, reason, message string) {
+	if r.Recorder != nil {
+		r.Recorder.Event(org, eventType, reason, message)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager

@@ -23,6 +23,7 @@ type OrganizationHandlers struct {
 	storage         storage.Storage
 	k8sClient       client.Client
 	openshiftClient *openshift.Client
+	eventRecorder   *EventRecorder
 }
 
 // NewOrganizationHandlers creates a new organization handlers instance
@@ -32,6 +33,11 @@ func NewOrganizationHandlers(storage storage.Storage, k8sClient client.Client, o
 		k8sClient:       k8sClient,
 		openshiftClient: openshiftClient,
 	}
+}
+
+// SetEventRecorder sets the event recorder for this handler
+func (h *OrganizationHandlers) SetEventRecorder(recorder *EventRecorder) {
+	h.eventRecorder = recorder
 }
 
 // List handles listing all organizations
@@ -144,6 +150,11 @@ func (h *OrganizationHandlers) Create(c *gin.Context) {
 	klog.Infof("Organization %s (%s) creation initiated by user %s (%s) - controller will handle resource creation",
 		req.DisplayName, orgID, username, userID)
 
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordOrganizationCreated(ctx, orgID, username)
+	}
+
 	c.JSON(http.StatusCreated, response)
 }
 
@@ -224,6 +235,11 @@ func (h *OrganizationHandlers) Update(c *gin.Context) {
 	}
 
 	klog.Infof("Updated Organization CRD %s by user %s (%s)", id, username, userID)
+
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordOrganizationUpdated(ctx, id, username)
+	}
 
 	// Return updated organization data from CRD
 	response := &models.Organization{
@@ -321,6 +337,11 @@ func (h *OrganizationHandlers) Delete(c *gin.Context) {
 	}
 
 	klog.Infof("Deleted Organization CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
+
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordOrganizationDeleted(ctx, id, username)
+	}
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -616,6 +637,11 @@ func (h *OrganizationHandlers) ForceReconcile(c *gin.Context) {
 	}
 
 	klog.Infof("Force reconcile triggered for Organization %s by user %s (%s)", id, username, userID)
+
+	// Record API event
+	if h.eventRecorder != nil {
+		h.eventRecorder.RecordOrganizationReconcileForced(ctx, id, username)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Force reconcile triggered successfully",
