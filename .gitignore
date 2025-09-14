@@ -218,3 +218,5 @@ secrets/
 
 # Custom
 .ovim/
+
+build

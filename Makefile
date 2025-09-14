@@ -3,8 +3,9 @@
 
 # Project configuration
 PROJECT_NAME := ovim-backend
-BINARY_NAME := ovim_server
-CONTROLLER_BINARY_NAME := ovim_controller
+BUILD_DIR := build
+BINARY_NAME := $(BUILD_DIR)/ovim_server
+CONTROLLER_BINARY_NAME := $(BUILD_DIR)/ovim_controller
 MAIN_PATH := ./cmd/ovim-server
 CONTROLLER_MAIN_PATH := ./cmd/controller
 MODULE_NAME := github.com/eliorerz/ovim-updated
@@ -163,7 +164,7 @@ help:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(BINARY_NAME) $(CONTROLLER_BINARY_NAME)
+	@rm -rf $(BUILD_DIR)
 	@go clean -cache -testcache -modcache
 	@echo "Stopping and removing containers..."
 	@-podman stop $(BACKEND_CONTAINER_NAME) 2>/dev/null || true
@@ -223,12 +224,14 @@ test-integration: fmt
 
 build: deps fmt
 	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		$(GO_BUILD_FLAGS) $(LDFLAGS) \
 		-o $(BINARY_NAME) $(MAIN_PATH)
 
 build-controller: deps fmt
 	@echo "Building $(CONTROLLER_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		$(GO_BUILD_FLAGS) $(LDFLAGS) \
 		-o $(CONTROLLER_BINARY_NAME) $(CONTROLLER_MAIN_PATH)
