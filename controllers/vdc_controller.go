@@ -7,12 +7,14 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -43,6 +45,7 @@ type VirtualDataCenterReconciler struct {
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile handles VirtualDataCenter resource changes
 func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -125,6 +128,16 @@ func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err := r.setupVDCRBAC(ctx, &vdc, orgCR, vdcNamespace); err != nil {
 		logger.Error(err, "unable to setup VDC RBAC")
 		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "RBACSetupFailed", err.Error())
+		if err := r.Status().Update(ctx, &vdc); err != nil {
+			logger.Error(err, "unable to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+	}
+
+	// Apply NetworkPolicy if specified
+	if err := r.ensureNetworkPolicy(ctx, &vdc, vdcNamespace); err != nil {
+		logger.Error(err, "unable to ensure network policy")
+		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "NetworkPolicyFailed", err.Error())
 		if err := r.Status().Update(ctx, &vdc); err != nil {
 			logger.Error(err, "unable to update status")
 		}
@@ -367,9 +380,347 @@ func (r *VirtualDataCenterReconciler) setupVDCRBAC(ctx context.Context, vdc *ovi
 	return nil
 }
 
+// ensureNetworkPolicy creates or updates NetworkPolicy for the VDC
+func (r *VirtualDataCenterReconciler) ensureNetworkPolicy(ctx context.Context, vdc *ovimv1.VirtualDataCenter, namespaceName string) error {
+	logger := log.FromContext(ctx)
+
+	// Skip if no network policy is specified or if it's default (no restriction)
+	if vdc.Spec.NetworkPolicy == "" || vdc.Spec.NetworkPolicy == models.NetworkPolicyDefault {
+		// Clean up any existing network policies
+		return r.cleanupNetworkPolicies(ctx, namespaceName)
+	}
+
+	var networkPolicy *networkingv1.NetworkPolicy
+
+	switch vdc.Spec.NetworkPolicy {
+	case models.NetworkPolicyIsolated:
+		networkPolicy = r.createIsolatedNetworkPolicy(vdc, namespaceName)
+	case models.NetworkPolicyCustom:
+		networkPolicy = r.createCustomNetworkPolicy(vdc, namespaceName)
+	default:
+		// Unknown policy type, log warning and use default (no policy)
+		logger.Info("Unknown network policy type, skipping NetworkPolicy creation",
+			"policy", vdc.Spec.NetworkPolicy, "vdc", vdc.Name)
+		return r.cleanupNetworkPolicies(ctx, namespaceName)
+	}
+
+	if networkPolicy == nil {
+		return fmt.Errorf("failed to create network policy for type: %s", vdc.Spec.NetworkPolicy)
+	}
+
+	// Try to create, if exists, update
+	if err := r.Create(ctx, networkPolicy); err != nil {
+		if errors.IsAlreadyExists(err) {
+			// Update existing network policy
+			existingPolicy := &networkingv1.NetworkPolicy{}
+			if err := r.Get(ctx, types.NamespacedName{Name: networkPolicy.Name, Namespace: namespaceName}, existingPolicy); err != nil {
+				return err
+			}
+
+			existingPolicy.Spec = networkPolicy.Spec
+			existingPolicy.Labels = networkPolicy.Labels
+			existingPolicy.Annotations = networkPolicy.Annotations
+
+			if err := r.Update(ctx, existingPolicy); err != nil {
+				return err
+			}
+			logger.Info("Updated VDC network policy", "namespace", namespaceName, "policy", vdc.Spec.NetworkPolicy)
+		} else {
+			return err
+		}
+	} else {
+		logger.Info("Created VDC network policy", "namespace", namespaceName, "policy", vdc.Spec.NetworkPolicy)
+	}
+
+	return nil
+}
+
+// createIsolatedNetworkPolicy creates a NetworkPolicy that isolates the VDC namespace
+func (r *VirtualDataCenterReconciler) createIsolatedNetworkPolicy(vdc *ovimv1.VirtualDataCenter, namespaceName string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vdc-isolation-policy",
+			Namespace: namespaceName,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "vdc",
+				"app.kubernetes.io/managed-by": "ovim",
+				"managed-by":                   "ovim",
+				"type":                         "vdc-network-policy",
+				"org":                          vdc.Spec.OrganizationRef,
+				"vdc":                          vdc.Name,
+				"ovim.io/vdc-id":              vdc.Name,
+				"ovim.io/vdc-namespace":       vdc.Namespace,
+				"ovim.io/policy-type":         "isolated",
+			},
+			Annotations: map[string]string{
+				"ovim.io/vdc-description": vdc.Spec.Description,
+				"ovim.io/created-by":      "ovim-controller",
+				"ovim.io/created-at":      time.Now().Format(time.RFC3339),
+				"ovim.io/policy-purpose":  "Isolate VDC traffic to same namespace only",
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// Apply to all pods in the namespace
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			// Ingress rules: Allow traffic from same namespace and system namespaces
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					// Allow traffic from pods in the same namespace
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": namespaceName,
+								},
+							},
+						},
+						// Allow traffic from system namespaces (kube-system, ovim-system)
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{
+										Key:      "name",
+										Operator: metav1.LabelSelectorOpIn,
+										Values:   []string{"kube-system", "ovim-system", "openshift-system", "openshift-monitoring"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Egress rules: Allow traffic to same namespace, system namespaces, and external
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					// Allow traffic to pods in the same namespace
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": namespaceName,
+								},
+							},
+						},
+						// Allow traffic to system namespaces
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{
+										Key:      "name",
+										Operator: metav1.LabelSelectorOpIn,
+										Values:   []string{"kube-system", "ovim-system", "openshift-system", "openshift-monitoring"},
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					// Allow DNS traffic (port 53)
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: &[]corev1.Protocol{corev1.ProtocolUDP}[0],
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+						{
+							Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+					},
+				},
+				{
+					// Allow HTTPS traffic to external services (port 443)
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 443},
+						},
+					},
+					// Allow to external IPs (not same cluster)
+					To: []networkingv1.NetworkPolicyPeer{},
+				},
+			},
+		},
+	}
+}
+
+// createCustomNetworkPolicy creates a NetworkPolicy based on custom configuration
+func (r *VirtualDataCenterReconciler) createCustomNetworkPolicy(vdc *ovimv1.VirtualDataCenter, namespaceName string) *networkingv1.NetworkPolicy {
+	// Start with base NetworkPolicy
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vdc-custom-policy",
+			Namespace: namespaceName,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "ovim",
+				"app.kubernetes.io/component":  "vdc",
+				"app.kubernetes.io/managed-by": "ovim",
+				"managed-by":                   "ovim",
+				"type":                         "vdc-network-policy",
+				"org":                          vdc.Spec.OrganizationRef,
+				"vdc":                          vdc.Name,
+				"ovim.io/vdc-id":              vdc.Name,
+				"ovim.io/vdc-namespace":       vdc.Namespace,
+				"ovim.io/policy-type":         "custom",
+			},
+			Annotations: map[string]string{
+				"ovim.io/vdc-description": vdc.Spec.Description,
+				"ovim.io/created-by":      "ovim-controller",
+				"ovim.io/created-at":      time.Now().Format(time.RFC3339),
+				"ovim.io/policy-purpose":  "Custom VDC network policy from configuration",
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+		},
+	}
+
+	// Parse custom network configuration if available
+	if vdc.Spec.CustomNetworkConfig != nil {
+		// Apply custom configuration to policy spec
+		r.applyCustomNetworkConfig(policy, vdc.Spec.CustomNetworkConfig)
+	} else {
+		// Default custom policy: Allow same namespace + basic external access
+		policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
+			{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"name": namespaceName,
+							},
+						},
+					},
+				},
+			},
+		}
+		policy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			{
+				// Allow DNS
+				Ports: []networkingv1.NetworkPolicyPort{
+					{
+						Protocol: &[]corev1.Protocol{corev1.ProtocolUDP}[0],
+						Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+					},
+				},
+			},
+		}
+	}
+
+	return policy
+}
+
+// applyCustomNetworkConfig applies custom network configuration to NetworkPolicy
+func (r *VirtualDataCenterReconciler) applyCustomNetworkConfig(policy *networkingv1.NetworkPolicy, config map[string]interface{}) {
+	// This is a simplified implementation. In a production environment,
+	// you would want more sophisticated parsing and validation of the custom config.
+
+	// Example custom config structure:
+	// {
+	//   "allow_ingress_from_namespaces": ["namespace1", "namespace2"],
+	//   "allow_egress_to_ports": [80, 443, 53],
+	//   "deny_all_ingress": false,
+	//   "deny_all_egress": false
+	// }
+
+	var ingressRules []networkingv1.NetworkPolicyIngressRule
+	var egressRules []networkingv1.NetworkPolicyEgressRule
+
+	// Parse allowed ingress namespaces
+	if allowedNS, ok := config["allow_ingress_from_namespaces"].([]interface{}); ok {
+		var peers []networkingv1.NetworkPolicyPeer
+		for _, nsInterface := range allowedNS {
+			if ns, ok := nsInterface.(string); ok {
+				peers = append(peers, networkingv1.NetworkPolicyPeer{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"name": ns},
+					},
+				})
+			}
+		}
+		if len(peers) > 0 {
+			ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{From: peers})
+		}
+	}
+
+	// Parse allowed egress ports
+	if allowedPorts, ok := config["allow_egress_to_ports"].([]interface{}); ok {
+		var ports []networkingv1.NetworkPolicyPort
+		for _, portInterface := range allowedPorts {
+			if portFloat, ok := portInterface.(float64); ok {
+				port := int32(portFloat)
+				ports = append(ports, networkingv1.NetworkPolicyPort{
+					Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+					Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: port},
+				})
+			}
+		}
+		if len(ports) > 0 {
+			egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{Ports: ports})
+		}
+	}
+
+	// Apply rules to policy
+	if len(ingressRules) > 0 {
+		policy.Spec.Ingress = ingressRules
+	}
+	if len(egressRules) > 0 {
+		policy.Spec.Egress = egressRules
+	}
+
+	// Handle deny all settings
+	if denyAllIngress, ok := config["deny_all_ingress"].(bool); ok && denyAllIngress {
+		policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{} // Empty rules = deny all
+	}
+	if denyAllEgress, ok := config["deny_all_egress"].(bool); ok && denyAllEgress {
+		policy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{} // Empty rules = deny all
+	}
+}
+
+// cleanupNetworkPolicies removes any existing NetworkPolicy resources from the namespace
+func (r *VirtualDataCenterReconciler) cleanupNetworkPolicies(ctx context.Context, namespaceName string) error {
+	logger := log.FromContext(ctx)
+
+	// List all NetworkPolicies managed by OVIM in the namespace
+	policies := &networkingv1.NetworkPolicyList{}
+	if err := r.List(ctx, policies,
+		client.InNamespace(namespaceName),
+		client.MatchingLabels{"managed-by": "ovim", "type": "vdc-network-policy"}); err != nil {
+		return err
+	}
+
+	// Delete each policy
+	for _, policy := range policies.Items {
+		if err := r.Delete(ctx, &policy); err != nil && !errors.IsNotFound(err) {
+			logger.Error(err, "failed to delete network policy", "policy", policy.Name, "namespace", namespaceName)
+			return err
+		}
+		logger.Info("Deleted network policy", "policy", policy.Name, "namespace", namespaceName)
+	}
+
+	return nil
+}
+
 // handleVDCDeletion handles VDC deletion with proper cleanup
 func (r *VirtualDataCenterReconciler) handleVDCDeletion(ctx context.Context, vdc *ovimv1.VirtualDataCenter) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("vdc", vdc.Name)
+
+	// Clean up NetworkPolicies before deleting namespace
+	if vdc.Status.Namespace != "" {
+		if err := r.cleanupNetworkPolicies(ctx, vdc.Status.Namespace); err != nil {
+			logger.Error(err, "unable to cleanup network policies")
+			// Don't block deletion for NetworkPolicy cleanup issues
+		}
+	}
 
 	// Delete VDC namespace if it exists
 	if vdc.Status.Namespace != "" {
@@ -515,6 +866,7 @@ func (r *VirtualDataCenterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ResourceQuota{}).
 		Owns(&corev1.LimitRange{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Named("ovim-vdc-controller").
 		Complete(r)
 }
