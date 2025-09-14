@@ -89,13 +89,11 @@ func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Create VDC workload namespace - ensure uniqueness across organizations
-	// Format: vdc-{org}-{vdc-name}-{org-namespace-suffix}
-	// This prevents collision when different orgs have VDCs with the same name
-	orgNamespace := strings.TrimPrefix(strings.ToLower(vdc.Namespace), "org-")
-	vdcNamespace := fmt.Sprintf("vdc-%s-%s-%s",
+	// Format: vdc-{org}-{vdc-name}
+	// Since VDC names are unique within each organization namespace, this ensures global uniqueness
+	vdcNamespace := fmt.Sprintf("vdc-%s-%s",
 		strings.ToLower(vdc.Spec.OrganizationRef),
-		strings.ToLower(vdc.Name),
-		orgNamespace)
+		strings.ToLower(vdc.Name))
 
 	if err := r.ensureVDCNamespace(ctx, &vdc, vdcNamespace); err != nil {
 		logger.Error(err, "unable to ensure VDC namespace")
