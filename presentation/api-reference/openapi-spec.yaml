@@ -1,0 +1,1914 @@
+openapi: 3.0.3
+info:
+  title: OVIM API
+  description: |
+    OpenShift Virtual Infrastructure Manager (OVIM) REST API for managing
+    multi-tenant virtual infrastructure on Kubernetes/OpenShift clusters.
+
+    ## Features
+    - Multi-tenant organization and VDC management
+    - Virtual machine lifecycle management
+    - Template catalog and content management
+    - Role-based access control (RBAC)
+    - Resource quota and monitoring
+    - OpenShift integration
+
+    ## Authentication
+    This API uses JWT bearer tokens for authentication. Obtain a token by calling
+    the `/api/v1/auth/login` endpoint with valid credentials.
+
+    ## Authorization Levels
+    - **System Admin**: Full access to all resources
+    - **Organization Admin**: Access within assigned organization
+    - **VDC Admin**: Access within assigned VDC
+    - **User**: Limited access to assigned resources
+  version: 1.0.0
+  contact:
+    name: OVIM Development Team
+    url: https://github.com/eliorerz/ovim
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: https://ovim.example.com/api/v1
+    description: Production server
+  - url: http://localhost:8080/api/v1
+    description: Development server
+
+security:
+  - BearerAuth: []
+
+paths:
+  # Health & Status
+  /health:
+    get:
+      summary: Health check
+      description: Check the health status of the API server and its dependencies
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /version:
+    get:
+      summary: Version information
+      description: Get version and build information
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+
+  # Authentication
+  /auth/login:
+    post:
+      summary: User login
+      description: Authenticate user with username/password and receive JWT token
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      summary: User logout
+      description: Invalidate current session
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /auth/info:
+    get:
+      summary: Authentication info
+      description: Get available authentication methods
+      tags:
+        - Authentication
+      security: []
+      responses:
+        '200':
+          description: Authentication information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthInfo'
+
+  /auth/oidc/auth-url:
+    get:
+      summary: Get OIDC auth URL
+      description: Get OIDC provider authorization URL
+      tags:
+        - Authentication
+      security: []
+      responses:
+        '200':
+          description: OIDC authorization URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCAuthURL'
+
+  /auth/oidc/callback:
+    post:
+      summary: OIDC callback
+      description: Handle OIDC authorization callback
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCCallback'
+      responses:
+        '200':
+          description: Successful OIDC login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+
+  # Organizations
+  /organizations:
+    get:
+      summary: List organizations
+      description: Get list of all organizations (System Admin only)
+      tags:
+        - Organizations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Active, Pending, Failed, Terminating]
+      responses:
+        '200':
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationList'
+        '403':
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Create organization
+      description: Create a new organization (System Admin only)
+      tags:
+        - Organizations
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationRequest'
+      responses:
+        '201':
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Organization name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /organizations/{id}:
+    get:
+      summary: Get organization
+      description: Get organization details by ID
+      tags:
+        - Organizations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationDetail'
+        '404':
+          description: Organization not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update organization
+      description: Update organization details
+      tags:
+        - Organizations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+      responses:
+        '200':
+          description: Organization updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+
+    delete:
+      summary: Delete organization
+      description: Delete organization and all its resources
+      tags:
+        - Organizations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Organization deleted
+        '409':
+          description: Cannot delete organization with active VDCs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # VDCs
+  /vdcs:
+    get:
+      summary: List VDCs
+      description: Get list of Virtual Data Centers
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: organization
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Active, Pending, Failed, Suspended, Terminating]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of VDCs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VDCList'
+
+    post:
+      summary: Create VDC
+      description: Create a new Virtual Data Center
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVDCRequest'
+      responses:
+        '201':
+          description: VDC created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VDC'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vdcs/{id}:
+    get:
+      summary: Get VDC
+      description: Get VDC details by ID
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: VDC details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VDCDetail'
+
+    put:
+      summary: Update VDC
+      description: Update VDC configuration
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVDCRequest'
+      responses:
+        '200':
+          description: VDC updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VDC'
+
+    delete:
+      summary: Delete VDC
+      description: Delete VDC and all its workloads
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: VDC deleted
+
+  /vdcs/{id}/resources:
+    get:
+      summary: Get VDC resource usage
+      description: Get current resource usage for a VDC
+      tags:
+        - VDCs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: VDC resource usage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUsage'
+
+  # Virtual Machines
+  /vms:
+    get:
+      summary: List virtual machines
+      description: Get list of virtual machines
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: vdc
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Running, Stopped, Pending, Failed]
+        - name: organization
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of virtual machines
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VMList'
+
+    post:
+      summary: Create virtual machine
+      description: Create a new virtual machine
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVMRequest'
+      responses:
+        '201':
+          description: Virtual machine created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Quota exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vms/{id}:
+    get:
+      summary: Get virtual machine
+      description: Get virtual machine details by ID
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Virtual machine details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachineDetail'
+
+    delete:
+      summary: Delete virtual machine
+      description: Delete virtual machine and its resources
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Virtual machine deleted
+
+  /vms/{id}/power:
+    put:
+      summary: Update VM power state
+      description: Start, stop, restart, pause, or unpause a virtual machine
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PowerActionRequest'
+      responses:
+        '200':
+          description: Power action initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerActionResponse'
+
+  /vms/{id}/status:
+    get:
+      summary: Get VM status
+      description: Get detailed status of a virtual machine
+      tags:
+        - Virtual Machines
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Virtual machine status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VMStatus'
+
+  # Catalog
+  /catalog/templates:
+    get:
+      summary: List templates
+      description: Get list of available VM templates
+      tags:
+        - Catalog
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: organization
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [vm-template, application-stack]
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateList'
+
+  /catalog/templates/{id}:
+    get:
+      summary: Get template
+      description: Get template details by ID
+      tags:
+        - Catalog
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateDetail'
+
+  /catalog/sources:
+    get:
+      summary: Get catalog sources
+      description: Get list of catalog sources
+      tags:
+        - Catalog
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of catalog sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSourceList'
+
+  # Dashboard
+  /dashboard/summary:
+    get:
+      summary: Get dashboard summary
+      description: Get summary statistics for dashboard
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+
+  # Alerts
+  /alerts/summary:
+    get:
+      summary: Get alert summary
+      description: Get current alerts and their summary
+      tags:
+        - Alerts
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Alert summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSummary'
+
+  # User Profile
+  /profile/organization:
+    get:
+      summary: Get user organization
+      description: Get current user's organization details
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+
+  /profile/vdcs:
+    get:
+      summary: Get user VDCs
+      description: Get VDCs accessible to current user
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User VDCs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VDCList'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # Common schemas
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed for request data
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            timestamp:
+              type: string
+              format: date-time
+            requestId:
+              type: string
+          required:
+            - code
+            - message
+            - timestamp
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    # Health & Status
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        components:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [healthy, unhealthy]
+            kubernetes:
+              type: string
+              enum: [healthy, unhealthy]
+            kubevirt:
+              type: string
+              enum: [healthy, unhealthy]
+      required:
+        - status
+        - timestamp
+
+    VersionInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          example: v1.0.0
+        gitCommit:
+          type: string
+          example: abc123def456
+        buildDate:
+          type: string
+          format: date-time
+        goVersion:
+          type: string
+          example: go1.21.0
+      required:
+        - version
+
+    # Authentication
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          format: password
+          example: password123
+      required:
+        - username
+        - password
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/User'
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+        - token
+        - user
+        - expiresAt
+
+    AuthInfo:
+      type: object
+      properties:
+        oidcEnabled:
+          type: boolean
+        oidcIssuer:
+          type: string
+        supportedMethods:
+          type: array
+          items:
+            type: string
+            enum: [password, oidc]
+      required:
+        - oidcEnabled
+        - supportedMethods
+
+    OIDCAuthURL:
+      type: object
+      properties:
+        authUrl:
+          type: string
+          format: uri
+        state:
+          type: string
+      required:
+        - authUrl
+        - state
+
+    OIDCCallback:
+      type: object
+      properties:
+        code:
+          type: string
+        state:
+          type: string
+      required:
+        - code
+        - state
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [system_admin, org_admin, vdc_admin, user]
+        organizationId:
+          type: string
+        organizationName:
+          type: string
+        isEnabled:
+          type: boolean
+        lastLogin:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - username
+        - role
+
+    # Organizations
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [Pending, Active, Failed, Terminating]
+        namespace:
+          type: string
+        adminGroups:
+          type: array
+          items:
+            type: string
+        vdcCount:
+          type: integer
+          minimum: 0
+        isEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - displayName
+        - status
+
+    OrganizationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Organization'
+        - type: object
+          properties:
+            quotas:
+              $ref: '#/components/schemas/ResourceQuotas'
+            usage:
+              $ref: '#/components/schemas/ResourceUsageStats'
+            vdcs:
+              type: array
+              items:
+                $ref: '#/components/schemas/VDCSummary'
+
+    OrganizationList:
+      type: object
+      properties:
+        organizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Organization'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required:
+        - organizations
+        - total
+
+    CreateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+          minLength: 1
+          maxLength: 63
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        adminGroups:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        quotas:
+          $ref: '#/components/schemas/ResourceQuotas'
+      required:
+        - name
+        - displayName
+        - adminGroups
+
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        adminGroups:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        quotas:
+          $ref: '#/components/schemas/ResourceQuotas'
+        isEnabled:
+          type: boolean
+
+    # VDCs
+    VDC:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        organizationId:
+          type: string
+        organizationName:
+          type: string
+        status:
+          type: string
+          enum: [Pending, Active, Failed, Suspended, Terminating]
+        namespace:
+          type: string
+        quotas:
+          $ref: '#/components/schemas/VDCQuotas'
+        limitRanges:
+          $ref: '#/components/schemas/LimitRanges'
+        networkPolicy:
+          type: string
+          enum: [default, isolated, custom]
+        catalogRestrictions:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - displayName
+        - organizationId
+        - status
+
+    VDCDetail:
+      allOf:
+        - $ref: '#/components/schemas/VDC'
+        - type: object
+          properties:
+            usage:
+              $ref: '#/components/schemas/ResourceUsageStats'
+            workloads:
+              $ref: '#/components/schemas/WorkloadCounts'
+            lastMetricsUpdate:
+              type: string
+              format: date-time
+
+    VDCSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        status:
+          type: string
+          enum: [Pending, Active, Failed, Suspended, Terminating]
+      required:
+        - id
+        - name
+        - displayName
+        - status
+
+    VDCList:
+      type: object
+      properties:
+        vdcs:
+          type: array
+          items:
+            $ref: '#/components/schemas/VDC'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required:
+        - vdcs
+        - total
+
+    CreateVDCRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+          minLength: 1
+          maxLength: 63
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        organizationId:
+          type: string
+        quotas:
+          $ref: '#/components/schemas/VDCQuotas'
+        limitRanges:
+          $ref: '#/components/schemas/LimitRanges'
+        networkPolicy:
+          type: string
+          enum: [default, isolated, custom]
+          default: default
+        catalogRestrictions:
+          type: array
+          items:
+            type: string
+      required:
+        - name
+        - displayName
+        - organizationId
+        - quotas
+
+    UpdateVDCRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        quotas:
+          $ref: '#/components/schemas/VDCQuotas'
+        limitRanges:
+          $ref: '#/components/schemas/LimitRanges'
+        networkPolicy:
+          type: string
+          enum: [default, isolated, custom]
+        catalogRestrictions:
+          type: array
+          items:
+            type: string
+
+    # Virtual Machines
+    VirtualMachine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        vdcId:
+          type: string
+        vdcName:
+          type: string
+        organizationId:
+          type: string
+        status:
+          type: string
+          enum: [Pending, Starting, Running, Stopping, Stopped, Failed]
+        powerState:
+          type: string
+          enum: [PoweredOn, PoweredOff, Paused, Unknown]
+        resources:
+          $ref: '#/components/schemas/VMResources'
+        networking:
+          $ref: '#/components/schemas/VMNetworking'
+        template:
+          $ref: '#/components/schemas/TemplateReference'
+        createdAt:
+          type: string
+          format: date-time
+        lastUpdated:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - displayName
+        - vdcId
+        - status
+
+    VirtualMachineDetail:
+      allOf:
+        - $ref: '#/components/schemas/VirtualMachine'
+        - type: object
+          properties:
+            guestAgent:
+              $ref: '#/components/schemas/GuestAgent'
+            volumes:
+              type: array
+              items:
+                $ref: '#/components/schemas/VMVolume'
+            conditions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Condition'
+
+    VMList:
+      type: object
+      properties:
+        vms:
+          type: array
+          items:
+            $ref: '#/components/schemas/VirtualMachine'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required:
+        - vms
+        - total
+
+    CreateVMRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+          minLength: 1
+          maxLength: 63
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        vdcId:
+          type: string
+        templateId:
+          type: string
+        resources:
+          $ref: '#/components/schemas/VMResources'
+        networking:
+          $ref: '#/components/schemas/VMNetworkingConfig'
+        userData:
+          $ref: '#/components/schemas/UserData'
+      required:
+        - name
+        - displayName
+        - vdcId
+        - templateId
+        - resources
+
+    VMStatus:
+      type: object
+      properties:
+        phase:
+          type: string
+          enum: [Pending, Starting, Running, Stopping, Stopped, Failed]
+        powerState:
+          type: string
+          enum: [PoweredOn, PoweredOff, Paused, Unknown]
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        guestAgent:
+          $ref: '#/components/schemas/GuestAgent'
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/VMInterface'
+        lastUpdated:
+          type: string
+          format: date-time
+      required:
+        - phase
+        - powerState
+
+    PowerActionRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [start, stop, restart, pause, unpause]
+      required:
+        - action
+
+    PowerActionResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        action:
+          type: string
+          enum: [start, stop, restart, pause, unpause]
+        status:
+          type: string
+          enum: [In Progress, Completed, Failed]
+      required:
+        - message
+        - action
+        - status
+
+    # Resource schemas
+    ResourceQuotas:
+      type: object
+      properties:
+        cpu:
+          type: string
+          example: "100"
+        memory:
+          type: string
+          example: "500Gi"
+        storage:
+          type: string
+          example: "10Ti"
+      required:
+        - cpu
+        - memory
+        - storage
+
+    VDCQuotas:
+      allOf:
+        - $ref: '#/components/schemas/ResourceQuotas'
+        - type: object
+          properties:
+            pods:
+              type: integer
+              minimum: 1
+              default: 100
+            virtualMachines:
+              type: integer
+              minimum: 0
+              default: 50
+
+    ResourceUsageStats:
+      type: object
+      properties:
+        cpu:
+          type: string
+        memory:
+          type: string
+        storage:
+          type: string
+        cpuPercentage:
+          type: number
+          minimum: 0
+          maximum: 100
+        memoryPercentage:
+          type: number
+          minimum: 0
+          maximum: 100
+        storagePercentage:
+          type: number
+          minimum: 0
+          maximum: 100
+
+    ResourceUsage:
+      type: object
+      properties:
+        quotas:
+          $ref: '#/components/schemas/VDCQuotas'
+        usage:
+          $ref: '#/components/schemas/ResourceUsageStats'
+        limits:
+          type: object
+          properties:
+            pods:
+              type: integer
+            virtualMachines:
+              type: integer
+        current:
+          type: object
+          properties:
+            pods:
+              type: integer
+            virtualMachines:
+              type: integer
+        lastUpdated:
+          type: string
+          format: date-time
+      required:
+        - quotas
+        - usage
+
+    LimitRanges:
+      type: object
+      properties:
+        minCpu:
+          type: integer
+          minimum: 100
+          default: 100
+        maxCpu:
+          type: integer
+          minimum: 100
+        minMemory:
+          type: integer
+          minimum: 128
+          default: 128
+        maxMemory:
+          type: integer
+          minimum: 128
+
+    WorkloadCounts:
+      type: object
+      properties:
+        totalPods:
+          type: integer
+          minimum: 0
+        runningPods:
+          type: integer
+          minimum: 0
+        totalVMs:
+          type: integer
+          minimum: 0
+        runningVMs:
+          type: integer
+          minimum: 0
+      required:
+        - totalPods
+        - runningPods
+        - totalVMs
+        - runningVMs
+
+    VMResources:
+      type: object
+      properties:
+        cpu:
+          type: integer
+          minimum: 1
+          example: 2
+        memory:
+          type: string
+          example: "4Gi"
+        storage:
+          type: string
+          example: "50Gi"
+      required:
+        - cpu
+        - memory
+        - storage
+
+    VMNetworking:
+      type: object
+      properties:
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/VMInterface'
+
+    VMNetworkingConfig:
+      type: object
+      properties:
+        interfaces:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              networkName:
+                type: string
+            required:
+              - name
+              - networkName
+
+    VMInterface:
+      type: object
+      properties:
+        name:
+          type: string
+        ipAddress:
+          type: string
+        ipAddresses:
+          type: array
+          items:
+            type: string
+        macAddress:
+          type: string
+        interfaceName:
+          type: string
+      required:
+        - name
+
+    UserData:
+      type: object
+      properties:
+        cloudInit:
+          type: object
+          properties:
+            users:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  sudo:
+                    type: string
+                  ssh_authorized_keys:
+                    type: array
+                    items:
+                      type: string
+
+    GuestAgent:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        version:
+          type: string
+
+    VMVolume:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: string
+        storageClass:
+          type: string
+        accessMode:
+          type: string
+
+    # Templates & Catalog
+    Template:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [vm-template, application-stack]
+        category:
+          type: string
+        version:
+          type: string
+        organizationId:
+          type: string
+        catalogId:
+          type: string
+        resources:
+          $ref: '#/components/schemas/VMResources'
+        osInfo:
+          $ref: '#/components/schemas/OSInfo'
+        tags:
+          type: array
+          items:
+            type: string
+        isPublic:
+          type: boolean
+        isEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - displayName
+        - type
+
+    TemplateDetail:
+      allOf:
+        - $ref: '#/components/schemas/Template'
+        - type: object
+          properties:
+            configuration:
+              type: object
+            requirements:
+              type: object
+
+    TemplateReference:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+
+    TemplateList:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/Template'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required:
+        - templates
+        - total
+
+    OSInfo:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [linux, windows]
+        distribution:
+          type: string
+        version:
+          type: string
+
+    CatalogSource:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        type:
+          type: string
+          enum: [git, oci, s3, http, local]
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [Ready, Syncing, Failed]
+        lastSync:
+          type: string
+          format: date-time
+        itemCount:
+          type: integer
+          minimum: 0
+      required:
+        - id
+        - name
+        - displayName
+        - type
+        - status
+
+    CatalogSourceList:
+      type: object
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogSource'
+        total:
+          type: integer
+      required:
+        - sources
+        - total
+
+    # Dashboard & Alerts
+    DashboardSummary:
+      type: object
+      properties:
+        organizations:
+          type: object
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+            inactive:
+              type: integer
+        vdcs:
+          type: object
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+            pending:
+              type: integer
+            failed:
+              type: integer
+        virtualMachines:
+          type: object
+          properties:
+            total:
+              type: integer
+            running:
+              type: integer
+            stopped:
+              type: integer
+            pending:
+              type: integer
+        resources:
+          type: object
+          properties:
+            totalCpu:
+              type: string
+            usedCpu:
+              type: string
+            totalMemory:
+              type: string
+            usedMemory:
+              type: string
+            totalStorage:
+              type: string
+            usedStorage:
+              type: string
+        alerts:
+          type: object
+          properties:
+            critical:
+              type: integer
+            warning:
+              type: integer
+            info:
+              type: integer
+        lastUpdated:
+          type: string
+          format: date-time
+      required:
+        - organizations
+        - vdcs
+        - virtualMachines
+        - resources
+        - alerts
+        - lastUpdated
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [resource, system, security]
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        title:
+          type: string
+        description:
+          type: string
+        resourceType:
+          type: string
+        resourceId:
+          type: string
+        threshold:
+          type: number
+        currentValue:
+          type: number
+        triggeredAt:
+          type: string
+          format: date-time
+        acknowledged:
+          type: boolean
+      required:
+        - id
+        - type
+        - severity
+        - title
+        - description
+        - triggeredAt
+        - acknowledged
+
+    AlertSummary:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        summary:
+          type: object
+          properties:
+            critical:
+              type: integer
+            warning:
+              type: integer
+            info:
+              type: integer
+      required:
+        - alerts
+        - summary
+
+    # Common utility schemas
+    Condition:
+      type: object
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+          enum: [True, False, Unknown]
+        lastTransitionTime:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        message:
+          type: string
+      required:
+        - type
+        - status
