@@ -90,6 +90,11 @@ type OrganizationResourceUsage struct {
 	MemoryQuota  int `json:"memory_quota"`
 	StorageQuota int `json:"storage_quota"`
 
+	// Available resources (quota - used)
+	CPUAvailable     int `json:"cpu_available"`
+	MemoryAvailable  int `json:"memory_available"`
+	StorageAvailable int `json:"storage_available"`
+
 	VDCCount int `json:"vdc_count"` // Number of VDCs in the organization
 }
 
@@ -103,6 +108,11 @@ type VDCResourceUsage struct {
 	CPUQuota     int `json:"cpu_quota"`
 	MemoryQuota  int `json:"memory_quota"`
 	StorageQuota int `json:"storage_quota"`
+
+	// Available resources (quota - used)
+	CPUAvailable     int `json:"cpu_available"`
+	MemoryAvailable  int `json:"memory_available"`
+	StorageAvailable int `json:"storage_available"`
 
 	VMCount int `json:"vm_count"` // Number of VMs in the VDC
 }
@@ -140,6 +150,10 @@ func (vdc *VirtualDataCenter) GetResourceUsage(vms []*VirtualMachine) VDCResourc
 		MemoryQuota:  memoryQuota,
 		StorageQuota: storageQuota,
 
+		CPUAvailable:     cpuQuota - cpuUsed,
+		MemoryAvailable:  memoryQuota - memoryUsed,
+		StorageAvailable: storageQuota - storageUsed,
+
 		VMCount: vmCount,
 	}
 }
@@ -164,13 +178,16 @@ func (o *Organization) GetResourceUsage(vdcs []*VirtualDataCenter, vms []*Virtua
 	}
 
 	return OrganizationResourceUsage{
-		CPUUsed:      totalCPUUsed,
-		MemoryUsed:   totalMemoryUsed,
-		StorageUsed:  totalStorageUsed,
-		CPUQuota:     totalCPUQuota,
-		MemoryQuota:  totalMemoryQuota,
-		StorageQuota: totalStorageQuota,
-		VDCCount:     len(vdcs),
+		CPUUsed:          totalCPUUsed,
+		MemoryUsed:       totalMemoryUsed,
+		StorageUsed:      totalStorageUsed,
+		CPUQuota:         totalCPUQuota,
+		MemoryQuota:      totalMemoryQuota,
+		StorageQuota:     totalStorageQuota,
+		CPUAvailable:     totalCPUQuota - totalCPUUsed,
+		MemoryAvailable:  totalMemoryQuota - totalMemoryUsed,
+		StorageAvailable: totalStorageQuota - totalStorageUsed,
+		VDCCount:         len(vdcs),
 	}
 }
 
@@ -302,15 +319,53 @@ func ParseMemoryString(memStr string) int {
 	}
 
 	unit := matches[2]
-	switch {
-	case strings.HasPrefix(unit, "T"): // TB, TiB
-		return val * 1024 // Convert TB to GB
-	case strings.HasPrefix(unit, "G"): // GB, GiB, Gi
+	switch unit {
+	// Binary units (base 1024)
+	case "GI", "GIB":
+		// Binary Gibibytes - convert to decimal GB
+		// 1 GiB = 1024³ bytes = 1.073741824 GB
+		return int(float64(val) * 1.073741824)
+	case "TI", "TIB":
+		// Binary Tebibytes - convert to decimal GB
+		// 1 TiB = 1024⁴ bytes = 1099.511627776 GB
+		return int(float64(val) * 1099.511627776)
+	case "MI", "MIB":
+		// Binary Mebibytes - convert to decimal GB
+		// 1 MiB = 1024² bytes = 0.001048576 GB
+		return int(float64(val) * 0.001048576)
+	case "KI", "KIB":
+		// Binary Kibibytes - convert to decimal GB
+		// 1 KiB = 1024 bytes = 0.000001024 GB
+		return int(float64(val) * 0.000001024)
+
+	// Decimal units (base 1000)
+	case "TB":
+		// Decimal Terabytes - convert to GB
+		return val * 1000
+	case "GB":
+		// Decimal Gigabytes - already in GB
 		return val
-	case strings.HasPrefix(unit, "M"): // MB, MiB, Mi
-		return val / 1024 // Convert MB to GB
-	case strings.HasPrefix(unit, "K"): // KB, KiB, Ki
-		return val / (1024 * 1024) // Convert KB to GB
+	case "MB":
+		// Decimal Megabytes - convert to GB
+		return val / 1000
+	case "KB":
+		// Decimal Kilobytes - convert to GB
+		return val / (1000 * 1000)
+
+	// Legacy cases for compatibility
+	case "G":
+		// Assume binary (legacy case)
+		return int(float64(val) * 1.073741824)
+	case "M":
+		// Assume binary (legacy case)
+		return int(float64(val) * 0.001048576)
+	case "T":
+		// Assume binary (legacy case)
+		return int(float64(val) * 1099.511627776)
+	case "K":
+		// Assume binary (legacy case)
+		return int(float64(val) * 0.000001024)
+
 	default:
 		return val // Assume GB if no unit
 	}

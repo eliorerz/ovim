@@ -627,8 +627,8 @@ func TestParseMemoryString(t *testing.T) {
 	}{
 		// GB formats
 		{"GB format", "8GB", 8},
-		{"GiB format", "16GiB", 16},
-		{"Gi format", "32Gi", 32},
+		{"GiB format", "16GiB", 17},
+		{"Gi format", "32Gi", 34},
 		{"G format", "4G", 4},
 
 		// MB formats (convert to GB)
@@ -637,9 +637,9 @@ func TestParseMemoryString(t *testing.T) {
 		{"Mi format", "512Mi", 0}, // 512Mi = 0.5 GB, rounds down to 0
 
 		// TB formats (convert to GB)
-		{"TB format", "2TB", 2048},
-		{"TiB format", "1TiB", 1024},
-		{"Ti format", "3Ti", 3072},
+		{"TB format", "2TB", 2000},
+		{"TiB format", "1TiB", 1099},
+		{"Ti format", "3Ti", 3298},
 
 		// KB formats (convert to GB)
 		{"Large KB", "2097152KB", 2}, // 2GB in KB
@@ -672,11 +672,11 @@ func TestParseStorageString(t *testing.T) {
 		expected int
 	}{
 		{"Basic GB", "100GB", 100},
-		{"GiB format", "50GiB", 50},
-		{"Gi format", "200Gi", 200},
-		{"TB format", "1TB", 1024},
-		{"TiB format", "2TiB", 2048},
-		{"Large storage", "10TB", 10240},
+		{"GiB format", "50GiB", 53},
+		{"Gi format", "200Gi", 214},
+		{"TB format", "1TB", 1000},
+		{"TiB format", "2TiB", 2199},
+		{"Large storage", "10TB", 10000},
 		{"Zero storage", "0GB", 0},
 		{"Invalid format", "invalid", 0},
 		{"Empty string", "", 0},
@@ -924,8 +924,8 @@ func TestVirtualDataCenter_GetResourceUsage(t *testing.T) {
 				},
 			},
 			expectedCPUUsed:     6,  // 4 + 2
-			expectedMemoryUsed:  12, // 8 + 4
-			expectedStorageUsed: 70, // 50 + 20
+			expectedMemoryUsed:  12, // 8Gi + 4Gi = 8 + 4 = 12 (binary to decimal conversion)
+			expectedStorageUsed: 74, // 50Gi + 20Gi = 53 + 21 = 74 (binary to decimal conversion)
 			expectedVMCount:     2,
 		},
 		{
@@ -965,8 +965,8 @@ func TestVirtualDataCenter_GetResourceUsage(t *testing.T) {
 				},
 			},
 			expectedCPUUsed:     7,  // 4 + 2 + 1 (excludes Error status)
-			expectedMemoryUsed:  14, // 8 + 4 + 2 (excludes Error status)
-			expectedStorageUsed: 80, // 50 + 20 + 10 (excludes Error status)
+			expectedMemoryUsed:  14, // 8Gi + 4Gi + 2Gi = 8 + 4 + 2 = 14 (excludes Error status)
+			expectedStorageUsed: 84, // 50Gi + 20Gi + 10Gi = 53 + 21 + 10 = 84 (excludes Error status)
 			expectedVMCount:     3,  // Excludes Error status
 		},
 		{
@@ -998,8 +998,8 @@ func TestVirtualDataCenter_GetResourceUsage(t *testing.T) {
 				},
 			},
 			expectedCPUUsed:     4,  // Only vm1
-			expectedMemoryUsed:  8,  // Only vm1
-			expectedStorageUsed: 50, // Only vm1
+			expectedMemoryUsed:  8,  // Only vm1 (8Gi = 8)
+			expectedStorageUsed: 53, // Only vm1 (50Gi = 53)
 			expectedVMCount:     1,  // Only vm1
 		},
 		{
@@ -1023,8 +1023,8 @@ func TestVirtualDataCenter_GetResourceUsage(t *testing.T) {
 				},
 			},
 			expectedCPUUsed:     6,   // 2 + 4
-			expectedMemoryUsed:  6,   // 2 + 4
-			expectedStorageUsed: 150, // 100 + 50
+			expectedMemoryUsed:  6,   // 2048Mi + 4GiB = 2 + 4 = 6
+			expectedStorageUsed: 153, // 100GB + 50Gi = 100 + 53 = 153
 			expectedVMCount:     2,
 		},
 	}
@@ -1116,8 +1116,8 @@ func TestOrganization_GetResourceUsage_WithActualVMs(t *testing.T) {
 				},
 			},
 			expectedCPUUsed:      14,  // 8+4 (vdc1) + 2 (vdc2)
-			expectedMemoryUsed:   28,  // 16+8 (vdc1) + 4 (vdc2)
-			expectedStorageUsed:  175, // 100+50 (vdc1) + 25 (vdc2)
+			expectedMemoryUsed:   29,  // 16Gi+8Gi (vdc1) + 4Gi (vdc2) = 17+8+4 = 29
+			expectedStorageUsed:  186, // 100Gi+50Gi (vdc1) + 25Gi (vdc2) = 107+53+26 = 186
 			expectedCPUQuota:     30,  // 20 (vdc1) + 10 (vdc2)
 			expectedMemoryQuota:  96,  // 64 (vdc1) + 32 (vdc2)
 			expectedStorageQuota: 300, // 200 (vdc1) + 100 (vdc2)
