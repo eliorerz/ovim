@@ -1,5 +1,7 @@
 # OVIM Architecture Diagrams
 
+> **Note**: All Mermaid diagrams have been updated with proper syntax to ensure consistent rendering across different platforms. Node names with hyphens are properly quoted, and all subgraphs include explicit labels.
+
 ## Overall System Architecture
 
 ```mermaid
@@ -30,22 +32,22 @@ flowchart TB
 
     subgraph Cluster["Kubernetes/OpenShift Cluster"]
         subgraph SystemNS["System Namespaces"]
-            OVIM_NS[ovim-system]
-            KUBE_NS[kube-system]
+            OVIM_NS["ovim-system"]
+            KUBE_NS["kube-system"]
         end
 
         subgraph OrgNS["Organization Namespaces"]
-            ORG1_NS[acme-corp]
-            ORG2_NS[other-org]
+            ORG1_NS["acme-corp"]
+            ORG2_NS["other-org"]
         end
 
         subgraph VdcNS["VDC Workload Namespaces"]
-            VDC1_NS[acme-corp-dev]
-            VDC2_NS[acme-corp-prod]
-            VDC3_NS[other-org-test]
+            VDC1_NS["acme-corp-dev"]
+            VDC2_NS["acme-corp-prod"]
+            VDC3_NS["other-org-test"]
         end
 
-        subgraph Infrastructure
+        subgraph Infrastructure["Infrastructure Services"]
             KV[KubeVirt]
             CDI[CDI]
             OCP[OpenShift]
@@ -153,7 +155,7 @@ flowchart TB
         CLIENT[Kubernetes Client]
     end
 
-    subgraph Controllers
+    subgraph Controllers["Controllers"]
         ORG_CTRL[Organization Controller]
         VDC_CTRL[VDC Controller]
         VM_CTRL[VM Controller]
@@ -277,7 +279,7 @@ flowchart TD
         USER[User]
     end
 
-    subgraph Resources
+    subgraph Resources["Resources"]
         ORGS[Organizations]
         VDCS[VDCs]
         VMS[Virtual Machines]
@@ -377,7 +379,7 @@ flowchart TD
         TAGS[Tag Processing]
     end
 
-    subgraph Storage
+    subgraph Storage["Storage"]
         DB_CAT[(Catalog Database)]
         K8S_TEMPLATES[K8s Templates]
         VM_TEMPLATES[VM Templates]
@@ -442,7 +444,7 @@ flowchart TB
         KUBELET[Kubelet]
     end
 
-    subgraph Monitoring
+    subgraph Monitoring["Monitoring"]
         METRICS[Metrics Collector]
         ALERTS[Alert Manager]
         DASHBOARD[Dashboard]
