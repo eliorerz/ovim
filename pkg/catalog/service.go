@@ -157,6 +157,7 @@ func (s *Service) convertOpenShiftTemplate(osTemplate openshift.Template, source
 	return &models.Template{
 		ID:           osTemplate.ID,
 		Name:         osTemplate.Name,
+		TemplateName: osTemplate.TemplateName, // Actual OpenShift template name
 		Description:  osTemplate.Description,
 		OSType:       osTemplate.OSType,
 		OSVersion:    osTemplate.OSVersion,

@@ -3,6 +3,7 @@ package openshift
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -407,7 +409,8 @@ func (c *Client) DeployVM(ctx context.Context, req DeployVMRequest) (*VirtualMac
 	for i, param := range tmpl.Parameters {
 		switch param.Name {
 		case "NAME":
-			tmpl.Parameters[i].Value = req.VMName
+			// Sanitize VM name to ensure Kubernetes compliance
+			tmpl.Parameters[i].Value = c.sanitizeKubernetesName(req.VMName)
 		case "NAMESPACE":
 			tmpl.Parameters[i].Value = req.TargetNamespace
 		case "SIZE":
@@ -417,14 +420,26 @@ func (c *Client) DeployVM(ctx context.Context, req DeployVMRequest) (*VirtualMac
 		}
 	}
 
-	// TODO: Implement full template processing with KubeVirt VM creation
+	// Process the template to create Kubernetes objects
+	processed, err := c.processTemplate(ctx, tmpl)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process template %s: %w", req.TemplateName, err)
+	}
+
+	// Deploy the processed objects to the target namespace
+	err = c.deployObjects(ctx, processed, req.TargetNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy objects from template %s: %w", req.TemplateName, err)
+	}
+
+	// Return the VM information
 	vm := &VirtualMachine{
 		ID:        fmt.Sprintf("vm-%s", req.VMName),
 		Name:      req.VMName,
 		Status:    "Provisioning",
 		Namespace: req.TargetNamespace,
 		Template:  req.TemplateName,
-		Created:   "2024-01-01T00:00:00Z",
+		Created:   time.Now().Format(time.RFC3339),
 	}
 
 	return vm, nil
@@ -812,4 +827,159 @@ func (c *Client) GetLimitRange(ctx context.Context, namespace string) (*models.L
 	}
 
 	return info, nil
+}
+
+// processTemplate processes an OpenShift template to generate Kubernetes objects
+func (c *Client) processTemplate(ctx context.Context, tmpl *templatev1.Template) (*templatev1.Template, error) {
+	if c.templateClient == nil {
+		return nil, fmt.Errorf("template client not initialized")
+	}
+
+	// Create a copy of the template for processing
+	processedTemplate := tmpl.DeepCopy()
+
+	// Perform parameter substitution in template objects
+	err := c.substituteTemplateParameters(processedTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to substitute template parameters: %w", err)
+	}
+
+	return processedTemplate, nil
+}
+
+// deployObjects deploys the processed template objects to the target namespace
+func (c *Client) deployObjects(ctx context.Context, tmpl *templatev1.Template, namespace string) error {
+	if c.dynamicClient == nil {
+		return fmt.Errorf("dynamic client not initialized")
+	}
+
+	// Deploy each object from the template
+	for _, obj := range tmpl.Objects {
+		// Convert runtime.RawExtension to unstructured.Unstructured
+		unstructuredObj, err := c.rawToUnstructured(&obj)
+		if err != nil {
+			return fmt.Errorf("failed to convert template object to unstructured: %w", err)
+		}
+
+		// Set the namespace for the object
+		unstructuredObj.SetNamespace(namespace)
+
+		// Get the Group, Version, Resource for this object
+		gvk := unstructuredObj.GroupVersionKind()
+		gvr, err := c.getGVRFromGVK(gvk)
+		if err != nil {
+			return fmt.Errorf("failed to get GVR for object %s/%s: %w", gvk.Kind, unstructuredObj.GetName(), err)
+		}
+
+		// Create the object in the cluster
+		_, err = c.dynamicClient.Resource(gvr).Namespace(namespace).Create(ctx, unstructuredObj, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create object %s/%s in namespace %s: %w", gvk.Kind, unstructuredObj.GetName(), namespace, err)
+		}
+	}
+
+	return nil
+}
+
+// rawToUnstructured converts a runtime.RawExtension to unstructured.Unstructured
+func (c *Client) rawToUnstructured(raw *runtime.RawExtension) (*unstructured.Unstructured, error) {
+	// Create a new unstructured object
+	unstructuredObj := &unstructured.Unstructured{}
+
+	// Unmarshal the raw JSON into the unstructured object
+	err := unstructuredObj.UnmarshalJSON(raw.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal raw extension to unstructured: %w", err)
+	}
+
+	return unstructuredObj, nil
+}
+
+// getGVRFromGVK converts GroupVersionKind to GroupVersionResource
+func (c *Client) getGVRFromGVK(gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+	// Map common kinds to resources
+	kindToResource := map[string]string{
+		"VirtualMachine":         "virtualmachines",
+		"VirtualMachineInstance": "virtualmachineinstances",
+		"DataVolume":             "datavolumes",
+		"PersistentVolumeClaim":  "persistentvolumeclaims",
+		"Secret":                 "secrets",
+		"ConfigMap":              "configmaps",
+		"Service":                "services",
+		"ServiceAccount":         "serviceaccounts",
+		"Role":                   "roles",
+		"RoleBinding":            "rolebindings",
+		"Deployment":             "deployments",
+		"Pod":                    "pods",
+	}
+
+	resource, exists := kindToResource[gvk.Kind]
+	if !exists {
+		// Default: convert Kind to lowercase + s
+		resource = strings.ToLower(gvk.Kind) + "s"
+	}
+
+	return schema.GroupVersionResource{
+		Group:    gvk.Group,
+		Version:  gvk.Version,
+		Resource: resource,
+	}, nil
+}
+
+// substituteTemplateParameters performs parameter substitution in template objects
+func (c *Client) substituteTemplateParameters(tmpl *templatev1.Template) error {
+	// Create a map of parameter names to values
+	paramMap := make(map[string]string)
+	for _, param := range tmpl.Parameters {
+		if param.Value != "" {
+			paramMap[param.Name] = param.Value
+		}
+	}
+
+	// Substitute parameters in each object
+	for i, obj := range tmpl.Objects {
+		// Convert to JSON for easy string replacement
+		objBytes, err := obj.MarshalJSON()
+		if err != nil {
+			return fmt.Errorf("failed to marshal object %d: %w", i, err)
+		}
+
+		objString := string(objBytes)
+
+		// Replace parameter placeholders
+		for paramName, paramValue := range paramMap {
+			placeholder := fmt.Sprintf("${%s}", paramName)
+			objString = strings.ReplaceAll(objString, placeholder, paramValue)
+		}
+
+		// Convert back to RawExtension
+		tmpl.Objects[i].Raw = []byte(objString)
+	}
+
+	return nil
+}
+
+// sanitizeKubernetesName sanitizes a name to comply with Kubernetes RFC 1123 subdomain naming rules
+func (c *Client) sanitizeKubernetesName(name string) string {
+	if name == "" {
+		return "vm"
+	}
+
+	// Convert to lowercase and replace invalid chars with hyphens
+	sanitized := strings.ToLower(name)
+	sanitized = regexp.MustCompile(`[^a-z0-9-]`).ReplaceAllString(sanitized, "-")
+	sanitized = regexp.MustCompile(`-+`).ReplaceAllString(sanitized, "-")
+	sanitized = strings.Trim(sanitized, "-")
+
+	if sanitized == "" {
+		sanitized = "vm"
+	}
+
+	// Ensure it doesn't exceed 63 characters
+	if len(sanitized) > 63 {
+		sanitized = sanitized[:63]
+		sanitized = strings.TrimRight(sanitized, "-")
+	}
+
+	return sanitized
 }

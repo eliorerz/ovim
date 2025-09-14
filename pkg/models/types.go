@@ -202,17 +202,18 @@ const (
 
 // Template represents a VM template available in the catalog
 type Template struct {
-	ID          string `json:"id" gorm:"primaryKey"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OSType      string `json:"os_type"`
-	OSVersion   string `json:"os_version"`
-	CPU         int    `json:"cpu"`
-	Memory      string `json:"memory"`
-	DiskSize    string `json:"disk_size"`
-	ImageURL    string `json:"image_url"`
-	IconClass   string `json:"icon_class"`
-	OrgID       string `json:"org_id" gorm:"index"`
+	ID           string `json:"id" gorm:"primaryKey"`
+	Name         string `json:"name"`
+	TemplateName string `json:"template_name"` // Actual OpenShift template name
+	Description  string `json:"description"`
+	OSType       string `json:"os_type"`
+	OSVersion    string `json:"os_version"`
+	CPU          int    `json:"cpu"`
+	Memory       string `json:"memory"`
+	DiskSize     string `json:"disk_size"`
+	ImageURL     string `json:"image_url"`
+	IconClass    string `json:"icon_class"`
+	OrgID        string `json:"org_id" gorm:"index"`
 
 	// CRD catalog integration
 	CatalogID   *string `json:"catalog_id,omitempty" gorm:"index"`         // Reference to new Catalog CRD

@@ -80,7 +80,7 @@ KUBECTL_CMD ?= kubectl
 .PHONY: generate manifests
 .PHONY: deploy deploy-dry-run undeploy deploy-samples deploy-full deploy-dev deploy-prod undeploy-force deployment-status
 .PHONY: deploy-stack deploy-stack-dry-run deploy-stack-dev deploy-stack-prod undeploy-stack deploy-database deploy-server deploy-ui deploy-ingress stack-status stack-logs stack-port-forward build-ui
-.PHONY: version
+.PHONY: version build-push deploy-image
 
 help:
 	@echo "OVIM Backend Makefile"
@@ -778,3 +778,28 @@ build-ui:
 
 # Default target
 all: test build
+
+## build-push: Build and push backend container with unique timestamp tag
+build-push:
+	@echo "Building and pushing backend container with unique tag..."
+	$(eval UNIQUE_TAG := $(BUILD_TIMESTAMP)-$(GIT_SHORT_COMMIT))
+	@echo "Using tag: $(UNIQUE_TAG)"
+	podman build --no-cache -t quay.io/eerez/ovim:$(UNIQUE_TAG) .
+	podman tag quay.io/eerez/ovim:$(UNIQUE_TAG) quay.io/eerez/ovim:latest
+	podman push quay.io/eerez/ovim:$(UNIQUE_TAG)
+	podman push quay.io/eerez/ovim:latest
+	@echo "Backend image pushed with tag: $(UNIQUE_TAG)"
+
+## deploy-image: Update backend deployment with latest unique image
+deploy-image:
+	@echo "Updating backend deployment with latest image..."
+	$(eval LATEST_TAG := $(shell podman images quay.io/eerez/ovim --format "{{.Tag}}" | grep -E '^[0-9]{8}-[0-9]{6}-' | head -1))
+	@if [ -z "$(LATEST_TAG)" ]; then \
+		echo "No timestamped tag found, using latest"; \
+		kubectl set image deployment/ovim-server server=quay.io/eerez/ovim:latest -n ovim-system; \
+		kubectl set image deployment/ovim-controller controller=quay.io/eerez/ovim:latest -n ovim-system; \
+	else \
+		echo "Using tag: $(LATEST_TAG)"; \
+		kubectl set image deployment/ovim-server server=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
+		kubectl set image deployment/ovim-controller controller=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
+	fi

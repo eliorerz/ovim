@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -214,6 +215,22 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 		klog.Infof("Using VDC workload namespace %s for VM deployment", req.TargetNamespace)
 	}
 
+	// Resolve template name: frontend might send display name, we need actual template name
+	actualTemplateName, err := h.resolveTemplateName(c.Request.Context(), req.TemplateName)
+	if err != nil {
+		klog.Errorf("Failed to resolve template name '%s': %v", req.TemplateName, err)
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Template not found",
+			Message: fmt.Sprintf("Unable to find template '%s'. Please verify the template exists and try again.", req.TemplateName),
+		})
+		return
+	}
+
+	// Update request with actual template name
+	originalName := req.TemplateName
+	req.TemplateName = actualTemplateName
+	klog.Infof("Resolved template name '%s' to actual name '%s'", originalName, actualTemplateName)
+
 	klog.Infof("Deploying VM %s from template %s to namespace %s for user %s (%s)",
 		req.VMName, req.TemplateName, req.TargetNamespace, username, userID)
 
@@ -291,6 +308,34 @@ func (h *OpenShiftHandlers) GetOpenShiftStatus(c *gin.Context) {
 			Message: "Unable to connect to OpenShift cluster",
 		})
 	}
+}
+
+// resolveTemplateName resolves a template name that might be a display name to the actual OpenShift template name
+func (h *OpenShiftHandlers) resolveTemplateName(ctx context.Context, templateName string) (string, error) {
+	// Get all available templates
+	templates, err := h.client.GetTemplates(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get templates: %w", err)
+	}
+
+	// First, try exact match on template name (for backward compatibility)
+	for _, template := range templates {
+		if template.TemplateName == templateName {
+			klog.V(4).Infof("Found exact template name match: %s", templateName)
+			return templateName, nil
+		}
+	}
+
+	// Then, try to match by display name
+	for _, template := range templates {
+		if template.Name == templateName {
+			klog.V(4).Infof("Found template by display name '%s' -> actual name '%s'", templateName, template.TemplateName)
+			return template.TemplateName, nil
+		}
+	}
+
+	// No match found
+	return "", fmt.Errorf("template '%s' not found by name or display name", templateName)
 }
 
 // StatusResponse represents a status check response
