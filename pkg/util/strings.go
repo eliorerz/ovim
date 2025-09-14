@@ -107,6 +107,9 @@ func IsValidKubernetesName(name string) bool {
 
 // TruncateString truncates a string to the specified maximum length
 func TruncateString(s string, maxLength int) string {
+	if maxLength < 0 {
+		return ""
+	}
 	if len(s) <= maxLength {
 		return s
 	}
