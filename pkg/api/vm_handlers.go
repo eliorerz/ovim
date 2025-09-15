@@ -12,6 +12,7 @@ import (
 
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/auth"
+	"github.com/eliorerz/ovim-updated/pkg/catalog"
 	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
@@ -20,17 +21,19 @@ import (
 
 // VMHandlers handles VM-related requests
 type VMHandlers struct {
-	storage     storage.Storage
-	provisioner kubevirt.VMProvisioner
-	k8sClient   client.Client
+	storage        storage.Storage
+	provisioner    kubevirt.VMProvisioner
+	k8sClient      client.Client
+	catalogService *catalog.Service
 }
 
 // NewVMHandlers creates a new VM handlers instance
-func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client) *VMHandlers {
+func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client, catalogService *catalog.Service) *VMHandlers {
 	return &VMHandlers{
-		storage:     storage,
-		provisioner: provisioner,
-		k8sClient:   k8sClient,
+		storage:        storage,
+		provisioner:    provisioner,
+		k8sClient:      k8sClient,
+		catalogService: catalogService,
 	}
 }
 
@@ -113,16 +116,45 @@ func (h *VMHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Verify the template exists
-	template, err := h.storage.GetTemplate(req.TemplateID)
-	if err != nil {
-		if err == storage.ErrNotFound {
+	// Verify the template exists via catalog service
+	var template *models.Template
+	var err error
+	if h.catalogService != nil {
+		// Get all templates from catalog service and find the matching one
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		templates, err := h.catalogService.GetTemplates(ctx, userOrgID, "", "")
+		if err != nil {
+			klog.Errorf("Failed to get templates from catalog service: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify template"})
+			return
+		}
+
+		// Find template by ID
+		for _, t := range templates {
+			if t.ID == req.TemplateID {
+				template = t
+				break
+			}
+		}
+
+		if template == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Template not found"})
 			return
 		}
-		klog.Errorf("Failed to verify template %s: %v", req.TemplateID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify template"})
-		return
+	} else {
+		// Fallback to storage if catalog service is not available
+		template, err = h.storage.GetTemplate(req.TemplateID)
+		if err != nil {
+			if err == storage.ErrNotFound {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Template not found"})
+				return
+			}
+			klog.Errorf("Failed to verify template %s: %v", req.TemplateID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify template"})
+			return
+		}
 	}
 
 	// Find a VDC in the user's organization using CRDs
@@ -752,24 +784,32 @@ func (h *VMHandlers) validateVMLimitRangeCRD(vdc *ovimv1.VirtualDataCenter, cpu 
 	// Parse memory string to GB for comparison
 	memoryGB := models.ParseMemoryString(memory)
 
-	// Validate CPU constraints
-	if limitRange.MinCpu > 0 && cpu < limitRange.MinCpu {
-		return fmt.Errorf("VM CPU (%d cores) is below VDC minimum limit (%d cores)", cpu, limitRange.MinCpu)
+	// Convert VM CPU cores to millicores for comparison with VDC limits
+	// VDC limits are in millicores (1000 millicores = 1 core)
+	vmCpuMillicores := cpu * 1000
+
+	// Convert memory GB to MB for comparison with VDC limits
+	// VDC limits are in MB
+	vmMemoryMB := memoryGB * 1024
+
+	// Validate CPU constraints (comparing millicores to millicores)
+	if limitRange.MinCpu > 0 && vmCpuMillicores < limitRange.MinCpu {
+		return fmt.Errorf("VM CPU (%d cores = %d millicores) is below VDC minimum limit (%d millicores)", cpu, vmCpuMillicores, limitRange.MinCpu)
 	}
-	if limitRange.MaxCpu > 0 && cpu > limitRange.MaxCpu {
-		return fmt.Errorf("VM CPU (%d cores) exceeds VDC maximum limit (%d cores)", cpu, limitRange.MaxCpu)
+	if limitRange.MaxCpu > 0 && vmCpuMillicores > limitRange.MaxCpu {
+		return fmt.Errorf("VM CPU (%d cores = %d millicores) exceeds VDC maximum limit (%d millicores)", cpu, vmCpuMillicores, limitRange.MaxCpu)
 	}
 
-	// Validate memory constraints
-	if limitRange.MinMemory > 0 && memoryGB < limitRange.MinMemory {
-		return fmt.Errorf("VM memory (%dGB) is below VDC minimum limit (%dGB)", memoryGB, limitRange.MinMemory)
+	// Validate memory constraints (comparing MB to MB)
+	if limitRange.MinMemory > 0 && vmMemoryMB < limitRange.MinMemory {
+		return fmt.Errorf("VM memory (%dGB = %dMB) is below VDC minimum limit (%dMB)", memoryGB, vmMemoryMB, limitRange.MinMemory)
 	}
-	if limitRange.MaxMemory > 0 && memoryGB > limitRange.MaxMemory {
-		return fmt.Errorf("VM memory (%dGB) exceeds VDC maximum limit (%dGB)", memoryGB, limitRange.MaxMemory)
+	if limitRange.MaxMemory > 0 && vmMemoryMB > limitRange.MaxMemory {
+		return fmt.Errorf("VM memory (%dGB = %dMB) exceeds VDC maximum limit (%dMB)", memoryGB, vmMemoryMB, limitRange.MaxMemory)
 	}
 
-	klog.V(6).Infof("VM specs validated successfully against VDC %s LimitRange: CPU=%d (limits: %d-%d), Memory=%dGB (limits: %d-%d)",
-		vdc.Name, cpu, limitRange.MinCpu, limitRange.MaxCpu, memoryGB, limitRange.MinMemory, limitRange.MaxMemory)
+	klog.V(6).Infof("VM specs validated successfully against VDC %s LimitRange: CPU=%d cores (%d millicores, limits: %d-%d), Memory=%dGB (%dMB, limits: %d-%d)",
+		vdc.Name, cpu, vmCpuMillicores, limitRange.MinCpu, limitRange.MaxCpu, memoryGB, vmMemoryMB, limitRange.MinMemory, limitRange.MaxMemory)
 
 	return nil
 }
