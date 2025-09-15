@@ -388,6 +388,7 @@ type SystemResourceSummary struct {
 	UsagePercentages  ResourceSummary                    `json:"usage_percentages"`
 	OrganizationUsage []OrganizationResourceSummary      `json:"organization_usage"`
 	TopConsumers      TopResourceConsumers               `json:"top_consumers"`
+	Note              string                             `json:"note,omitempty"`
 	LastUpdated       string                             `json:"last_updated"`
 }
 
@@ -600,6 +601,17 @@ func (h *DashboardHandlers) buildSystemResourceSummary() (*SystemResourceSummary
 	// Sort and limit top consumers
 	topConsumers := h.getTopConsumers(allTopConsumers)
 
+	// Determine if we need to add a note about zero resources
+	var note string
+	totalVDCs := 0
+	for _, orgSummary := range orgSummaries {
+		totalVDCs += orgSummary.VDCCount
+	}
+
+	if totalVDCs == 0 {
+		note = "No Virtual Data Centers (VDCs) have been created yet. Resource quotas are allocated at the VDC level, so all resource values show as zero until VDCs are created within organizations."
+	}
+
 	return &SystemResourceSummary{
 		TotalResources: ResourceSummary{
 			CPU:     totalCPU,
@@ -619,6 +631,7 @@ func (h *DashboardHandlers) buildSystemResourceSummary() (*SystemResourceSummary
 		UsagePercentages:  usagePercentages,
 		OrganizationUsage: orgSummaries,
 		TopConsumers:      topConsumers,
+		Note:              note,
 		LastUpdated:       time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
