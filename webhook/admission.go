@@ -252,11 +252,11 @@ func (w *WorkloadWebhook) validateVMInVDC(ctx context.Context, vm *unstructured.
 		vdcLabel := labels["ovim.io/vdc"]
 		orgLabel := labels["ovim.io/organization"]
 
-		// Extract expected values from namespace name (format: vdc-{org}-{vdc})
+		// Extract expected values from namespace name (format: vdc-org-{org}-{vdc})
 		namespaceParts := strings.Split(namespaceName, "-")
-		if len(namespaceParts) >= 3 {
-			expectedOrg := namespaceParts[1]
-			expectedVDC := strings.Join(namespaceParts[2:], "-")
+		if len(namespaceParts) >= 4 {
+			expectedOrg := namespaceParts[2]  // Skip "vdc" and "org"
+			expectedVDC := strings.Join(namespaceParts[3:], "-")
 
 			if orgLabel != expectedOrg {
 				return fmt.Errorf("VM organization label '%s' does not match namespace organization '%s'", orgLabel, expectedOrg)
