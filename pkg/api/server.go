@@ -299,6 +299,7 @@ func (s *Server) setupRoutes() {
 				vms.POST("/", vmHandlers.Create)
 				vms.GET("/:id", vmHandlers.Get)
 				vms.GET("/:id/status", vmHandlers.GetStatus)
+				vms.GET("/:id/console", vmHandlers.GetConsoleAccess)
 				vms.PUT("/:id/power", vmHandlers.UpdatePower)
 				vms.DELETE("/:id", vmHandlers.Delete)
 			}

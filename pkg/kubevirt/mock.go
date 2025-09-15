@@ -209,6 +209,30 @@ func (m *MockClient) GetVMIPAddress(ctx context.Context, vmID, namespace string)
 	return status.IPAddress, nil
 }
 
+// GetVMConsoleURL simulates getting console access URL for a virtual machine
+func (m *MockClient) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	klog.V(4).Infof("Mock: Getting console URL for VM %s in namespace %s", vmID, namespace)
+
+	key := fmt.Sprintf("%s/%s", namespace, vmID)
+	vm, exists := m.vms[key]
+	if !exists {
+		return "", fmt.Errorf("VM %s not found in namespace %s", vmID, namespace)
+	}
+
+	if !vm.Running {
+		return "", fmt.Errorf("VM must be running to access console (current status: %s)", vm.Status)
+	}
+
+	// Generate a mock console URL
+	consoleURL := fmt.Sprintf("/mock/console/%s/%s", namespace, vmID)
+
+	klog.Infof("Mock: Generated console URL for VM %s: %s", vmID, consoleURL)
+	return consoleURL, nil
+}
+
 // CheckConnection simulates checking connectivity to the cluster
 func (m *MockClient) CheckConnection(ctx context.Context) error {
 	klog.V(6).Info("Mock: Checking cluster connection (always succeeds)")

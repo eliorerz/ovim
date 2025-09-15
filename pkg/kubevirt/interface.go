@@ -29,6 +29,9 @@ type VMProvisioner interface {
 	// GetVMIPAddress retrieves the IP address of a running virtual machine
 	GetVMIPAddress(ctx context.Context, vmID, namespace string) (string, error)
 
+	// GetVMConsoleURL retrieves the console access URL for a virtual machine
+	GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error)
+
 	// CheckConnection verifies connectivity to the KubeVirt cluster
 	CheckConnection(ctx context.Context) error
 }

@@ -546,6 +546,81 @@ func (h *VMHandlers) UpdatePower(c *gin.Context) {
 	})
 }
 
+// GetConsoleAccess handles getting VM console access URL
+func (h *VMHandlers) GetConsoleAccess(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VM ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	// Get existing VM
+	vm, err := h.storage.GetVM(id)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "VM not found"})
+			return
+		}
+		klog.Errorf("Failed to get VM %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VM"})
+		return
+	}
+
+	// Check access permissions
+	if role == models.RoleSystemAdmin {
+		// System admin can access any VM
+	} else if role == models.RoleOrgAdmin {
+		// Org admin can access VMs in their organization
+		if userOrgID == "" || userOrgID != vm.OrgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied to this VM"})
+			return
+		}
+	} else if role == models.RoleOrgUser {
+		// Org user can only access their own VMs
+		if userOrgID == "" || userOrgID != vm.OrgID || userID != vm.OwnerID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied to this VM"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+		return
+	}
+
+	// Get VDC for namespace information
+	vdc, err := h.storage.GetVDC(*vm.VDCID)
+	if err != nil {
+		klog.Errorf("Failed to get VDC %s for VM %s: %v", *vm.VDCID, vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+		return
+	}
+
+	// Get console access from KubeVirt
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	consoleURL, err := h.provisioner.GetVMConsoleURL(ctx, vm.ID, vdc.WorkloadNamespace)
+	if err != nil {
+		klog.Errorf("Failed to get console URL for VM %s: %v", vm.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get console access"})
+		return
+	}
+
+	klog.Infof("Console access requested for VM %s (%s) by user %s (%s)", vm.Name, vm.ID, username, userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"console_url": consoleURL,
+		"vm_id":       vm.ID,
+		"vm_name":     vm.Name,
+	})
+}
+
 // Delete handles deleting a VM
 func (h *VMHandlers) Delete(c *gin.Context) {
 	id := c.Param("id")

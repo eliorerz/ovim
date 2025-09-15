@@ -336,6 +336,43 @@ func (c *Client) updateVMRunningState(ctx context.Context, vmID, namespace strin
 	return nil
 }
 
+// GetVMConsoleURL retrieves the console access URL for a virtual machine
+func (c *Client) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
+	logger := log.FromContext(ctx).WithValues("vmID", vmID, "namespace", namespace)
+	logger.Info("Getting console URL for VirtualMachine")
+
+	// Get the VMI (VirtualMachineInstance) to check if VM is running
+	vmi, err := c.dynamicClient.Resource(vmiGVR).Namespace(namespace).Get(ctx, vmID, metav1.GetOptions{})
+	if err != nil {
+		logger.Error(err, "failed to get VirtualMachineInstance")
+		return "", fmt.Errorf("VM is not running or does not exist")
+	}
+
+	// Check if VMI is running
+	status, found, err := unstructured.NestedString(vmi.Object, "status", "phase")
+	if err != nil || !found {
+		return "", fmt.Errorf("failed to get VMI status")
+	}
+
+	if status != "Running" {
+		return "", fmt.Errorf("VM must be running to access console (current status: %s)", status)
+	}
+
+	// For KubeVirt, we need to construct a console URL
+	// This typically involves the cluster's console URL and the VM's details
+	// In a real implementation, you would:
+	// 1. Get the cluster's console URL from the KubeVirt configuration
+	// 2. Generate a secure token for console access
+	// 3. Return a URL that points to the VNC/console proxy
+
+	// For now, we'll return a URL that can be used with kubectl port-forward or similar
+	// In production, this should be replaced with proper KubeVirt console integration
+	consoleURL := fmt.Sprintf("/k8s/api/v1/namespaces/%s/services/virt-console-proxy:8001/proxy/vm/%s/console", namespace, vmID)
+
+	logger.Info("Generated console URL for VirtualMachine", "url", consoleURL)
+	return consoleURL, nil
+}
+
 // generateCloudInitUserData generates cloud-init user data for VM initialization
 func generateCloudInitUserData(vm *models.VirtualMachine) string {
 	userData := `#cloud-config
