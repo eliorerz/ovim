@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
@@ -97,8 +98,10 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 	}
 
 	// Get the selected VDC and validate resource availability
+	var vdc *models.VirtualDataCenter
 	if h.storage != nil {
-		vdc, err := h.storage.GetVDC(req.VDCID)
+		var err error
+		vdc, err = h.storage.GetVDC(req.VDCID)
 		if err != nil {
 			if err == storage.ErrNotFound {
 				klog.Errorf("Selected VDC %s not found for user %s (%s)", req.VDCID, username, userID)
@@ -244,6 +247,37 @@ func (h *OpenShiftHandlers) DeployVMFromTemplate(c *gin.Context) {
 		return
 	}
 
+	// Save VM to OVIM database for management consistency
+	if h.storage != nil && vdc != nil {
+		ovimVM := &models.VirtualMachine{
+			ID:         vm.ID,
+			Name:       vm.Name,
+			OrgID:      userOrgID,
+			VDCID:      &req.VDCID,
+			TemplateID: req.TemplateName, // Use template name as template ID for OpenShift VMs
+			OwnerID:    userID,
+			Status:     models.VMStatusRunning, // OpenShift VMs are started immediately
+			CPU:        0,                      // Will be populated by controller sync
+			Memory:     "",                     // Will be populated by controller sync
+			DiskSize:   req.DiskSize,           // Use requested disk size if available
+			IPAddress:  "",                     // Will be populated when VM gets IP
+			Metadata: map[string]string{
+				"template_name":   req.TemplateName,
+				"created_by":      username,
+				"creation_method": "openshift",
+				"namespace":       vm.Namespace,
+			},
+		}
+
+		if createErr := h.storage.CreateVM(ovimVM); createErr != nil {
+			klog.Errorf("Failed to save VM %s to OVIM database: %v", vm.ID, createErr)
+			// Don't fail the request since VM was created successfully in OpenShift
+			// Log the warning but continue
+		} else {
+			klog.Infof("Successfully saved VM %s to OVIM database", vm.ID)
+		}
+	}
+
 	klog.Infof("Successfully deployed VM %s with ID %s in namespace %s for user %s",
 		vm.Name, vm.ID, req.TargetNamespace, username)
 	c.JSON(http.StatusCreated, vm)
@@ -339,6 +373,255 @@ func (h *OpenShiftHandlers) resolveTemplateName(ctx context.Context, templateNam
 }
 
 // StatusResponse represents a status check response
+// UpdateOpenShiftVMPower handles VM power state changes
+// @Summary Update OpenShift VM power state
+// @Description Start, stop, or restart a virtual machine directly in OpenShift
+// @Tags openshift
+// @Accept json
+// @Produce json
+// @Param id path string true "VM ID"
+// @Param request body models.UpdateVMPowerRequest true "Power action request"
+// @Success 200 {object} openshift.VirtualMachine
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/openshift/vms/{id}/power [put]
+func (h *OpenShiftHandlers) UpdateOpenShiftVMPower(c *gin.Context) {
+	vmID := c.Param("id")
+	if vmID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "VM ID required",
+			Message: "VM ID must be provided in the URL path",
+		})
+		return
+	}
+
+	var req models.UpdateVMPowerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid request format",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Validate action
+	validActions := map[string]bool{
+		"start":   true,
+		"stop":    true,
+		"restart": true,
+	}
+	if !validActions[req.Action] {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid action",
+			Message: "Action must be start, stop, or restart",
+		})
+		return
+	}
+
+	// Get namespace from query parameter or default
+	namespace := c.Query("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Perform power action
+	switch req.Action {
+	case "start":
+		if err := h.client.StartVM(ctx, vmID, namespace); err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error:   "Failed to start VM",
+				Message: err.Error(),
+			})
+			return
+		}
+	case "stop":
+		if err := h.client.StopVM(ctx, vmID, namespace); err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error:   "Failed to stop VM",
+				Message: err.Error(),
+			})
+			return
+		}
+	case "restart":
+		if err := h.client.RestartVM(ctx, vmID, namespace); err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error:   "Failed to restart VM",
+				Message: err.Error(),
+			})
+			return
+		}
+	}
+
+	// Get updated VM status
+	vms, err := h.client.GetVMs(ctx, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get updated VM status",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Find the VM in the response
+	for _, vm := range vms {
+		if vm.ID == vmID {
+			c.JSON(http.StatusOK, vm)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, ErrorResponse{
+		Error:   "VM not found",
+		Message: "VM not found after power operation",
+	})
+}
+
+// DeleteOpenShiftVM deletes a virtual machine from OpenShift
+// @Summary Delete OpenShift VM
+// @Description Delete a virtual machine directly from OpenShift cluster
+// @Tags openshift
+// @Param id path string true "VM ID"
+// @Param namespace query string false "Namespace (defaults to 'default')"
+// @Success 204
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/openshift/vms/{id} [delete]
+func (h *OpenShiftHandlers) DeleteOpenShiftVM(c *gin.Context) {
+	vmID := c.Param("id")
+	if vmID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "VM ID required",
+			Message: "VM ID must be provided in the URL path",
+		})
+		return
+	}
+
+	// Get namespace from query parameter or default
+	namespace := c.Query("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := h.client.DeleteVM(ctx, vmID, namespace); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to delete VM",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// UpdateOpenShiftVM updates a virtual machine in OpenShift
+// @Summary Update OpenShift VM
+// @Description Update virtual machine configuration in OpenShift
+// @Tags openshift
+// @Accept json
+// @Produce json
+// @Param id path string true "VM ID"
+// @Param request body map[string]interface{} true "VM update request"
+// @Success 200 {object} openshift.VirtualMachine
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/openshift/vms/{id} [put]
+func (h *OpenShiftHandlers) UpdateOpenShiftVM(c *gin.Context) {
+	vmID := c.Param("id")
+	if vmID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "VM ID required",
+			Message: "VM ID must be provided in the URL path",
+		})
+		return
+	}
+
+	// For now, this is a placeholder that returns the current VM state
+	// Full VM update functionality would require more complex Kubernetes API calls
+	namespace := c.Query("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Get current VM state
+	vms, err := h.client.GetVMs(ctx, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get VM",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Find the VM
+	for _, vm := range vms {
+		if vm.ID == vmID {
+			c.JSON(http.StatusOK, vm)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, ErrorResponse{
+		Error:   "VM not found",
+		Message: "Virtual machine not found in the specified namespace",
+	})
+}
+
+// GetOpenShiftVMConsole gets console access for a virtual machine
+// @Summary Get OpenShift VM console access
+// @Description Get console URL or access information for a virtual machine
+// @Tags openshift
+// @Param id path string true "VM ID"
+// @Param namespace query string false "Namespace (defaults to 'default')"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/openshift/vms/{id}/console [get]
+func (h *OpenShiftHandlers) GetOpenShiftVMConsole(c *gin.Context) {
+	vmID := c.Param("id")
+	if vmID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "VM ID required",
+			Message: "VM ID must be provided in the URL path",
+		})
+		return
+	}
+
+	// Get namespace from query parameter or default
+	namespace := c.Query("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	consoleURL, err := h.client.GetVMConsoleURL(ctx, vmID, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get console URL",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{
+		"vmId":       vmID,
+		"namespace":  namespace,
+		"consoleUrl": consoleURL,
+	})
+}
+
 type StatusResponse struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`

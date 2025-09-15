@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/config"
+	"github.com/eliorerz/ovim-updated/pkg/kubevirt"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	templatev1 "github.com/openshift/api/template/v1"
 	templateclient "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
@@ -22,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Template represents a VM template from OpenShift
@@ -66,6 +68,7 @@ type Client struct {
 	templateClient templateclient.TemplateV1Interface
 	dynamicClient  dynamic.Interface
 	restConfig     *rest.Config
+	kubeVirtClient kubevirt.VMProvisioner
 }
 
 // NewClient creates a new OpenShift client
@@ -105,12 +108,24 @@ func NewClient(cfg *config.OpenShiftConfig) (*Client, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	// Create controller-runtime client for KubeVirt
+	k8sClient, err := client.New(restConfig, client.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
+	}
+
+	kubeVirtClient, err := kubevirt.NewClient(restConfig, k8sClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubevirt client: %w", err)
+	}
+
 	return &Client{
 		config:         cfg,
 		kubeClient:     kubeClient,
 		templateClient: templateClient,
 		dynamicClient:  dynamicClient,
 		restConfig:     restConfig,
+		kubeVirtClient: kubeVirtClient,
 	}, nil
 }
 
@@ -982,4 +997,36 @@ func (c *Client) sanitizeKubernetesName(name string) string {
 	}
 
 	return sanitized
+}
+
+// VM Power Management Operations
+
+// StartVM starts a virtual machine via KubeVirt
+func (c *Client) StartVM(ctx context.Context, vmID, namespace string) error {
+	return c.kubeVirtClient.StartVM(ctx, vmID, namespace)
+}
+
+// StopVM stops a virtual machine via KubeVirt
+func (c *Client) StopVM(ctx context.Context, vmID, namespace string) error {
+	return c.kubeVirtClient.StopVM(ctx, vmID, namespace)
+}
+
+// RestartVM restarts a virtual machine via KubeVirt
+func (c *Client) RestartVM(ctx context.Context, vmID, namespace string) error {
+	return c.kubeVirtClient.RestartVM(ctx, vmID, namespace)
+}
+
+// DeleteVM deletes a virtual machine via KubeVirt
+func (c *Client) DeleteVM(ctx context.Context, vmID, namespace string) error {
+	return c.kubeVirtClient.DeleteVM(ctx, vmID, namespace)
+}
+
+// GetVMStatus gets the status of a virtual machine via KubeVirt
+func (c *Client) GetVMStatus(ctx context.Context, vmID, namespace string) (*kubevirt.VMStatus, error) {
+	return c.kubeVirtClient.GetVMStatus(ctx, vmID, namespace)
+}
+
+// GetVMConsoleURL gets the console URL for a virtual machine via KubeVirt
+func (c *Client) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
+	return c.kubeVirtClient.GetVMConsoleURL(ctx, vmID, namespace)
 }
