@@ -314,6 +314,7 @@ func (s *Server) setupRoutes() {
 				}
 				dashboard.GET("/summary", dashboardHandlers.GetSummary)
 				dashboard.GET("/system-health", dashboardHandlers.GetSystemHealth)
+				dashboard.GET("/resources", dashboardHandlers.GetSystemResources)
 			}
 
 			// Alerts (all authenticated users)
