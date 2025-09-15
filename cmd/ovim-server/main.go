@@ -81,40 +81,8 @@ func main() {
 		}
 	}()
 
-	// Initialize KubeVirt provisioner
+	// Initialize KubeVirt provisioner placeholder - will be initialized after Kubernetes client
 	var provisioner kubevirt.VMProvisioner
-	if cfg.Kubernetes.KubeVirt.Enabled {
-		if cfg.Kubernetes.KubeVirt.UseMock {
-			klog.Info("Initializing mock KubeVirt provisioner")
-			provisioner = kubevirt.NewMockClient()
-		} else {
-			klog.Info("Initializing KubeVirt provisioner")
-			// TODO: Initialize proper Kubernetes client config and client
-			// For now, use mock provisioner since we need rest.Config and client.Client
-			klog.Info("KubeVirt integration available but using mock provisioner for now")
-			provisioner = kubevirt.NewMockClient()
-			err = nil
-			if err != nil {
-				klog.Warningf("Failed to initialize KubeVirt client: %v", err)
-				klog.Info("Falling back to mock KubeVirt provisioner")
-				provisioner = kubevirt.NewMockClient()
-			} else {
-				// Test connection
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				if err := provisioner.CheckConnection(ctx); err != nil {
-					klog.Warningf("KubeVirt connection test failed: %v", err)
-					klog.Info("Falling back to mock KubeVirt provisioner")
-					provisioner = kubevirt.NewMockClient()
-				} else {
-					klog.Info("KubeVirt connection successful")
-				}
-			}
-		}
-	} else {
-		klog.Info("KubeVirt provisioning disabled, using mock provisioner")
-		provisioner = kubevirt.NewMockClient()
-	}
 
 	// Initialize Kubernetes client if enabled
 	var k8sClient client.Client
@@ -183,6 +151,56 @@ func main() {
 		}
 	} else {
 		klog.Info("Kubernetes integration disabled in configuration")
+	}
+
+	// Initialize KubeVirt provisioner now that we have Kubernetes client
+	if cfg.Kubernetes.KubeVirt.Enabled {
+		if cfg.Kubernetes.KubeVirt.UseMock {
+			klog.Info("Initializing mock KubeVirt provisioner")
+			provisioner = kubevirt.NewMockClient()
+		} else if k8sClient != nil {
+			klog.Info("Initializing KubeVirt provisioner with Kubernetes client")
+			// Get the REST config from the Kubernetes client setup
+			var restConfig *rest.Config
+			var err error
+			if cfg.Kubernetes.InCluster {
+				restConfig, err = rest.InClusterConfig()
+			} else {
+				// TODO: Implement kubeconfig loading if needed
+				restConfig, err = rest.InClusterConfig()
+			}
+
+			if err != nil {
+				klog.Warningf("Failed to get Kubernetes config for KubeVirt: %v", err)
+				klog.Info("Falling back to mock KubeVirt provisioner")
+				provisioner = kubevirt.NewMockClient()
+			} else {
+				kubevirtClient, err := kubevirt.NewClient(restConfig, k8sClient)
+				if err != nil {
+					klog.Warningf("Failed to initialize KubeVirt client: %v", err)
+					klog.Info("Falling back to mock KubeVirt provisioner")
+					provisioner = kubevirt.NewMockClient()
+				} else {
+					// Test connection
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if err := kubevirtClient.CheckConnection(ctx); err != nil {
+						klog.Warningf("KubeVirt connection test failed: %v", err)
+						klog.Info("Falling back to mock KubeVirt provisioner")
+						provisioner = kubevirt.NewMockClient()
+					} else {
+						klog.Info("KubeVirt connection successful")
+						provisioner = kubevirtClient
+					}
+				}
+			}
+		} else {
+			klog.Info("KubeVirt enabled but no Kubernetes client available, using mock provisioner")
+			provisioner = kubevirt.NewMockClient()
+		}
+	} else {
+		klog.Info("KubeVirt provisioning disabled, using mock provisioner")
+		provisioner = kubevirt.NewMockClient()
 	}
 
 	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient, kubernetesClient, eventRecorder)

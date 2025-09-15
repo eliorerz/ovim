@@ -154,8 +154,8 @@ func (c *Client) CreateVM(ctx context.Context, vm *models.VirtualMachine, vdc *m
 func (c *Client) GetVMStatus(ctx context.Context, vmID, namespace string) (*VMStatus, error) {
 	logger := log.FromContext(ctx).WithValues("vm", vmID, "namespace", namespace)
 
-	// Get VirtualMachine
-	vm, err := c.dynamicClient.Resource(vmGVR).Namespace(namespace).Get(ctx, vmID, metav1.GetOptions{})
+	// Find VirtualMachine by ovim.io/vm-id annotation
+	vm, err := c.findVMByID(ctx, vmID, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VirtualMachine: %w", err)
 	}
@@ -181,8 +181,14 @@ func (c *Client) GetVMStatus(ctx context.Context, vmID, namespace string) (*VMSt
 		status.Annotations = annotations
 	}
 
+	// Get the actual VM name for VMI lookup
+	vmName, found, err := unstructured.NestedString(vm.Object, "metadata", "name")
+	if err != nil || !found {
+		return nil, fmt.Errorf("failed to get VirtualMachine name")
+	}
+
 	// Try to get VirtualMachineInstance for more detailed status
-	vmi, err := c.dynamicClient.Resource(vmiGVR).Namespace(namespace).Get(ctx, vmID, metav1.GetOptions{})
+	vmi, err := c.dynamicClient.Resource(vmiGVR).Namespace(namespace).Get(ctx, vmName, metav1.GetOptions{})
 	if err == nil {
 		// VMI exists, get detailed status
 		if phase, found, err := unstructured.NestedString(vmi.Object, "status", "phase"); err == nil && found {
@@ -276,8 +282,20 @@ func (c *Client) RestartVM(ctx context.Context, vmID, namespace string) error {
 func (c *Client) DeleteVM(ctx context.Context, vmID, namespace string) error {
 	logger := log.FromContext(ctx).WithValues("vm", vmID, "namespace", namespace)
 
+	// Find VirtualMachine by ovim.io/vm-id annotation to get its actual name
+	vm, err := c.findVMByID(ctx, vmID, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find VirtualMachine: %w", err)
+	}
+
+	// Get the actual VM name from metadata
+	vmName, found, err := unstructured.NestedString(vm.Object, "metadata", "name")
+	if err != nil || !found {
+		return fmt.Errorf("failed to get VirtualMachine name")
+	}
+
 	// Delete the VirtualMachine (this will also delete the VMI)
-	err := c.dynamicClient.Resource(vmGVR).Namespace(namespace).Delete(ctx, vmID, metav1.DeleteOptions{})
+	err = c.dynamicClient.Resource(vmGVR).Namespace(namespace).Delete(ctx, vmName, metav1.DeleteOptions{})
 	if err != nil {
 		logger.Error(err, "failed to delete VirtualMachine")
 		return fmt.Errorf("failed to delete VirtualMachine: %w", err)
@@ -310,8 +328,8 @@ func (c *Client) CheckConnection(ctx context.Context) error {
 func (c *Client) updateVMRunningState(ctx context.Context, vmID, namespace string, running bool) error {
 	logger := log.FromContext(ctx).WithValues("vm", vmID, "namespace", namespace, "running", running)
 
-	// Get current VM
-	vm, err := c.dynamicClient.Resource(vmGVR).Namespace(namespace).Get(ctx, vmID, metav1.GetOptions{})
+	// Find VirtualMachine by ovim.io/vm-id annotation
+	vm, err := c.findVMByID(ctx, vmID, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get VirtualMachine: %w", err)
 	}
@@ -341,8 +359,20 @@ func (c *Client) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (s
 	logger := log.FromContext(ctx).WithValues("vmID", vmID, "namespace", namespace)
 	logger.Info("Getting console URL for VirtualMachine")
 
+	// Find VirtualMachine by ovim.io/vm-id annotation to get its actual name
+	vm, err := c.findVMByID(ctx, vmID, namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to find VirtualMachine: %w", err)
+	}
+
+	// Get the actual VM name
+	vmName, found, err := unstructured.NestedString(vm.Object, "metadata", "name")
+	if err != nil || !found {
+		return "", fmt.Errorf("failed to get VirtualMachine name")
+	}
+
 	// Get the VMI (VirtualMachineInstance) to check if VM is running
-	vmi, err := c.dynamicClient.Resource(vmiGVR).Namespace(namespace).Get(ctx, vmID, metav1.GetOptions{})
+	vmi, err := c.dynamicClient.Resource(vmiGVR).Namespace(namespace).Get(ctx, vmName, metav1.GetOptions{})
 	if err != nil {
 		logger.Error(err, "failed to get VirtualMachineInstance")
 		return "", fmt.Errorf("VM is not running or does not exist")
@@ -371,6 +401,29 @@ func (c *Client) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (s
 
 	logger.Info("Generated console URL for VirtualMachine", "url", consoleURL)
 	return consoleURL, nil
+}
+
+// findVMByID finds a VirtualMachine by its ovim.io/vm-id annotation
+func (c *Client) findVMByID(ctx context.Context, vmID, namespace string) (*unstructured.Unstructured, error) {
+	logger := log.FromContext(ctx).WithValues("vmID", vmID, "namespace", namespace)
+
+	// List all VirtualMachines in the namespace
+	vmList, err := c.dynamicClient.Resource(vmGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list VirtualMachines: %w", err)
+	}
+
+	// Find VM with matching ovim.io/vm-id annotation
+	for _, vm := range vmList.Items {
+		if annotations, found, err := unstructured.NestedStringMap(vm.Object, "metadata", "annotations"); err == nil && found {
+			if annotations["ovim.io/vm-id"] == vmID {
+				logger.V(1).Info("Found VirtualMachine by ovim.io/vm-id annotation", "vmName", vm.GetName())
+				return &vm, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("VirtualMachine with ovim.io/vm-id=%s not found in namespace %s", vmID, namespace)
 }
 
 // generateCloudInitUserData generates cloud-init user data for VM initialization
