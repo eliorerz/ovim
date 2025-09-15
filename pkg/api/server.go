@@ -294,7 +294,7 @@ func (s *Server) setupRoutes() {
 			// VM management (all authenticated users, filtered by role)
 			vms := protected.Group("/vms")
 			{
-				vmHandlers := NewVMHandlers(s.storage, s.provisioner, s.k8sClient)
+				vmHandlers := NewVMHandlers(s.storage, s.provisioner, s.k8sClient, s.catalogService)
 				vms.GET("/", vmHandlers.List)
 				vms.POST("/", vmHandlers.Create)
 				vms.GET("/:id", vmHandlers.Get)
@@ -341,6 +341,10 @@ func (s *Server) setupRoutes() {
 					openshift.GET("/templates", osHandlers.GetOpenShiftTemplates)
 					openshift.GET("/vms", osHandlers.GetOpenShiftVMs)
 					openshift.POST("/vms", osHandlers.DeployVMFromTemplate)
+					openshift.PUT("/vms/:id/power", osHandlers.UpdateOpenShiftVMPower)
+					openshift.DELETE("/vms/:id", osHandlers.DeleteOpenShiftVM)
+					openshift.PUT("/vms/:id", osHandlers.UpdateOpenShiftVM)
+					openshift.GET("/vms/:id/console", osHandlers.GetOpenShiftVMConsole)
 				}
 			}
 		}
