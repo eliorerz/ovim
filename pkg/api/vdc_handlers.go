@@ -216,7 +216,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		DisplayName:       &req.DisplayName,
 		CRName:            vdcID,
 		CRNamespace:       fmt.Sprintf("org-%s", req.OrgID),
-		WorkloadNamespace: fmt.Sprintf("vdc-%s-%s", req.OrgID, vdcID),
+		WorkloadNamespace: fmt.Sprintf("vdc-org-%s-%s", req.OrgID, vdcID),
 		CPUQuota:          req.CPUQuota,
 		MemoryQuota:       req.MemoryQuota,
 		StorageQuota:      req.StorageQuota,
