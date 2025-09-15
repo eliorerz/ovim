@@ -212,7 +212,6 @@ func (s *Server) setupRoutes() {
 
 				// Resource management endpoints
 				orgs.GET("/:id/resources", orgHandlers.GetResourceUsage)
-				orgs.PUT("/:id/resources", orgHandlers.UpdateResourceQuotas)
 				orgs.POST("/:id/resources/validate", orgHandlers.ValidateResourceAllocation)
 
 				// Organization catalog source management endpoints
