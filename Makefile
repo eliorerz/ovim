@@ -783,7 +783,7 @@ build-ui:
 all: test build
 
 ## build-push: Build and push backend container with unique timestamp tag
-build-push:
+build-push: clean
 	@echo "Building and pushing backend container with unique tag..."
 	$(eval UNIQUE_TAG := $(BUILD_TIMESTAMP)-$(GIT_SHORT_COMMIT))
 	@echo "Using tag: $(UNIQUE_TAG)"
