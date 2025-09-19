@@ -244,10 +244,11 @@ type Organization struct {
 // VirtualDataCenter represents a virtual data center within an organization (resource container)
 // Updated for CRD integration
 type VirtualDataCenter struct {
-	ID          string `json:"id" gorm:"primaryKey"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OrgID       string `json:"org_id" gorm:"index"`
+	ID          string  `json:"id" gorm:"primaryKey"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	OrgID       string  `json:"org_id" gorm:"index"`
+	ZoneID      *string `json:"zone_id,omitempty" gorm:"index"` // Zone where VDC is deployed
 
 	// CRD integration fields
 	DisplayName       *string `json:"display_name,omitempty"`
@@ -437,6 +438,7 @@ type CreateVDCRequest struct {
 	DisplayName string `json:"display_name" binding:"required"`
 	Description string `json:"description"`
 	OrgID       string `json:"org_id" binding:"required"`
+	ZoneID      string `json:"zone_id" binding:"required"` // Zone where VDC will be deployed
 
 	// Resource quotas
 	CPUQuota     int `json:"cpu_quota" binding:"required,min=1"`

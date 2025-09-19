@@ -83,6 +83,9 @@ type VirtualDataCenterSpec struct {
 	// OrganizationRef references the parent Organization
 	OrganizationRef string `json:"organizationRef"`
 
+	// ZoneID specifies the zone where this VDC will be deployed
+	ZoneID string `json:"zoneId"`
+
 	// DisplayName is the human-readable VDC name
 	DisplayName string `json:"displayName"`
 

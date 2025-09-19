@@ -226,6 +226,11 @@ func (s *Server) setupRoutes() {
 				// VDC requirements check endpoint for VM deployment
 				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				orgs.GET("/:id/vdc-requirements", vdcHandlers.CheckVDCRequirements)
+
+				// Organization zone management (system admin only)
+				orgs.GET("/:id/zones", s.ListOrganizationZones)
+				orgs.GET("/:id/zones/:zoneId/quota", s.GetOrganizationZoneQuota)
+				orgs.PUT("/:id/zones/:zoneId/quota", s.SetOrganizationZoneQuota)
 			}
 
 			// User management (system admin only)
@@ -315,6 +320,14 @@ func (s *Server) setupRoutes() {
 				dashboard.GET("/summary", dashboardHandlers.GetSummary)
 				dashboard.GET("/system-health", dashboardHandlers.GetSystemHealth)
 				dashboard.GET("/resources", dashboardHandlers.GetSystemResources)
+			}
+
+			// Zone management (all authenticated users can list, system admin can manage quotas)
+			zones := protected.Group("/zones")
+			{
+				zones.GET("/", s.ListZones)
+				zones.GET("/:id", s.GetZone)
+				zones.GET("/:id/utilization", s.GetZoneUtilization)
 			}
 
 			// Alerts (all authenticated users)
