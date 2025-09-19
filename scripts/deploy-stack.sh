@@ -256,7 +256,25 @@ update_manifests() {
     
     # Update UI image reference
     sed -i "s|image: quay.io/eerez/ovim-ui:latest|image: $UI_IMAGE:$IMAGE_TAG|g" "$temp_dir/config/ui/ovim-ui.yaml"
-    
+
+    # Dynamically detect and update storage class for PostgreSQL
+    log_debug "Detecting available storage classes..." >&2
+    local default_storage_class
+    default_storage_class=$($KUBECTL_CMD get storageclass -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || echo "")
+
+    if [ -z "$default_storage_class" ]; then
+        # If no default storage class, get the first available one
+        default_storage_class=$($KUBECTL_CMD get storageclass -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
+
+    if [ -n "$default_storage_class" ]; then
+        log_debug "Using storage class: $default_storage_class" >&2
+        # Add storageClassName to the PostgreSQL PVC template
+        sed -i '/accessModes:/i\        storageClassName: '"$default_storage_class" "$temp_dir/config/database/postgresql.yaml"
+    else
+        log_warn "No storage class found. PostgreSQL PVC may fail to bind." >&2
+    fi
+
     # Output temp directory path to stdout only
     printf "%s" "$temp_dir"
 }
@@ -570,11 +588,20 @@ verify_stack() {
         fi
     fi
     
-    # Check ingress
+    # Check ingress or routes based on platform
     if [ "$SKIP_INGRESS" = "false" ]; then
-        if ! $KUBECTL_CMD get ingress ovim-ingress -n "$NAMESPACE" &> /dev/null; then
-            log_error "Ingress not found"
-            ((issues++))
+        if $KUBECTL_CMD api-resources --api-group=route.openshift.io &> /dev/null; then
+            # OpenShift - check for routes
+            if ! $KUBECTL_CMD get route -n "$NAMESPACE" &> /dev/null; then
+                log_error "OpenShift routes not found"
+                ((issues++))
+            fi
+        else
+            # Kubernetes - check for ingress
+            if ! $KUBECTL_CMD get ingress ovim-ingress -n "$NAMESPACE" &> /dev/null; then
+                log_error "Kubernetes ingress not found"
+                ((issues++))
+            fi
         fi
     fi
     
@@ -646,13 +673,24 @@ check_network_services() {
         fi
     fi
     
-    # Check ingress
+    # Check ingress or routes based on platform
     if [ "$SKIP_INGRESS" = "false" ]; then
-        if ! $KUBECTL_CMD get ingress ovim-ingress -n "$NAMESPACE" &> /dev/null; then
-            log_warn "Ingress not found"
-            ((issues++))
+        if $KUBECTL_CMD api-resources --api-group=route.openshift.io &> /dev/null; then
+            # OpenShift - check for routes
+            if ! $KUBECTL_CMD get route -n "$NAMESPACE" &> /dev/null; then
+                log_warn "OpenShift routes not found"
+                ((issues++))
+            else
+                log_debug "✓ OpenShift routes configured"
+            fi
         else
-            log_debug "✓ Ingress configured"
+            # Kubernetes - check for ingress
+            if ! $KUBECTL_CMD get ingress ovim-ingress -n "$NAMESPACE" &> /dev/null; then
+                log_warn "Kubernetes ingress not found"
+                ((issues++))
+            else
+                log_debug "✓ Kubernetes ingress configured"
+            fi
         fi
     fi
     
