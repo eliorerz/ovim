@@ -20,16 +20,16 @@ var (
 
 // MemoryStorage implements the Storage interface using in-memory storage
 type MemoryStorage struct {
-	users               map[string]*models.User
-	organizations       map[string]*models.Organization
-	vdcs                map[string]*models.VirtualDataCenter
-	templates           map[string]*models.Template
-	vms                 map[string]*models.VirtualMachine
-	catalogSources      map[string]*models.OrganizationCatalogSource
-	events              map[string]*models.Event
-	eventCategories     map[string]*models.EventCategory
-	retentionPolicies   map[string]*models.EventRetentionPolicy
-	mutex               sync.RWMutex
+	users             map[string]*models.User
+	organizations     map[string]*models.Organization
+	vdcs              map[string]*models.VirtualDataCenter
+	templates         map[string]*models.Template
+	vms               map[string]*models.VirtualMachine
+	catalogSources    map[string]*models.OrganizationCatalogSource
+	events            map[string]*models.Event
+	eventCategories   map[string]*models.EventCategory
+	retentionPolicies map[string]*models.EventRetentionPolicy
+	mutex             sync.RWMutex
 }
 
 // NewMemoryStorage creates a new in-memory storage instance

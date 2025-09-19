@@ -235,9 +235,9 @@ func (h *EventsHandlers) getDatabaseRecentEvents(c *gin.Context) {
 
 	// Create filter for recent events
 	filter := &models.EventFilter{
-		Limit:  limit,
-		Page:   1,
-		SortBy: "last_timestamp",
+		Limit:     limit,
+		Page:      1,
+		SortBy:    "last_timestamp",
 		SortOrder: "desc",
 	}
 

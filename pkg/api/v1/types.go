@@ -99,7 +99,8 @@ type VirtualDataCenterSpec struct {
 	NetworkPolicy string `json:"networkPolicy,omitempty"`
 
 	// CustomNetworkConfig defines custom network configuration when NetworkPolicy is "custom"
-	CustomNetworkConfig map[string]interface{} `json:"customNetworkConfig,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	CustomNetworkConfig map[string]string `json:"customNetworkConfig,omitempty"`
 }
 
 // ResourceQuota defines resource limits

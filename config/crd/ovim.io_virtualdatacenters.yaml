@@ -40,8 +40,12 @@ spec:
             description: VirtualDataCenterSpec defines the desired state of VirtualDataCenter
             properties:
               customNetworkConfig:
+                additionalProperties:
+                  type: string
                 description: CustomNetworkConfig defines custom network configuration
                   when NetworkPolicy is "custom"
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               description:
                 description: Description describes the VDC
                 type: string

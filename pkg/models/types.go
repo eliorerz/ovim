@@ -491,15 +491,15 @@ type Event struct {
 	Count int `json:"count" gorm:"default:1"`
 
 	// Event source and reporting
-	SourceComponent       string `json:"source_component,omitempty"`
-	SourceHost            string `json:"source_host,omitempty"`
-	ReportingController   string `json:"reporting_controller,omitempty"`
-	ReportingInstance     string `json:"reporting_instance,omitempty"`
+	SourceComponent     string `json:"source_component,omitempty"`
+	SourceHost          string `json:"source_host,omitempty"`
+	ReportingController string `json:"reporting_controller,omitempty"`
+	ReportingInstance   string `json:"reporting_instance,omitempty"`
 
 	// Event series (for related events)
-	SeriesCount              *int       `json:"series_count,omitempty"`
-	SeriesLastObservedTime   *time.Time `json:"series_last_observed_time,omitempty"`
-	SeriesState              string     `json:"series_state,omitempty"`
+	SeriesCount            *int       `json:"series_count,omitempty"`
+	SeriesLastObservedTime *time.Time `json:"series_last_observed_time,omitempty"`
+	SeriesState            string     `json:"series_state,omitempty"`
 
 	// Event lifecycle
 	CreatedAt time.Time  `json:"created_at"`
@@ -532,24 +532,24 @@ type EventRetentionPolicy struct {
 
 // EventFilter represents filters for event queries
 type EventFilter struct {
-	Type          []string `form:"type"`
-	Category      []string `form:"category"`
-	Reason        []string `form:"reason"`
-	Component     []string `form:"component"`
-	Namespace     []string `form:"namespace"`
-	OrgID         string   `form:"org_id"`
-	VDCID         string   `form:"vdc_id"`
-	VMID          string   `form:"vm_id"`
-	UserID        string   `form:"user_id"`
-	Username      string   `form:"username"`
-	Search        string   `form:"search"`        // Full-text search in message
-	Since         string   `form:"since"`         // Time filter (RFC3339)
-	Until         string   `form:"until"`         // Time filter (RFC3339)
-	Limit         int      `form:"limit"`         // Pagination limit
-	Page          int      `form:"page"`          // Pagination page
-	SortBy        string   `form:"sort_by"`       // Sort field
-	SortOrder     string   `form:"sort_order"`    // asc/desc
-	IncludeDeleted bool    `form:"include_deleted"` // Include soft-deleted events
+	Type           []string `form:"type"`
+	Category       []string `form:"category"`
+	Reason         []string `form:"reason"`
+	Component      []string `form:"component"`
+	Namespace      []string `form:"namespace"`
+	OrgID          string   `form:"org_id"`
+	VDCID          string   `form:"vdc_id"`
+	VMID           string   `form:"vm_id"`
+	UserID         string   `form:"user_id"`
+	Username       string   `form:"username"`
+	Search         string   `form:"search"`          // Full-text search in message
+	Since          string   `form:"since"`           // Time filter (RFC3339)
+	Until          string   `form:"until"`           // Time filter (RFC3339)
+	Limit          int      `form:"limit"`           // Pagination limit
+	Page           int      `form:"page"`            // Pagination page
+	SortBy         string   `form:"sort_by"`         // Sort field
+	SortOrder      string   `form:"sort_order"`      // asc/desc
+	IncludeDeleted bool     `form:"include_deleted"` // Include soft-deleted events
 }
 
 // EventsResponse represents a paginated list of events

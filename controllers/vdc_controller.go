@@ -629,68 +629,55 @@ func (r *VirtualDataCenterReconciler) createCustomNetworkPolicy(vdc *ovimv1.Virt
 }
 
 // applyCustomNetworkConfig applies custom network configuration to NetworkPolicy
-func (r *VirtualDataCenterReconciler) applyCustomNetworkConfig(policy *networkingv1.NetworkPolicy, config map[string]interface{}) {
-	// This is a simplified implementation. In a production environment,
-	// you would want more sophisticated parsing and validation of the custom config.
+func (r *VirtualDataCenterReconciler) applyCustomNetworkConfig(policy *networkingv1.NetworkPolicy, config map[string]string) {
+	// This is a simplified implementation for map[string]string config.
+	// In a production environment, you would want more sophisticated parsing and validation.
 
-	// Example custom config structure:
+	// Example custom config structure (as string values):
 	// {
-	//   "allow_ingress_from_namespaces": ["namespace1", "namespace2"],
-	//   "allow_egress_to_ports": [80, 443, 53],
-	//   "deny_all_ingress": false,
-	//   "deny_all_egress": false
+	//   "allow_same_namespace": "true",
+	//   "allow_dns": "true",
+	//   "policy_type": "isolate" // isolate, allow-all, custom
 	// }
 
-	var ingressRules []networkingv1.NetworkPolicyIngressRule
-	var egressRules []networkingv1.NetworkPolicyEgressRule
-
-	// Parse allowed ingress namespaces
-	if allowedNS, ok := config["allow_ingress_from_namespaces"].([]interface{}); ok {
-		var peers []networkingv1.NetworkPolicyPeer
-		for _, nsInterface := range allowedNS {
-			if ns, ok := nsInterface.(string); ok {
-				peers = append(peers, networkingv1.NetworkPolicyPeer{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"name": ns},
+	// Simple string-based configuration
+	if policyType, ok := config["policy_type"]; ok {
+		switch policyType {
+		case "allow-all":
+			// Remove all restrictions - empty ingress/egress rules allow all
+			policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
+			policy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{}}
+		case "isolate":
+			// Default isolation - only allow same namespace and DNS
+			policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
+				{
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"name": policy.Namespace},
+							},
+						},
 					},
-				})
+				},
+			}
+			policy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+				{
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: &[]corev1.Protocol{corev1.ProtocolUDP}[0],
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+					},
+				},
 			}
 		}
-		if len(peers) > 0 {
-			ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{From: peers})
-		}
 	}
 
-	// Parse allowed egress ports
-	if allowedPorts, ok := config["allow_egress_to_ports"].([]interface{}); ok {
-		var ports []networkingv1.NetworkPolicyPort
-		for _, portInterface := range allowedPorts {
-			if portFloat, ok := portInterface.(float64); ok {
-				port := int32(portFloat)
-				ports = append(ports, networkingv1.NetworkPolicyPort{
-					Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
-					Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: port},
-				})
-			}
-		}
-		if len(ports) > 0 {
-			egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{Ports: ports})
-		}
-	}
-
-	// Apply rules to policy
-	if len(ingressRules) > 0 {
-		policy.Spec.Ingress = ingressRules
-	}
-	if len(egressRules) > 0 {
-		policy.Spec.Egress = egressRules
-	}
-
-	// Handle deny all settings
-	if denyAllIngress, ok := config["deny_all_ingress"].(bool); ok && denyAllIngress {
+	// Handle deny all settings (string values)
+	if denyAllIngress, ok := config["deny_all_ingress"]; ok && (denyAllIngress == "true" || denyAllIngress == "1") {
 		policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{} // Empty rules = deny all
 	}
-	if denyAllEgress, ok := config["deny_all_egress"].(bool); ok && denyAllEgress {
+	if denyAllEgress, ok := config["deny_all_egress"]; ok && (denyAllEgress == "true" || denyAllEgress == "1") {
 		policy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{} // Empty rules = deny all
 	}
 }

@@ -289,6 +289,78 @@ func (m *MockStorage) Close() error {
 	return args.Error(0)
 }
 
+// Event operations
+func (m *MockStorage) ListEvents(filter *models.EventFilter) (*models.EventsResponse, error) {
+	args := m.Called(filter)
+	return args.Get(0).(*models.EventsResponse), args.Error(1)
+}
+
+func (m *MockStorage) GetEvent(id string) (*models.Event, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Event), args.Error(1)
+}
+
+func (m *MockStorage) CreateEvent(event *models.Event) error {
+	args := m.Called(event)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CreateEvents(events []*models.Event) error {
+	args := m.Called(events)
+	return args.Error(0)
+}
+
+func (m *MockStorage) UpdateEvent(event *models.Event) error {
+	args := m.Called(event)
+	return args.Error(0)
+}
+
+func (m *MockStorage) DeleteEvent(id string) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CleanupOldEvents() (int, error) {
+	args := m.Called()
+	return args.Int(0), args.Error(1)
+}
+
+// Event category operations
+func (m *MockStorage) ListEventCategories() ([]*models.EventCategory, error) {
+	args := m.Called()
+	return args.Get(0).([]*models.EventCategory), args.Error(1)
+}
+
+func (m *MockStorage) GetEventCategory(name string) (*models.EventCategory, error) {
+	args := m.Called(name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.EventCategory), args.Error(1)
+}
+
+// Event retention policy operations
+func (m *MockStorage) ListEventRetentionPolicies() ([]*models.EventRetentionPolicy, error) {
+	args := m.Called()
+	return args.Get(0).([]*models.EventRetentionPolicy), args.Error(1)
+}
+
+func (m *MockStorage) GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error) {
+	args := m.Called(category, eventType)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.EventRetentionPolicy), args.Error(1)
+}
+
+func (m *MockStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error {
+	args := m.Called(policy)
+	return args.Error(0)
+}
+
 // setupGinContext creates a Gin context for testing
 func setupGinContext(method, url string, body interface{}, userID, username, role, orgID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)

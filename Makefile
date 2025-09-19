@@ -369,9 +369,9 @@ container-push-ui: container-build-ui
 	@podman push $(OVIM_UI_IMAGE):$(UNIQUE_TAG)
 	@podman push $(OVIM_UI_IMAGE):latest
 
-# Build and push all images
-container-push-all: container-push container-push-ui
-	@echo "All images pushed to registry successfully"
+# Build and push all images (UI temporarily disabled)
+container-push-all: container-push
+	@echo "All images pushed to registry successfully (UI skipped)"
 
 container-clean:
 	@echo "Cleaning container $(BACKEND_CONTAINER_NAME)..."

@@ -320,7 +320,7 @@ func (er *EventRecorder) RecordAuthenticationFailed(ctx context.Context, usernam
 		InvolvedObjectName: username,
 
 		SourceComponent: "ovim-api",
-		SourceHost:       ipAddress,
+		SourceHost:      ipAddress,
 	}
 	er.recordDatabaseEvent(event)
 }

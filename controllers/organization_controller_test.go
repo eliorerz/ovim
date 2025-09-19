@@ -200,6 +200,57 @@ func (m *MockStorage) ListOrganizationCatalogSources(orgID string) ([]*models.Or
 func (m *MockStorage) Ping() error  { return nil }
 func (m *MockStorage) Close() error { return nil }
 
+// Event operations
+func (m *MockStorage) ListEvents(filter *models.EventFilter) (*models.EventsResponse, error) {
+	return &models.EventsResponse{Events: []models.Event{}, TotalCount: 0}, nil
+}
+
+func (m *MockStorage) GetEvent(id string) (*models.Event, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (m *MockStorage) CreateEvent(event *models.Event) error {
+	return nil
+}
+
+func (m *MockStorage) CreateEvents(events []*models.Event) error {
+	return nil
+}
+
+func (m *MockStorage) UpdateEvent(event *models.Event) error {
+	return nil
+}
+
+func (m *MockStorage) DeleteEvent(id string) error {
+	return nil
+}
+
+func (m *MockStorage) CleanupOldEvents() (int, error) {
+	return 0, nil
+}
+
+// Event category operations
+func (m *MockStorage) ListEventCategories() ([]*models.EventCategory, error) {
+	return []*models.EventCategory{}, nil
+}
+
+func (m *MockStorage) GetEventCategory(name string) (*models.EventCategory, error) {
+	return nil, storage.ErrNotFound
+}
+
+// Event retention policy operations
+func (m *MockStorage) ListEventRetentionPolicies() ([]*models.EventRetentionPolicy, error) {
+	return []*models.EventRetentionPolicy{}, nil
+}
+
+func (m *MockStorage) GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (m *MockStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error {
+	return nil
+}
+
 func setupOrganizationTest() (*OrganizationReconciler, client.Client, *MockStorage) {
 	// Create scheme with our CRD types
 	s := runtime.NewScheme()
