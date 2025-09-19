@@ -30,6 +30,11 @@ This documentation hub provides comprehensive coverage of the OpenShift Virtual 
 - **Features**: Multi-tenant hierarchy, data flow, component interactions
 - **Audience**: All stakeholders, architects, technical leadership
 
+### 📄 `troubleshooting.md` - Troubleshooting Guide
+- **[troubleshooting.md](troubleshooting.md)**: Common issues and solutions
+- **Features**: Deployment problems, runtime issues, monitoring, recent fixes
+- **Audience**: DevOps teams, system administrators, support engineers
+
 ### 📁 `/api-reference/` - API Specification
 - **[openapi-spec.yaml](api-reference/openapi-spec.yaml)**: Complete OpenAPI 3.0 specification
 - **Features**: All endpoints, schemas, authentication, examples
@@ -164,9 +169,10 @@ When contributing to OVIM, please:
 ## Support and Troubleshooting
 
 ### Documentation Issues
-- Check the specific component documentation for troubleshooting sections
-- Review [deployment guides](ui/deployment.md#troubleshooting) for common issues
-- Study [architecture diagrams](diagrams/architecture-overview.md) for system understanding
+- Check the **[Troubleshooting Guide](troubleshooting.md)** for common deployment and runtime issues
+- Review specific component documentation for troubleshooting sections
+- Study [deployment guides](ui/deployment.md#troubleshooting) for common issues
+- Review [architecture diagrams](diagrams/architecture-overview.md) for system understanding
 
 ### Technical Support
 - Backend issues: See [Backend Documentation](backend/README.md)

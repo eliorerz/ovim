@@ -320,6 +320,8 @@ The controller implements a hierarchical RBAC model with two main cluster roles:
 - **Resource Quotas**: Read-only access to view limits
 - **Metrics**: Get and list access to pod and node metrics
 
+> **Note**: The OVIM controller must have all permissions that it grants to VDC admins. Recent updates ensure the controller has comprehensive permissions to create VDC admin role bindings successfully.
+
 ## Resource Hierarchy
 
 ```
