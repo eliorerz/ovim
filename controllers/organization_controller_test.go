@@ -251,6 +251,56 @@ func (m *MockStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPo
 	return nil
 }
 
+// Zone operations (minimal implementation for testing)
+func (m *MockStorage) ListZones() ([]*models.Zone, error) {
+	return []*models.Zone{}, nil
+}
+
+func (m *MockStorage) GetZone(id string) (*models.Zone, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (m *MockStorage) CreateZone(zone *models.Zone) error {
+	return nil
+}
+
+func (m *MockStorage) UpdateZone(zone *models.Zone) error {
+	return nil
+}
+
+func (m *MockStorage) DeleteZone(id string) error {
+	return nil
+}
+
+func (m *MockStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) {
+	return []*models.ZoneUtilization{}, nil
+}
+
+// Organization Zone Quota operations
+func (m *MockStorage) ListOrganizationZoneQuotas(orgID string) ([]*models.OrganizationZoneQuota, error) {
+	return []*models.OrganizationZoneQuota{}, nil
+}
+
+func (m *MockStorage) GetOrganizationZoneQuota(orgID, zoneID string) (*models.OrganizationZoneQuota, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (m *MockStorage) CreateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	return nil
+}
+
+func (m *MockStorage) UpdateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	return nil
+}
+
+func (m *MockStorage) DeleteOrganizationZoneQuota(orgID, zoneID string) error {
+	return nil
+}
+
+func (m *MockStorage) GetOrganizationZoneAccess(orgID string) ([]*models.OrganizationZoneAccess, error) {
+	return []*models.OrganizationZoneAccess{}, nil
+}
+
 func setupOrganizationTest() (*OrganizationReconciler, client.Client, *MockStorage) {
 	// Create scheme with our CRD types
 	s := runtime.NewScheme()
