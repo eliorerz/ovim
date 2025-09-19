@@ -180,7 +180,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 			Quota: ovimv1.ResourceQuota{
 				CPU:     fmt.Sprintf("%d", req.CPUQuota),
 				Memory:  fmt.Sprintf("%dGi", req.MemoryQuota),
-				Storage: fmt.Sprintf("%dTi", req.StorageQuota/1024), // Convert GB to TB
+				Storage: fmt.Sprintf("%dTi", (req.StorageQuota+1023)/1024), // Convert GB to TB (round up)
 			},
 			NetworkPolicy: req.NetworkPolicy,
 		},
@@ -314,7 +314,7 @@ func (h *VDCHandlers) Update(c *gin.Context) {
 		vdcCR.Spec.Quota.Memory = fmt.Sprintf("%dGi", *req.MemoryQuota)
 	}
 	if req.StorageQuota != nil {
-		vdcCR.Spec.Quota.Storage = fmt.Sprintf("%dTi", *req.StorageQuota/1024) // Convert GB to TB
+		vdcCR.Spec.Quota.Storage = fmt.Sprintf("%dTi", (*req.StorageQuota+1023)/1024) // Convert GB to TB (round up)
 	}
 	if req.NetworkPolicy != nil {
 		vdcCR.Spec.NetworkPolicy = *req.NetworkPolicy
