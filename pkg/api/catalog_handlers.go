@@ -16,11 +16,11 @@ import (
 // CatalogHandlers handles VM catalog-related requests
 type CatalogHandlers struct {
 	storage        storage.Storage
-	catalogService *catalog.Service
+	catalogService catalog.Provider
 }
 
 // NewCatalogHandlers creates a new catalog handlers instance
-func NewCatalogHandlers(storage storage.Storage, catalogService *catalog.Service) *CatalogHandlers {
+func NewCatalogHandlers(storage storage.Storage, catalogService catalog.Provider) *CatalogHandlers {
 	return &CatalogHandlers{
 		storage:        storage,
 		catalogService: catalogService,

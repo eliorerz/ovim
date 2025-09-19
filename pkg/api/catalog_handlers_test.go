@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,62 +12,39 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/eliorerz/ovim-updated/pkg/catalog"
 	"github.com/eliorerz/ovim-updated/pkg/models"
 )
 
-// MockCatalogService implements catalog.Service interface for testing
+// MockCatalogService implements catalog.Provider interface for testing
 type MockCatalogService struct {
 	mock.Mock
 }
 
-func (m *MockCatalogService) GetTemplates(source string, orgID string) ([]*models.Template, error) {
-	args := m.Called(source, orgID)
+func (m *MockCatalogService) GetTemplates(ctx context.Context, userOrgID string, source string, category string) ([]*models.Template, error) {
+	args := m.Called(ctx, userOrgID, source, category)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.Template), args.Error(1)
 }
 
-func (m *MockCatalogService) GetTemplate(id string, orgID string) (*models.Template, error) {
-	args := m.Called(id, orgID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.Template), args.Error(1)
-}
-
-func (m *MockCatalogService) GetCatalogSources() ([]models.CatalogSource, error) {
-	args := m.Called()
+func (m *MockCatalogService) GetCatalogSources(ctx context.Context, userOrgID string) ([]models.CatalogSource, error) {
+	args := m.Called(ctx, userOrgID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]models.CatalogSource), args.Error(1)
 }
 
-func (m *MockCatalogService) SyncSources() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-// Add other required methods as needed
-func (m *MockCatalogService) GetTemplatesByCategory(category string, orgID string) ([]*models.Template, error) {
-	args := m.Called(category, orgID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*models.Template), args.Error(1)
-}
-
 func TestCatalogHandlers_ListTemplates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name           string
-		queryParams    map[string]string
-		userContext    map[string]interface{}
-		setupMocks     func(*MockStorage, *MockCatalogService)
-		expectedStatus int
+		name            string
+		queryParams     map[string]string
+		userContext     map[string]interface{}
+		setupMocks      func(*MockStorage, *MockCatalogService)
+		expectedStatus  int
 		expectTemplates bool
 	}{
 		{
@@ -124,7 +102,7 @@ func TestCatalogHandlers_ListTemplates(t *testing.T) {
 						OrgID:       "org1",
 					},
 				}
-				mockCatalogService.On("GetTemplates", "organization", "org1").Return(templates, nil)
+				mockCatalogService.On("GetTemplates", mock.AnythingOfType("*context.valueCtx"), "org1", "organization", "").Return(templates, nil)
 			},
 			expectedStatus:  http.StatusOK,
 			expectTemplates: true,
@@ -149,16 +127,16 @@ func TestCatalogHandlers_ListTemplates(t *testing.T) {
 						Category:    "Database",
 					},
 				}
-				mockCatalogService.On("GetTemplatesByCategory", "Database", "org1").Return(templates, nil)
+				mockCatalogService.On("GetTemplates", mock.AnythingOfType("*context.valueCtx"), "org1", "", "Database").Return(templates, nil)
 			},
 			expectedStatus:  http.StatusOK,
 			expectTemplates: true,
 		},
 		{
-			name:        "unauthorized - no user context",
-			queryParams: map[string]string{},
-			userContext: nil, // No user context
-			setupMocks:  func(*MockStorage, *MockCatalogService) {},
+			name:            "unauthorized - no user context",
+			queryParams:     map[string]string{},
+			userContext:     nil, // No user context
+			setupMocks:      func(*MockStorage, *MockCatalogService) {},
 			expectedStatus:  http.StatusUnauthorized,
 			expectTemplates: false,
 		},
@@ -315,10 +293,10 @@ func TestCatalogHandlers_GetTemplate(t *testing.T) {
 			expectTemplate: false,
 		},
 		{
-			name:       "unauthorized - no user context",
-			templateID: "tpl1",
-			userContext: nil,
-			setupMocks: func(*MockStorage, *MockCatalogService) {},
+			name:           "unauthorized - no user context",
+			templateID:     "tpl1",
+			userContext:    nil,
+			setupMocks:     func(*MockStorage, *MockCatalogService) {},
 			expectedStatus: http.StatusUnauthorized,
 			expectTemplate: false,
 		},
@@ -414,7 +392,7 @@ func TestCatalogHandlers_GetCatalogSources(t *testing.T) {
 						Description: "Local template storage",
 					},
 				}
-				mockCatalogService.On("GetCatalogSources").Return(sources, nil)
+				mockCatalogService.On("GetCatalogSources", mock.AnythingOfType("*context.valueCtx"), "").Return(sources, nil)
 			},
 			expectedStatus: http.StatusOK,
 			expectSources:  true,
@@ -428,15 +406,15 @@ func TestCatalogHandlers_GetCatalogSources(t *testing.T) {
 				"org_id":   "",
 			},
 			setupMocks: func(mockStorage *MockStorage, mockCatalogService *MockCatalogService) {
-				mockCatalogService.On("GetCatalogSources").Return(nil, assert.AnError)
+				mockCatalogService.On("GetCatalogSources", mock.AnythingOfType("*context.valueCtx"), "").Return(nil, assert.AnError)
 			},
 			expectedStatus: http.StatusInternalServerError,
 			expectSources:  false,
 		},
 		{
-			name:        "unauthorized - no user context",
-			userContext: nil,
-			setupMocks:  func(*MockStorage, *MockCatalogService) {},
+			name:           "unauthorized - no user context",
+			userContext:    nil,
+			setupMocks:     func(*MockStorage, *MockCatalogService) {},
 			expectedStatus: http.StatusUnauthorized,
 			expectSources:  false,
 		},
@@ -448,7 +426,7 @@ func TestCatalogHandlers_GetCatalogSources(t *testing.T) {
 				"role":     "invalid_role",
 				"org_id":   "org1",
 			},
-			setupMocks:    func(*MockStorage, *MockCatalogService) {},
+			setupMocks:     func(*MockStorage, *MockCatalogService) {},
 			expectedStatus: http.StatusForbidden,
 			expectSources:  false,
 		},

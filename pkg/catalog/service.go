@@ -11,6 +11,12 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// Provider defines the interface for catalog services
+type Provider interface {
+	GetTemplates(ctx context.Context, userOrgID string, source string, category string) ([]*models.Template, error)
+	GetCatalogSources(ctx context.Context, userOrgID string) ([]models.CatalogSource, error)
+}
+
 // CatalogSource represents a source of templates
 type CatalogSource struct {
 	Type      string // global, organization, external
@@ -252,13 +258,14 @@ func (s *Service) deduplicateTemplates(templates []*models.Template) []*models.T
 }
 
 // GetCatalogSources returns available catalog sources for an organization
-func (s *Service) GetCatalogSources(ctx context.Context, userOrgID string) ([]CatalogSource, error) {
-	sources := []CatalogSource{
+func (s *Service) GetCatalogSources(ctx context.Context, userOrgID string) ([]models.CatalogSource, error) {
+	sources := []models.CatalogSource{
 		{
-			Type:      models.TemplateSourceGlobal,
-			Name:      "Red Hat Catalog",
-			Namespace: s.globalNS,
-			Enabled:   true,
+			ID:          "global",
+			Name:        "Red Hat Catalog",
+			Type:        models.TemplateSourceGlobal,
+			Enabled:     true,
+			Description: "Global Red Hat templates",
 		},
 	}
 
@@ -266,12 +273,12 @@ func (s *Service) GetCatalogSources(ctx context.Context, userOrgID string) ([]Ca
 	if userOrgID != "" {
 		org, err := s.storage.GetOrganization(userOrgID)
 		if err == nil {
-			sources = append(sources, CatalogSource{
-				Type:      models.TemplateSourceOrganization,
-				Name:      fmt.Sprintf("%s Templates", org.Name),
-				Namespace: org.Namespace + s.orgTemplateSuffix,
-				OrgID:     userOrgID,
-				Enabled:   true,
+			sources = append(sources, models.CatalogSource{
+				ID:          "org-" + userOrgID,
+				Name:        fmt.Sprintf("%s Templates", org.Name),
+				Type:        models.TemplateSourceOrganization,
+				Enabled:     true,
+				Description: fmt.Sprintf("Templates for %s organization", org.Name),
 			})
 		}
 	}

@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -20,7 +20,6 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/models"
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 )
-
 
 // MockOIDCProvider for testing OIDC functionality
 type MockOIDCProvider struct {
@@ -45,15 +44,15 @@ func (m *MockOIDCProvider) ExchangeCode(ctx context.Context, code string) (*oaut
 	return args.Get(0).(*oauth2.Token), args.Error(1)
 }
 
-func (m *MockOIDCProvider) VerifyIDToken(ctx context.Context, rawIDToken string) (*auth.IDToken, error) {
+func (m *MockOIDCProvider) VerifyIDToken(ctx context.Context, rawIDToken string) (*oidc.IDToken, error) {
 	args := m.Called(ctx, rawIDToken)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*auth.IDToken), args.Error(1)
+	return args.Get(0).(*oidc.IDToken), args.Error(1)
 }
 
-func (m *MockOIDCProvider) GetUserInfo(ctx context.Context, idToken *auth.IDToken) (*auth.UserInfo, error) {
+func (m *MockOIDCProvider) GetUserInfo(ctx context.Context, idToken *oidc.IDToken) (*auth.UserInfo, error) {
 	args := m.Called(ctx, idToken)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

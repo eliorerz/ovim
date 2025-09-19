@@ -411,3 +411,14 @@ type UpdateOrganizationCatalogSourceRequest struct {
 	SourceName *string `json:"source_name,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
 }
+
+// CatalogSource represents a source of templates or applications available in the catalog
+type CatalogSource struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	URL         string `json:"url,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Description string `json:"description"`
+}

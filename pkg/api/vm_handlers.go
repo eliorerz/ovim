@@ -24,11 +24,11 @@ type VMHandlers struct {
 	storage        storage.Storage
 	provisioner    kubevirt.VMProvisioner
 	k8sClient      client.Client
-	catalogService *catalog.Service
+	catalogService catalog.Provider
 }
 
 // NewVMHandlers creates a new VM handlers instance
-func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client, catalogService *catalog.Service) *VMHandlers {
+func NewVMHandlers(storage storage.Storage, provisioner kubevirt.VMProvisioner, k8sClient client.Client, catalogService catalog.Provider) *VMHandlers {
 	return &VMHandlers{
 		storage:        storage,
 		provisioner:    provisioner,

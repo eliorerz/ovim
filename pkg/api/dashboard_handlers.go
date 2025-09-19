@@ -143,7 +143,7 @@ type SystemHealthResponse struct {
 
 // HealthStatus represents the health status of a component
 type HealthStatus struct {
-	Status  string `json:"status"`  // "healthy", "warning", "unhealthy"
+	Status  string `json:"status"` // "healthy", "warning", "unhealthy"
 	Message string `json:"message"`
 	Details string `json:"details,omitempty"`
 }
@@ -382,14 +382,14 @@ func (h *DashboardHandlers) calculateOverallStatus(components map[string]HealthS
 
 // SystemResourceSummary represents system-wide resource usage across all organizations
 type SystemResourceSummary struct {
-	TotalResources    ResourceSummary                    `json:"total_resources"`
-	UsedResources     ResourceSummary                    `json:"used_resources"`
-	AvailableResources ResourceSummary                   `json:"available_resources"`
-	UsagePercentages  ResourceSummary                    `json:"usage_percentages"`
-	OrganizationUsage []OrganizationResourceSummary      `json:"organization_usage"`
-	TopConsumers      TopResourceConsumers               `json:"top_consumers"`
-	Note              string                             `json:"note,omitempty"`
-	LastUpdated       string                             `json:"last_updated"`
+	TotalResources     ResourceSummary               `json:"total_resources"`
+	UsedResources      ResourceSummary               `json:"used_resources"`
+	AvailableResources ResourceSummary               `json:"available_resources"`
+	UsagePercentages   ResourceSummary               `json:"usage_percentages"`
+	OrganizationUsage  []OrganizationResourceSummary `json:"organization_usage"`
+	TopConsumers       TopResourceConsumers          `json:"top_consumers"`
+	Note               string                        `json:"note,omitempty"`
+	LastUpdated        string                        `json:"last_updated"`
 }
 
 // ResourceSummary represents aggregated resource values
@@ -426,8 +426,8 @@ type TopConsumer struct {
 	Type            string          `json:"type"` // "organization", "vdc", "vm"
 	UsedResources   ResourceSummary `json:"used_resources"`
 	UsagePercentage float64         `json:"usage_percentage"`
-	ParentID        string          `json:"parent_id,omitempty"`        // For VDCs: org_id, For VMs: vdc_id
-	ParentName      string          `json:"parent_name,omitempty"`      // For VDCs: org_name, For VMs: vdc_name
+	ParentID        string          `json:"parent_id,omitempty"`   // For VDCs: org_id, For VMs: vdc_id
+	ParentName      string          `json:"parent_name,omitempty"` // For VDCs: org_name, For VMs: vdc_name
 }
 
 // GetSystemResources handles GET /dashboard/resources

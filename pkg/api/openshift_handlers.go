@@ -17,12 +17,12 @@ import (
 
 // OpenShiftHandlers provides handlers for OpenShift integration endpoints
 type OpenShiftHandlers struct {
-	client  *openshift.Client
+	client  openshift.Provider
 	storage storage.Storage
 }
 
 // NewOpenShiftHandlers creates a new OpenShift handlers instance
-func NewOpenShiftHandlers(client *openshift.Client, storage storage.Storage) *OpenShiftHandlers {
+func NewOpenShiftHandlers(client openshift.Provider, storage storage.Storage) *OpenShiftHandlers {
 	return &OpenShiftHandlers{
 		client:  client,
 		storage: storage,

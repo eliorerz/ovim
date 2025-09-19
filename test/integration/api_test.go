@@ -16,6 +16,9 @@ import (
 	"github.com/eliorerz/ovim-updated/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
+	ctrlFake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 type IntegrationTestSuite struct {
@@ -47,7 +50,12 @@ func setupTestSuite(t *testing.T) *IntegrationTestSuite {
 	// Create mock KubeVirt provisioner for testing
 	provisioner := kubevirt.NewMockClient()
 
-	server := api.NewServer(cfg, storage, provisioner, nil)
+	// Create fake clients for testing
+	k8sClient := ctrlFake.NewClientBuilder().Build()
+	k8sClientset := fake.NewSimpleClientset()
+	recorder := record.NewFakeRecorder(100)
+
+	server := api.NewServer(cfg, storage, provisioner, k8sClient, k8sClientset, recorder)
 
 	httpServer := httptest.NewServer(server.Handler())
 

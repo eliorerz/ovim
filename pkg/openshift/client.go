@@ -26,6 +26,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Provider defines the interface for OpenShift client operations
+type Provider interface {
+	GetTemplates(ctx context.Context) ([]Template, error)
+	GetVMs(ctx context.Context, namespace string) ([]VirtualMachine, error)
+	DeployVM(ctx context.Context, req DeployVMRequest) (*VirtualMachine, error)
+	GetStatus(ctx context.Context) (*Status, error)
+	IsConnected(ctx context.Context) bool
+	StartVM(ctx context.Context, vmID, namespace string) error
+	StopVM(ctx context.Context, vmID, namespace string) error
+	RestartVM(ctx context.Context, vmID, namespace string) error
+	DeleteVM(ctx context.Context, vmID, namespace string) error
+	GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error)
+}
+
 // Template represents a VM template from OpenShift
 type Template struct {
 	ID           string `json:"id"`
@@ -50,6 +64,21 @@ type VirtualMachine struct {
 	Namespace string `json:"namespace"`
 	Template  string `json:"template"`
 	Created   string `json:"created"`
+}
+
+// Status represents the current status of the OpenShift cluster
+type Status struct {
+	Connected    bool   `json:"connected"`
+	Version      string `json:"version"`
+	ClusterName  string `json:"cluster_name"`
+	NodesReady   int    `json:"nodes_ready"`
+	NodesTotal   int    `json:"nodes_total"`
+	PodsRunning  int    `json:"pods_running"`
+	PodsTotal    int    `json:"pods_total"`
+	PVCs         int    `json:"pvcs"`
+	Services     int    `json:"services"`
+	Deployments  int    `json:"deployments"`
+	StatefulSets int    `json:"stateful_sets"`
 }
 
 // DeployVMRequest represents a VM deployment request
@@ -1029,4 +1058,123 @@ func (c *Client) GetVMStatus(ctx context.Context, vmID, namespace string) (*kube
 // GetVMConsoleURL gets the console URL for a virtual machine via KubeVirt
 func (c *Client) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
 	return c.kubeVirtClient.GetVMConsoleURL(ctx, vmID, namespace)
+}
+
+// GetStatus gets the current status of the OpenShift cluster
+func (c *Client) GetStatus(ctx context.Context) (*Status, error) {
+	status := &Status{
+		Connected: c.IsConnected(ctx),
+	}
+
+	if !status.Connected {
+		return status, nil
+	}
+
+	// Get cluster version
+	if version, err := c.getClusterVersion(ctx); err == nil {
+		status.Version = version
+	}
+
+	// Get cluster name (try from cluster config)
+	if clusterName, err := c.getClusterName(ctx); err == nil {
+		status.ClusterName = clusterName
+	}
+
+	// Get node statistics
+	if nodes, err := c.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); err == nil {
+		status.NodesTotal = len(nodes.Items)
+		for _, node := range nodes.Items {
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+					status.NodesReady++
+					break
+				}
+			}
+		}
+	}
+
+	// Get pod statistics across all namespaces
+	if pods, err := c.kubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{}); err == nil {
+		status.PodsTotal = len(pods.Items)
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning {
+				status.PodsRunning++
+			}
+		}
+	}
+
+	// Get other resource counts
+	c.getResourceCounts(ctx, status)
+
+	return status, nil
+}
+
+// getClusterVersion attempts to get the cluster version
+func (c *Client) getClusterVersion(ctx context.Context) (string, error) {
+	// Try to get cluster version from OpenShift API
+	if c.dynamicClient != nil {
+		clusterVersionGVR := schema.GroupVersionResource{
+			Group:    "config.openshift.io",
+			Version:  "v1",
+			Resource: "clusterversions",
+		}
+
+		cvList, err := c.dynamicClient.Resource(clusterVersionGVR).List(ctx, metav1.ListOptions{})
+		if err == nil && len(cvList.Items) > 0 {
+			if version, found, _ := unstructured.NestedString(cvList.Items[0].Object, "status", "desired", "version"); found {
+				return version, nil
+			}
+		}
+	}
+
+	// Fallback: try to get from server version
+	if version, err := c.kubeClient.Discovery().ServerVersion(); err == nil {
+		return version.GitVersion, nil
+	}
+
+	return "", fmt.Errorf("unable to determine cluster version")
+}
+
+// getClusterName attempts to get the cluster name
+func (c *Client) getClusterName(ctx context.Context) (string, error) {
+	// Try to get cluster name from infrastructure config
+	if c.dynamicClient != nil {
+		infraGVR := schema.GroupVersionResource{
+			Group:    "config.openshift.io",
+			Version:  "v1",
+			Resource: "infrastructures",
+		}
+
+		infraList, err := c.dynamicClient.Resource(infraGVR).List(ctx, metav1.ListOptions{})
+		if err == nil && len(infraList.Items) > 0 {
+			if infraName, found, _ := unstructured.NestedString(infraList.Items[0].Object, "status", "infrastructureName"); found {
+				return infraName, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unable to determine cluster name")
+}
+
+// getResourceCounts gets counts of various cluster resources
+func (c *Client) getResourceCounts(ctx context.Context, status *Status) {
+	// Count PVCs across all namespaces
+	if pvcs, err := c.kubeClient.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{}); err == nil {
+		status.PVCs = len(pvcs.Items)
+	}
+
+	// Count Services across all namespaces
+	if services, err := c.kubeClient.CoreV1().Services("").List(ctx, metav1.ListOptions{}); err == nil {
+		status.Services = len(services.Items)
+	}
+
+	// Count Deployments across all namespaces
+	if deployments, err := c.kubeClient.AppsV1().Deployments("").List(ctx, metav1.ListOptions{}); err == nil {
+		status.Deployments = len(deployments.Items)
+	}
+
+	// Count StatefulSets across all namespaces
+	if statefulSets, err := c.kubeClient.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{}); err == nil {
+		status.StatefulSets = len(statefulSets.Items)
+	}
 }

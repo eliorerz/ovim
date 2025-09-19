@@ -186,6 +186,13 @@ func (m *MockKubeVirtClient) CheckConnection(ctx context.Context) error {
 	return nil
 }
 
+func (m *MockKubeVirtClient) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
+	if m.shouldError {
+		return "", fmt.Errorf("KubeVirt API error: %s", m.errorMessage)
+	}
+	return fmt.Sprintf("https://console.example.com/vm/%s/%s", namespace, vmID), nil
+}
+
 func setupVMControllerTest() (*VMReconciler, client.Client, *MockVMStorage, *MockKubeVirtClient) {
 	// Create scheme with our CRD types
 	s := runtime.NewScheme()

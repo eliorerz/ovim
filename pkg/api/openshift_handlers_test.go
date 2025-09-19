@@ -37,7 +37,7 @@ func (m *MockOpenShiftClient) GetVMs(ctx context.Context, namespace string) ([]o
 	return args.Get(0).([]openshift.VirtualMachine), args.Error(1)
 }
 
-func (m *MockOpenShiftClient) DeployVM(ctx context.Context, req *openshift.DeployVMRequest) (*openshift.VirtualMachine, error) {
+func (m *MockOpenShiftClient) DeployVM(ctx context.Context, req openshift.DeployVMRequest) (*openshift.VirtualMachine, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -53,55 +53,77 @@ func (m *MockOpenShiftClient) GetStatus(ctx context.Context) (*openshift.Status,
 	return args.Get(0).(*openshift.Status), args.Error(1)
 }
 
+func (m *MockOpenShiftClient) IsConnected(ctx context.Context) bool {
+	args := m.Called(ctx)
+	return args.Bool(0)
+}
+
+func (m *MockOpenShiftClient) StartVM(ctx context.Context, vmID, namespace string) error {
+	args := m.Called(ctx, vmID, namespace)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) StopVM(ctx context.Context, vmID, namespace string) error {
+	args := m.Called(ctx, vmID, namespace)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) RestartVM(ctx context.Context, vmID, namespace string) error {
+	args := m.Called(ctx, vmID, namespace)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) DeleteVM(ctx context.Context, vmID, namespace string) error {
+	args := m.Called(ctx, vmID, namespace)
+	return args.Error(0)
+}
+
+func (m *MockOpenShiftClient) GetVMConsoleURL(ctx context.Context, vmID, namespace string) (string, error) {
+	args := m.Called(ctx, vmID, namespace)
+	return args.String(0), args.Error(1)
+}
+
 func TestOpenShiftHandlers_GetOpenShiftTemplates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name           string
-		setupMocks     func(*MockOpenShiftClient, *MockStorage)
-		expectedStatus int
+		name            string
+		setupMocks      func(*MockOpenShiftClient, *MockStorage)
+		expectedStatus  int
 		expectTemplates bool
-		validateResp   func(*testing.T, []openshift.Template)
+		validateResp    func(*testing.T, []openshift.Template)
 	}{
 		{
 			name: "successful get templates",
 			setupMocks: func(mockClient *MockOpenShiftClient, mockStorage *MockStorage) {
 				templates := []openshift.Template{
 					{
-						Name:        "rhel8-template",
-						DisplayName: "Red Hat Enterprise Linux 8",
-						Description: "RHEL 8 VM template",
-						Labels: map[string]string{
-							"os": "rhel8",
-						},
-						Parameters: []openshift.Parameter{
-							{
-								Name:        "VM_NAME",
-								DisplayName: "Virtual Machine Name",
-								Required:    true,
-							},
-						},
+						ID:           "rhel8-template-id",
+						Name:         "Red Hat Enterprise Linux 8",
+						TemplateName: "rhel8-template",
+						Description:  "RHEL 8 VM template",
+						OSType:       "Red Hat Enterprise Linux",
+						OSVersion:    "8",
+						CPU:          1,
+						Memory:       "2Gi",
+						DiskSize:     "20Gi",
+						Namespace:    "openshift-virtualization-os-images",
+						ImageURL:     "quay.io/containerdisks/rhel:8",
+						IconClass:    "fa fa-redhat",
 					},
 					{
-						Name:        "ubuntu-template",
-						DisplayName: "Ubuntu 20.04",
-						Description: "Ubuntu 20.04 LTS VM template",
-						Labels: map[string]string{
-							"os": "ubuntu",
-						},
-						Parameters: []openshift.Parameter{
-							{
-								Name:        "VM_NAME",
-								DisplayName: "Virtual Machine Name",
-								Required:    true,
-							},
-							{
-								Name:        "CPU_CORES",
-								DisplayName: "CPU Cores",
-								Value:       "2",
-								Required:    false,
-							},
-						},
+						ID:           "ubuntu-template-id",
+						Name:         "Ubuntu 20.04",
+						TemplateName: "ubuntu-template",
+						Description:  "Ubuntu 20.04 LTS VM template",
+						OSType:       "Ubuntu",
+						OSVersion:    "20.04",
+						CPU:          2,
+						Memory:       "4Gi",
+						DiskSize:     "40Gi",
+						Namespace:    "openshift-virtualization-os-images",
+						ImageURL:     "quay.io/containerdisks/ubuntu:20.04",
+						IconClass:    "fa fa-ubuntu",
 					},
 				}
 				mockClient.On("GetTemplates", mock.AnythingOfType("*context.valueCtx")).Return(templates, nil)
@@ -110,10 +132,10 @@ func TestOpenShiftHandlers_GetOpenShiftTemplates(t *testing.T) {
 			expectTemplates: true,
 			validateResp: func(t *testing.T, templates []openshift.Template) {
 				assert.Len(t, templates, 2)
-				assert.Equal(t, "rhel8-template", templates[0].Name)
-				assert.Equal(t, "ubuntu-template", templates[1].Name)
-				assert.Contains(t, templates[0].Labels, "os")
-				assert.Equal(t, "rhel8", templates[0].Labels["os"])
+				assert.Equal(t, "Red Hat Enterprise Linux 8", templates[0].Name)
+				assert.Equal(t, "Ubuntu 20.04", templates[1].Name)
+				assert.Equal(t, "rhel8-template", templates[0].TemplateName)
+				assert.Equal(t, "Red Hat Enterprise Linux", templates[0].OSType)
 			},
 		},
 		{
@@ -196,26 +218,20 @@ func TestOpenShiftHandlers_GetOpenShiftVMs(t *testing.T) {
 			setupMocks: func(mockClient *MockOpenShiftClient, mockStorage *MockStorage) {
 				vms := []openshift.VirtualMachine{
 					{
+						ID:        "test-vm-1-id",
 						Name:      "test-vm-1",
 						Namespace: "test-namespace",
 						Status:    "Running",
-						CPU:       "2",
-						Memory:    "4Gi",
-						Storage:   "20Gi",
-						Labels: map[string]string{
-							"app": "web-server",
-						},
+						Template:  "rhel8-template",
+						Created:   "2023-01-01T00:00:00Z",
 					},
 					{
+						ID:        "test-vm-2-id",
 						Name:      "test-vm-2",
 						Namespace: "test-namespace",
 						Status:    "Stopped",
-						CPU:       "1",
-						Memory:    "2Gi",
-						Storage:   "10Gi",
-						Labels: map[string]string{
-							"app": "database",
-						},
+						Template:  "ubuntu-template",
+						Created:   "2023-01-01T00:00:00Z",
 					},
 				}
 				mockClient.On("GetVMs", mock.AnythingOfType("*context.valueCtx"), "test-namespace").Return(vms, nil)
@@ -231,7 +247,7 @@ func TestOpenShiftHandlers_GetOpenShiftVMs(t *testing.T) {
 			},
 		},
 		{
-			name: "get VMs with default namespace",
+			name:        "get VMs with default namespace",
 			queryParams: map[string]string{},
 			userContext: map[string]interface{}{
 				"user_id":  "admin1",
@@ -452,18 +468,15 @@ func TestOpenShiftHandlers_DeployVMFromTemplate(t *testing.T) {
 			},
 			setupMocks: func(mockClient *MockOpenShiftClient, mockStorage *MockStorage) {
 				deployedVM := &openshift.VirtualMachine{
+					ID:        "test-vm-id",
 					Name:      "test-vm",
 					Namespace: "test-namespace",
 					Status:    "Provisioning",
-					CPU:       "2",
-					Memory:    "4Gi",
-					Storage:   "20Gi",
-					Labels: map[string]string{
-						"template": "rhel8-template",
-					},
+					Template:  "rhel8-template",
+					Created:   "2023-01-01T00:00:00Z",
 				}
-				mockClient.On("DeployVM", mock.AnythingOfType("*context.valueCtx"), mock.MatchedBy(func(req *openshift.DeployVMRequest) bool {
-					return req.TemplateName == "rhel8-template" && req.Namespace == "test-namespace"
+				mockClient.On("DeployVM", mock.AnythingOfType("*context.valueCtx"), mock.MatchedBy(func(req openshift.DeployVMRequest) bool {
+					return req.TemplateName == "rhel8-template" && req.TargetNamespace == "test-namespace"
 				})).Return(deployedVM, nil)
 			},
 			expectedStatus: http.StatusCreated,
@@ -472,8 +485,8 @@ func TestOpenShiftHandlers_DeployVMFromTemplate(t *testing.T) {
 				assert.Equal(t, "test-vm", vm.Name)
 				assert.Equal(t, "test-namespace", vm.Namespace)
 				assert.Equal(t, "Provisioning", vm.Status)
-				assert.Equal(t, "2", vm.CPU)
-				assert.Equal(t, "4Gi", vm.Memory)
+				assert.Equal(t, "rhel8-template", vm.Template)
+				assert.NotEmpty(t, vm.ID)
 			},
 		},
 		{
@@ -508,7 +521,7 @@ func TestOpenShiftHandlers_DeployVMFromTemplate(t *testing.T) {
 				"org_id":   "",
 			},
 			setupMocks: func(mockClient *MockOpenShiftClient, mockStorage *MockStorage) {
-				mockClient.On("DeployVM", mock.AnythingOfType("*context.valueCtx"), mock.AnythingOfType("*openshift.DeployVMRequest")).Return(nil, assert.AnError)
+				mockClient.On("DeployVM", mock.AnythingOfType("*context.valueCtx"), mock.AnythingOfType("openshift.DeployVMRequest")).Return(nil, assert.AnError)
 			},
 			expectedStatus: http.StatusInternalServerError,
 			expectVM:       false,

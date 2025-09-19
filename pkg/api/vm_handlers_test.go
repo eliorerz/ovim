@@ -67,12 +67,18 @@ func (m *MockVMProvisioner) CheckConnection(ctx context.Context) error {
 	return args.Error(0)
 }
 
+func (m *MockVMProvisioner) GetVMConsoleURL(ctx context.Context, vmID string, namespace string) (string, error) {
+	args := m.Called(ctx, vmID, namespace)
+	return args.String(0), args.Error(1)
+}
+
 func TestNewVMHandlers(t *testing.T) {
 	mockStorage := &MockStorage{}
 	mockProvisioner := &MockVMProvisioner{}
 	mockK8sClient := &MockK8sClient{}
+	mockCatalogService := &MockCatalogService{}
 
-	handlers := NewVMHandlers(mockStorage, mockProvisioner, mockK8sClient)
+	handlers := NewVMHandlers(mockStorage, mockProvisioner, mockK8sClient, mockCatalogService)
 
 	assert.NotNil(t, handlers)
 	assert.Equal(t, mockStorage, handlers.storage)
@@ -154,7 +160,7 @@ func TestVMHandlers_List(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVMHandlers(mockStorage, nil, nil)
+			handlers := NewVMHandlers(mockStorage, nil, nil, nil)
 			c, w := setupGinContext("GET", "/vms", nil, "user1", "user", tt.userRole, tt.userOrgID)
 
 			handlers.List(c)
@@ -312,7 +318,7 @@ func TestVMHandlers_Create(t *testing.T) {
 			tt.mockK8sBehavior(mockK8sClient)
 			tt.mockProvBehavior(mockProvisioner)
 
-			handlers := NewVMHandlers(mockStorage, mockProvisioner, mockK8sClient)
+			handlers := NewVMHandlers(mockStorage, mockProvisioner, mockK8sClient, nil)
 			c, w := setupGinContext("POST", "/vms", tt.requestBody, "user1", "user", tt.userRole, tt.userOrgID)
 
 			handlers.Create(c)
@@ -389,7 +395,7 @@ func TestVMHandlers_Get(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVMHandlers(mockStorage, nil, nil)
+			handlers := NewVMHandlers(mockStorage, nil, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/vms/%s", tt.vmID), nil, "user1", "user", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vmID}}
 
@@ -484,7 +490,7 @@ func TestVMHandlers_GetStatus(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockProvBehavior(mockProvisioner)
 
-			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil)
+			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/vms/%s/status", tt.vmID), nil, "user1", "user", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vmID}}
 
@@ -622,7 +628,7 @@ func TestVMHandlers_UpdatePower(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockProvBehavior(mockProvisioner)
 
-			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil)
+			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil, nil)
 			c, w := setupGinContext("PUT", fmt.Sprintf("/vms/%s/power", tt.vmID), gin.H{"action": tt.action}, "user1", "user", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vmID}}
 
@@ -734,7 +740,7 @@ func TestVMHandlers_Delete(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockProvBehavior(mockProvisioner)
 
-			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil)
+			handlers := NewVMHandlers(mockStorage, mockProvisioner, nil, nil)
 			c, w := setupGinContext("DELETE", fmt.Sprintf("/vms/%s", tt.vmID), nil, "user1", "user", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vmID}}
 

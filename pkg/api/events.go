@@ -30,26 +30,26 @@ func NewEventsHandlers(k8sClient client.Client, k8sClientset kubernetes.Interfac
 
 // EventInfo represents event information for API responses
 type EventInfo struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	Namespace            string `json:"namespace"`
-	Type                 string `json:"type"`
-	Reason               string `json:"reason"`
-	Message              string `json:"message"`
-	Component            string `json:"component"`
-	InvolvedObjectKind   string `json:"involved_object_kind"`
-	InvolvedObjectName   string `json:"involved_object_name"`
-	FirstTimestamp       string `json:"first_timestamp"`
-	LastTimestamp        string `json:"last_timestamp"`
-	Count                int32  `json:"count"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Namespace          string `json:"namespace"`
+	Type               string `json:"type"`
+	Reason             string `json:"reason"`
+	Message            string `json:"message"`
+	Component          string `json:"component"`
+	InvolvedObjectKind string `json:"involved_object_kind"`
+	InvolvedObjectName string `json:"involved_object_name"`
+	FirstTimestamp     string `json:"first_timestamp"`
+	LastTimestamp      string `json:"last_timestamp"`
+	Count              int32  `json:"count"`
 }
 
 // EventsResponse represents paginated events response
 type EventsResponse struct {
-	Events    []EventInfo `json:"events"`
-	TotalCount int        `json:"total_count"`
-	Page       int        `json:"page"`
-	PageSize   int        `json:"page_size"`
+	Events     []EventInfo `json:"events"`
+	TotalCount int         `json:"total_count"`
+	Page       int         `json:"page"`
+	PageSize   int         `json:"page_size"`
 }
 
 // RecentEventsResponse represents recent events response
@@ -116,16 +116,16 @@ func (h *EventsHandlers) GetEvents(c *gin.Context) {
 		}
 
 		eventInfo := EventInfo{
-			ID:                   string(event.UID),
-			Name:                 event.Name,
-			Namespace:            event.Namespace,
-			Type:                 event.Type,
-			Reason:               event.Reason,
-			Message:              event.Message,
-			Component:            event.Source.Component,
-			InvolvedObjectKind:   event.InvolvedObject.Kind,
-			InvolvedObjectName:   event.InvolvedObject.Name,
-			Count:                event.Count,
+			ID:                 string(event.UID),
+			Name:               event.Name,
+			Namespace:          event.Namespace,
+			Type:               event.Type,
+			Reason:             event.Reason,
+			Message:            event.Message,
+			Component:          event.Source.Component,
+			InvolvedObjectKind: event.InvolvedObject.Kind,
+			InvolvedObjectName: event.InvolvedObject.Name,
+			Count:              event.Count,
 		}
 
 		if !event.FirstTimestamp.IsZero() {
@@ -182,16 +182,16 @@ func (h *EventsHandlers) GetRecentEvents(c *gin.Context) {
 	var events []EventInfo
 	for _, event := range eventList.Items {
 		eventInfo := EventInfo{
-			ID:                   string(event.UID),
-			Name:                 event.Name,
-			Namespace:            event.Namespace,
-			Type:                 event.Type,
-			Reason:               event.Reason,
-			Message:              event.Message,
-			Component:            event.Source.Component,
-			InvolvedObjectKind:   event.InvolvedObject.Kind,
-			InvolvedObjectName:   event.InvolvedObject.Name,
-			Count:                event.Count,
+			ID:                 string(event.UID),
+			Name:               event.Name,
+			Namespace:          event.Namespace,
+			Type:               event.Type,
+			Reason:             event.Reason,
+			Message:            event.Message,
+			Component:          event.Source.Component,
+			InvolvedObjectKind: event.InvolvedObject.Kind,
+			InvolvedObjectName: event.InvolvedObject.Name,
+			Count:              event.Count,
 		}
 
 		if !event.FirstTimestamp.IsZero() {

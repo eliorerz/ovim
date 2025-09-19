@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +30,7 @@ func TestEventsHandlers_GetEvents(t *testing.T) {
 		validateResp   func(*testing.T, *EventsResponse)
 	}{
 		{
-			name: "successful get events with default parameters",
+			name:        "successful get events with default parameters",
 			queryParams: map[string]string{},
 			setupK8s: func() (client.Client, *fake.Clientset) {
 				scheme := runtime.NewScheme()
@@ -253,7 +252,7 @@ func TestEventsHandlers_GetEvents(t *testing.T) {
 			},
 		},
 		{
-			name: "no kubernetes clientset configured",
+			name:        "no kubernetes clientset configured",
 			queryParams: map[string]string{},
 			setupK8s: func() (client.Client, *fake.Clientset) {
 				scheme := runtime.NewScheme()
@@ -374,7 +373,7 @@ func TestEventsHandlers_GetRecentEvents(t *testing.T) {
 			},
 		},
 		{
-			name: "no recent events",
+			name:        "no recent events",
 			queryParams: map[string]string{},
 			setupK8s: func() (client.Client, *fake.Clientset) {
 				scheme := runtime.NewScheme()
@@ -408,7 +407,7 @@ func TestEventsHandlers_GetRecentEvents(t *testing.T) {
 			},
 		},
 		{
-			name: "no kubernetes clientset configured",
+			name:        "no kubernetes clientset configured",
 			queryParams: map[string]string{},
 			setupK8s: func() (client.Client, *fake.Clientset) {
 				scheme := runtime.NewScheme()
@@ -472,18 +471,18 @@ func TestNewEventsHandlers(t *testing.T) {
 
 func TestEventInfo_Structure(t *testing.T) {
 	event := EventInfo{
-		ID:                   "event-123",
-		Name:                 "test-event",
-		Namespace:            "default",
-		Type:                 "Warning",
-		Reason:               "Failed",
-		Message:              "Test event message",
-		Component:            "test-controller",
-		InvolvedObjectKind:   "Pod",
-		InvolvedObjectName:   "test-pod",
-		FirstTimestamp:       "2023-01-01T12:00:00Z",
-		LastTimestamp:        "2023-01-01T12:05:00Z",
-		Count:                5,
+		ID:                 "event-123",
+		Name:               "test-event",
+		Namespace:          "default",
+		Type:               "Warning",
+		Reason:             "Failed",
+		Message:            "Test event message",
+		Component:          "test-controller",
+		InvolvedObjectKind: "Pod",
+		InvolvedObjectName: "test-pod",
+		FirstTimestamp:     "2023-01-01T12:00:00Z",
+		LastTimestamp:      "2023-01-01T12:05:00Z",
+		Count:              5,
 	}
 
 	// Test JSON serialization

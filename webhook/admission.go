@@ -255,7 +255,7 @@ func (w *WorkloadWebhook) validateVMInVDC(ctx context.Context, vm *unstructured.
 		// Extract expected values from namespace name (format: vdc-org-{org}-{vdc})
 		namespaceParts := strings.Split(namespaceName, "-")
 		if len(namespaceParts) >= 4 {
-			expectedOrg := namespaceParts[2]  // Skip "vdc" and "org"
+			expectedOrg := namespaceParts[2] // Skip "vdc" and "org"
 			expectedVDC := strings.Join(namespaceParts[3:], "-")
 
 			if orgLabel != expectedOrg {
