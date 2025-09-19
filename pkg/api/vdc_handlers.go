@@ -160,6 +160,54 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		return
 	}
 
+	// Verify that the zone exists and is available
+	zone, err := h.storage.GetZone(req.ZoneID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Zone not found"})
+			return
+		}
+		klog.Errorf("Failed to verify zone %s: %v", req.ZoneID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify zone"})
+		return
+	}
+
+	// Check if zone is available
+	if zone.Status != models.ZoneStatusAvailable {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Zone '%s' is not available (status: %s)", zone.Name, zone.Status),
+		})
+		return
+	}
+
+	// For org admins, verify they have access to this zone
+	if role == models.RoleOrgAdmin {
+		// Check if organization has access to this zone
+		zoneAccess, err := h.storage.GetOrganizationZoneAccess(req.OrgID)
+		if err != nil && err != storage.ErrNotFound {
+			klog.Errorf("Failed to get organization zone access for %s: %v", req.OrgID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify zone access"})
+			return
+		}
+
+		// If specific zone access is defined, check if this zone is allowed
+		if len(zoneAccess) > 0 {
+			hasAccess := false
+			for _, access := range zoneAccess {
+				if access.ZoneID == req.ZoneID {
+					hasAccess = true
+					break
+				}
+			}
+			if !hasAccess {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error": fmt.Sprintf("Organization does not have access to zone '%s'", zone.Name),
+				})
+				return
+			}
+		}
+	}
+
 	// Generate VDC ID (use sanitized name for CRD)
 	vdcID := util.SanitizeKubernetesName(req.Name)
 
@@ -175,6 +223,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		},
 		Spec: ovimv1.VirtualDataCenterSpec{
 			OrganizationRef: req.OrgID,
+			ZoneID:          req.ZoneID,
 			DisplayName:     req.DisplayName,
 			Description:     req.Description,
 			Quota: ovimv1.ResourceQuota{
@@ -213,6 +262,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		Name:              req.Name,
 		Description:       req.Description,
 		OrgID:             req.OrgID,
+		ZoneID:            &req.ZoneID, // Zone where VDC is deployed
 		DisplayName:       &req.DisplayName,
 		CRName:            vdcID,
 		CRNamespace:       fmt.Sprintf("org-%s", req.OrgID),

@@ -83,6 +83,8 @@ func (s *PostgresStorage) migrate() error {
 		&models.Event{},
 		&models.EventCategory{},
 		&models.EventRetentionPolicy{},
+		&models.Zone{},
+		&models.OrganizationZoneQuota{},
 	)
 }
 
@@ -992,4 +994,161 @@ func (s *PostgresStorage) UpdateEventRetentionPolicy(policy *models.EventRetenti
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Zone operations
+
+func (s *PostgresStorage) ListZones() ([]*models.Zone, error) {
+	var zones []*models.Zone
+	err := s.db.Find(&zones).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list zones: %w", err)
+	}
+	return zones, nil
+}
+
+func (s *PostgresStorage) GetZone(id string) (*models.Zone, error) {
+	var zone models.Zone
+	err := s.db.Where("id = ?", id).First(&zone).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get zone: %w", err)
+	}
+	return &zone, nil
+}
+
+func (s *PostgresStorage) CreateZone(zone *models.Zone) error {
+	if zone == nil {
+		return ErrInvalidInput
+	}
+
+	zone.CreatedAt = time.Now()
+	zone.UpdatedAt = time.Now()
+	zone.LastSync = time.Now()
+
+	err := s.db.Create(zone).Error
+	if err != nil {
+		return fmt.Errorf("failed to create zone: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) UpdateZone(zone *models.Zone) error {
+	if zone == nil {
+		return ErrInvalidInput
+	}
+
+	zone.UpdatedAt = time.Now()
+	result := s.db.Save(zone)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update zone: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) DeleteZone(id string) error {
+	result := s.db.Delete(&models.Zone{}, "id = ?", id)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete zone: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) {
+	var utilization []*models.ZoneUtilization
+	err := s.db.Table("zone_utilization").Find(&utilization).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get zone utilization: %w", err)
+	}
+	return utilization, nil
+}
+
+// Organization Zone Quota operations
+
+func (s *PostgresStorage) ListOrganizationZoneQuotas(orgID string) ([]*models.OrganizationZoneQuota, error) {
+	var quotas []*models.OrganizationZoneQuota
+	query := s.db.Preload("Zone")
+	if orgID != "" {
+		query = query.Where("organization_id = ?", orgID)
+	}
+	err := query.Find(&quotas).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list organization zone quotas: %w", err)
+	}
+	return quotas, nil
+}
+
+func (s *PostgresStorage) GetOrganizationZoneQuota(orgID, zoneID string) (*models.OrganizationZoneQuota, error) {
+	var quota models.OrganizationZoneQuota
+	err := s.db.Preload("Zone").Where("organization_id = ? AND zone_id = ?", orgID, zoneID).First(&quota).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get organization zone quota: %w", err)
+	}
+	return &quota, nil
+}
+
+func (s *PostgresStorage) CreateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	if quota == nil {
+		return ErrInvalidInput
+	}
+
+	quota.CreatedAt = time.Now()
+	quota.UpdatedAt = time.Now()
+
+	err := s.db.Create(quota).Error
+	if err != nil {
+		return fmt.Errorf("failed to create organization zone quota: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) UpdateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	if quota == nil {
+		return ErrInvalidInput
+	}
+
+	quota.UpdatedAt = time.Now()
+	result := s.db.Save(quota)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update organization zone quota: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) DeleteOrganizationZoneQuota(orgID, zoneID string) error {
+	result := s.db.Delete(&models.OrganizationZoneQuota{}, "organization_id = ? AND zone_id = ?", orgID, zoneID)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete organization zone quota: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) GetOrganizationZoneAccess(orgID string) ([]*models.OrganizationZoneAccess, error) {
+	var access []*models.OrganizationZoneAccess
+	query := s.db.Table("organization_zone_access")
+	if orgID != "" {
+		query = query.Where("organization_id = ?", orgID)
+	}
+	err := query.Find(&access).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization zone access: %w", err)
+	}
+	return access, nil
 }

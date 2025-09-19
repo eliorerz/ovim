@@ -69,6 +69,22 @@ type Storage interface {
 	GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error)
 	UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error
 
+	// Zone operations
+	ListZones() ([]*models.Zone, error)
+	GetZone(id string) (*models.Zone, error)
+	CreateZone(zone *models.Zone) error
+	UpdateZone(zone *models.Zone) error
+	DeleteZone(id string) error
+	GetZoneUtilization() ([]*models.ZoneUtilization, error)
+
+	// Organization Zone Quota operations
+	ListOrganizationZoneQuotas(orgID string) ([]*models.OrganizationZoneQuota, error)
+	GetOrganizationZoneQuota(orgID, zoneID string) (*models.OrganizationZoneQuota, error)
+	CreateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error
+	UpdateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error
+	DeleteOrganizationZoneQuota(orgID, zoneID string) error
+	GetOrganizationZoneAccess(orgID string) ([]*models.OrganizationZoneAccess, error)
+
 	// Health check
 	Ping() error
 	Close() error

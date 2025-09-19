@@ -288,6 +288,142 @@ type VirtualMachine struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Zone statuses
+const (
+	ZoneStatusAvailable   = "available"
+	ZoneStatusUnavailable = "unavailable"
+	ZoneStatusMaintenance = "maintenance"
+)
+
+// Zone represents an ACM managed cluster available as a deployment zone
+type Zone struct {
+	ID            string `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	Name          string `json:"name" gorm:"not null;uniqueIndex"`
+	ClusterName   string `json:"cluster_name" gorm:"not null"`
+	APIUrl        string `json:"api_url" gorm:"not null"`
+	Status        string `json:"status" gorm:"not null;default:'available'"`
+	Region        string `json:"region"`
+	CloudProvider string `json:"cloud_provider"`
+
+	// Physical cluster capacity
+	NodeCount       int `json:"node_count" gorm:"default:0"`
+	CPUCapacity     int `json:"cpu_capacity" gorm:"default:0"`     // Total CPU cores
+	MemoryCapacity  int `json:"memory_capacity" gorm:"default:0"`  // Total memory in GB
+	StorageCapacity int `json:"storage_capacity" gorm:"default:0"` // Total storage in GB
+
+	// Zone-level quotas (allocated to organizations)
+	CPUQuota     int `json:"cpu_quota" gorm:"default:0"`     // CPU cores allocated
+	MemoryQuota  int `json:"memory_quota" gorm:"default:0"`  // Memory in GB allocated
+	StorageQuota int `json:"storage_quota" gorm:"default:0"` // Storage in GB allocated
+
+	// Metadata from ACM
+	Labels      StringMap `json:"labels" gorm:"type:jsonb;default:'{}'"`
+	Annotations StringMap `json:"annotations" gorm:"type:jsonb;default:'{}'"`
+
+	// Sync tracking
+	LastSync  time.Time `json:"last_sync" gorm:"default:NOW()"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// OrganizationZoneQuota represents resource quotas and access control for organizations within zones
+type OrganizationZoneQuota struct {
+	ID             string `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	OrganizationID string `json:"organization_id" gorm:"not null;index"`
+	ZoneID         string `json:"zone_id" gorm:"not null;index"`
+
+	// Resource quotas for this organization in this zone
+	CPUQuota     int `json:"cpu_quota" gorm:"not null;default:0"`
+	MemoryQuota  int `json:"memory_quota" gorm:"not null;default:0"`
+	StorageQuota int `json:"storage_quota" gorm:"not null;default:0"`
+
+	// Access control
+	IsAllowed bool `json:"is_allowed" gorm:"not null;default:true"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Relationships
+	Zone *Zone `json:"zone,omitempty" gorm:"foreignKey:ZoneID"`
+}
+
+// ZoneUtilization represents zone resource utilization summary
+type ZoneUtilization struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Status          string    `json:"status"`
+	CPUCapacity     int       `json:"cpu_capacity"`
+	MemoryCapacity  int       `json:"memory_capacity"`
+	StorageCapacity int       `json:"storage_capacity"`
+	CPUQuota        int       `json:"cpu_quota"`
+	MemoryQuota     int       `json:"memory_quota"`
+	StorageQuota    int       `json:"storage_quota"`
+	CPUUsed         int       `json:"cpu_used"`
+	MemoryUsed      int       `json:"memory_used"`
+	StorageUsed     int       `json:"storage_used"`
+	VDCCount        int       `json:"vdc_count"`
+	ActiveVDCCount  int       `json:"active_vdc_count"`
+	LastSync        time.Time `json:"last_sync"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// OrganizationZoneAccess represents organization access and usage within zones
+type OrganizationZoneAccess struct {
+	OrganizationID string `json:"organization_id"`
+	ZoneID         string `json:"zone_id"`
+	ZoneName       string `json:"zone_name"`
+	ZoneStatus     string `json:"zone_status"`
+	CPUQuota       int    `json:"cpu_quota"`
+	MemoryQuota    int    `json:"memory_quota"`
+	StorageQuota   int    `json:"storage_quota"`
+	IsAllowed      bool   `json:"is_allowed"`
+	CPUUsed        int    `json:"cpu_used"`
+	MemoryUsed     int    `json:"memory_used"`
+	StorageUsed    int    `json:"storage_used"`
+	VDCCount       int    `json:"vdc_count"`
+}
+
+// GetAvailableCapacity returns the available capacity for allocation
+func (z *Zone) GetAvailableCapacity() (cpu, memory, storage int) {
+	return z.CPUCapacity - z.CPUQuota,
+		z.MemoryCapacity - z.MemoryQuota,
+		z.StorageCapacity - z.StorageQuota
+}
+
+// GetUtilizationPercentage returns resource utilization as percentages
+func (z *Zone) GetUtilizationPercentage(used ZoneUtilization) (cpuPercent, memoryPercent, storagePercent float64) {
+	if z.CPUQuota > 0 {
+		cpuPercent = float64(used.CPUUsed) / float64(z.CPUQuota) * 100
+	}
+	if z.MemoryQuota > 0 {
+		memoryPercent = float64(used.MemoryUsed) / float64(z.MemoryQuota) * 100
+	}
+	if z.StorageQuota > 0 {
+		storagePercent = float64(used.StorageUsed) / float64(z.StorageQuota) * 100
+	}
+	return
+}
+
+// IsHealthy returns true if the zone is available and under capacity thresholds
+func (z *Zone) IsHealthy() bool {
+	return z.Status == ZoneStatusAvailable
+}
+
+// CanAccommodateVDC checks if the zone has enough quota to accommodate a new VDC
+func (z *Zone) CanAccommodateVDC(cpuRequired, memoryRequired, storageRequired int, currentUsage ZoneUtilization) bool {
+	if !z.IsHealthy() {
+		return false
+	}
+
+	availableCPU := z.CPUQuota - currentUsage.CPUUsed
+	availableMemory := z.MemoryQuota - currentUsage.MemoryUsed
+	availableStorage := z.StorageQuota - currentUsage.StorageUsed
+
+	return availableCPU >= cpuRequired &&
+		availableMemory >= memoryRequired &&
+		availableStorage >= storageRequired
+}
+
 // LimitRangeRequest represents LimitRange parameters for VM resource constraints
 type LimitRangeRequest struct {
 	MinCPU    int `json:"min_cpu"`    // Minimum CPU cores per VM
