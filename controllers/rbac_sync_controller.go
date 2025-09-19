@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -26,6 +27,13 @@ type RBACReconciler struct {
 // +kubebuilder:rbac:groups=ovim.io,resources=organizations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ovim.io,resources=virtualdatacenters,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods/attach;pods/exec;pods/portforward;pods/proxy,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments;replicasets;statefulsets;daemonsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments/scale;replicasets/scale;statefulsets/scale,verbs=get;update;patch
+// +kubebuilder:rbac:groups=batch,resources=jobs;cronjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=metrics.k8s.io,resources=nodes;pods,verbs=get;list
 
 // Reconcile ensures RBAC consistency across organization and VDCs
 func (r *RBACReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -75,12 +83,20 @@ func (r *RBACReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		syncedVDCs++
 	}
 
-	// Update org status with last RBAC sync time
-	org.Status.LastRBACSync = &metav1.Time{Time: time.Now()}
-	org.Status.VDCCount = len(vdcList.Items)
+	// Update org status with last RBAC sync time using retry on conflict
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get latest version of the resource
+		if getErr := r.Get(ctx, client.ObjectKeyFromObject(&org), &org); getErr != nil {
+			return getErr
+		}
 
-	if err := r.Status().Update(ctx, &org); err != nil {
-		logger.Error(err, "unable to update organization status")
+		// Update status fields
+		org.Status.LastRBACSync = &metav1.Time{Time: time.Now()}
+		org.Status.VDCCount = len(vdcList.Items)
+
+		return r.Status().Update(ctx, &org)
+	}); err != nil {
+		logger.Error(err, "unable to update organization status after retries")
 		return ctrl.Result{}, err
 	}
 

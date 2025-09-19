@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -104,13 +105,21 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// Update status
-	org.Status.Namespace = orgNamespace
-	org.Status.Phase = ovimv1.OrganizationPhaseActive
-	r.updateOrgCondition(&org, ConditionReady, metav1.ConditionTrue, "OrganizationReady", "Organization is ready and active")
+	// Update status with retry on conflict
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get latest version of the resource
+		if getErr := r.Get(ctx, client.ObjectKeyFromObject(&org), &org); getErr != nil {
+			return getErr
+		}
 
-	if err := r.Status().Update(ctx, &org); err != nil {
-		logger.Error(err, "unable to update status")
+		// Update status fields
+		org.Status.Namespace = orgNamespace
+		org.Status.Phase = ovimv1.OrganizationPhaseActive
+		r.updateOrgCondition(&org, ConditionReady, metav1.ConditionTrue, "OrganizationReady", "Organization is ready and active")
+
+		return r.Status().Update(ctx, &org)
+	}); err != nil {
+		logger.Error(err, "unable to update status after retries")
 		return ctrl.Result{}, err
 	}
 
