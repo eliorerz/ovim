@@ -368,3 +368,25 @@ func (er *EventRecorder) RecordQuotaExceeded(ctx context.Context, vdcID string, 
 	}
 	er.recordDatabaseEvent(event)
 }
+
+// Zone quota event recording method
+func (er *EventRecorder) RecordQuotaEvent(orgID, zoneID, reason, message string) {
+	event := &models.Event{
+		Name:      fmt.Sprintf("org-%s-zone-%s-quota", orgID, zoneID),
+		Type:      models.EventTypeNormal,
+		Reason:    reason,
+		Message:   message,
+		Component: "ovim-api",
+		Category:  models.EventCategoryQuota,
+		OrgID:     &orgID,
+
+		InvolvedObjectKind: "OrganizationZoneQuota",
+		InvolvedObjectName: fmt.Sprintf("%s-%s", orgID, zoneID),
+
+		SourceComponent: "ovim-api",
+		Metadata: models.StringMap{
+			"zone_id": zoneID,
+		},
+	}
+	er.recordDatabaseEvent(event)
+}

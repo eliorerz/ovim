@@ -198,6 +198,7 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 				DisplayName:  "Test VDC",
 				Description:  "Test VDC description",
 				OrgID:        "test-org",
+				ZoneID:       "zone-1",
 				CPUQuota:     4,
 				MemoryQuota:  8192,
 				StorageQuota: 100,
@@ -209,6 +210,12 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 				ms.On("GetOrganization", "test-org").Return(&models.Organization{
 					ID:   "test-org",
 					Name: "Test Organization",
+				}, nil)
+				// Verify zone exists and is available
+				ms.On("GetZone", "zone-1").Return(&models.Zone{
+					ID:     "zone-1",
+					Name:   "Test Zone",
+					Status: models.ZoneStatusAvailable,
 				}, nil)
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
@@ -239,6 +246,7 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 				Name:         "test-vdc",
 				DisplayName:  "Test VDC",
 				OrgID:        "nonexistent-org",
+				ZoneID:       "zone-1",
 				CPUQuota:     4,
 				MemoryQuota:  8192,
 				StorageQuota: 100,
@@ -255,12 +263,69 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 			description:    "Should fail when organization doesn't exist",
 		},
 		{
+			name: "zone not found",
+			requestBody: models.CreateVDCRequest{
+				Name:         "test-vdc",
+				DisplayName:  "Test VDC",
+				OrgID:        "test-org",
+				ZoneID:       "nonexistent-zone",
+				CPUQuota:     4,
+				MemoryQuota:  8192,
+				StorageQuota: 100,
+			},
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("GetZone", "nonexistent-zone").Return(nil, storage.ErrNotFound)
+			},
+			mockK8sBehavior: func(mk *MockK8sClient) {
+				// No calls expected
+			},
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should fail when zone doesn't exist",
+		},
+		{
+			name: "zone not available",
+			requestBody: models.CreateVDCRequest{
+				Name:         "test-vdc",
+				DisplayName:  "Test VDC",
+				OrgID:        "test-org",
+				ZoneID:       "maintenance-zone",
+				CPUQuota:     4,
+				MemoryQuota:  8192,
+				StorageQuota: 100,
+			},
+			userRole:  models.RoleSystemAdmin,
+			userOrgID: "",
+			mockStorageBehavior: func(ms *MockStorage) {
+				ms.On("GetOrganization", "test-org").Return(&models.Organization{
+					ID:   "test-org",
+					Name: "Test Organization",
+				}, nil)
+				ms.On("GetZone", "maintenance-zone").Return(&models.Zone{
+					ID:     "maintenance-zone",
+					Name:   "Maintenance Zone",
+					Status: models.ZoneStatusMaintenance,
+				}, nil)
+			},
+			mockK8sBehavior: func(mk *MockK8sClient) {
+				// No calls expected
+			},
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should fail when zone is not available",
+		},
+		{
 			name: "unauthorized user (not system admin or org admin)",
 			requestBody: models.CreateVDCRequest{
 				Name:         "test-vdc",
 				DisplayName:  "Test VDC",
 				Description:  "A test VDC",
 				OrgID:        "test-org",
+				ZoneID:       "zone-1",
 				CPUQuota:     4,
 				MemoryQuota:  8,
 				StorageQuota: 50,
@@ -282,6 +347,7 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 				Name:         "test-vdc",
 				DisplayName:  "Test VDC",
 				OrgID:        "test-org",
+				ZoneID:       "zone-1",
 				CPUQuota:     4,
 				MemoryQuota:  8192,
 				StorageQuota: 100,
@@ -292,6 +358,11 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 				ms.On("GetOrganization", "test-org").Return(&models.Organization{
 					ID:   "test-org",
 					Name: "Test Organization",
+				}, nil)
+				ms.On("GetZone", "zone-1").Return(&models.Zone{
+					ID:     "zone-1",
+					Name:   "Test Zone",
+					Status: models.ZoneStatusAvailable,
 				}, nil)
 			},
 			mockK8sBehavior: func(mk *MockK8sClient) {
