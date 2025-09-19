@@ -29,6 +29,8 @@ type MemoryStorage struct {
 	events            map[string]*models.Event
 	eventCategories   map[string]*models.EventCategory
 	retentionPolicies map[string]*models.EventRetentionPolicy
+	zones             map[string]*models.Zone
+	orgZoneQuotas     map[string]*models.OrganizationZoneQuota // key: orgID-zoneID
 	mutex             sync.RWMutex
 }
 
@@ -44,6 +46,8 @@ func NewMemoryStorage() (Storage, error) {
 		events:            make(map[string]*models.Event),
 		eventCategories:   make(map[string]*models.EventCategory),
 		retentionPolicies: make(map[string]*models.EventRetentionPolicy),
+		zones:             make(map[string]*models.Zone),
+		orgZoneQuotas:     make(map[string]*models.OrganizationZoneQuota),
 	}
 
 	if err := storage.seedData(); err != nil {
@@ -810,8 +814,268 @@ func NewMemoryStorageForTest() (Storage, error) {
 		events:            make(map[string]*models.Event),
 		eventCategories:   make(map[string]*models.EventCategory),
 		retentionPolicies: make(map[string]*models.EventRetentionPolicy),
+		zones:             make(map[string]*models.Zone),
+		orgZoneQuotas:     make(map[string]*models.OrganizationZoneQuota),
 	}
 
 	klog.Info("Initialized in-memory storage for testing with clean state")
 	return storage, nil
+}
+
+// Zone operations
+
+func (s *MemoryStorage) ListZones() ([]*models.Zone, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	zones := make([]*models.Zone, 0, len(s.zones))
+	for _, zone := range s.zones {
+		zoneCopy := *zone
+		zones = append(zones, &zoneCopy)
+	}
+	return zones, nil
+}
+
+func (s *MemoryStorage) GetZone(id string) (*models.Zone, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	zone, exists := s.zones[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	zoneCopy := *zone
+	return &zoneCopy, nil
+}
+
+func (s *MemoryStorage) CreateZone(zone *models.Zone) error {
+	if zone == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.zones[zone.ID]; exists {
+		return ErrAlreadyExists
+	}
+
+	zone.CreatedAt = time.Now()
+	zone.UpdatedAt = time.Now()
+	zone.LastSync = time.Now()
+
+	zoneCopy := *zone
+	s.zones[zone.ID] = &zoneCopy
+	return nil
+}
+
+func (s *MemoryStorage) UpdateZone(zone *models.Zone) error {
+	if zone == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.zones[zone.ID]; !exists {
+		return ErrNotFound
+	}
+
+	zone.UpdatedAt = time.Now()
+	zoneCopy := *zone
+	s.zones[zone.ID] = &zoneCopy
+	return nil
+}
+
+func (s *MemoryStorage) DeleteZone(id string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.zones[id]; !exists {
+		return ErrNotFound
+	}
+
+	delete(s.zones, id)
+	return nil
+}
+
+func (s *MemoryStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	utilization := make([]*models.ZoneUtilization, 0, len(s.zones))
+	for _, zone := range s.zones {
+		// Calculate basic utilization from VDCs in this zone
+		var cpuUsed, memoryUsed, storageUsed int
+		var vdcCount, activeVDCCount int
+
+		for _, vdc := range s.vdcs {
+			if vdc.ZoneID != nil && *vdc.ZoneID == zone.ID {
+				vdcCount++
+				if vdc.Phase == "Active" {
+					activeVDCCount++
+				}
+				cpuUsed += vdc.CPUQuota
+				memoryUsed += vdc.MemoryQuota
+				storageUsed += vdc.StorageQuota
+			}
+		}
+
+		util := &models.ZoneUtilization{
+			ID:              zone.ID,
+			Name:            zone.Name,
+			Status:          zone.Status,
+			CPUCapacity:     zone.CPUCapacity,
+			MemoryCapacity:  zone.MemoryCapacity,
+			StorageCapacity: zone.StorageCapacity,
+			CPUQuota:        zone.CPUQuota,
+			MemoryQuota:     zone.MemoryQuota,
+			StorageQuota:    zone.StorageQuota,
+			CPUUsed:         cpuUsed,
+			MemoryUsed:      memoryUsed,
+			StorageUsed:     storageUsed,
+			VDCCount:        vdcCount,
+			ActiveVDCCount:  activeVDCCount,
+			LastSync:        zone.LastSync,
+			UpdatedAt:       zone.UpdatedAt,
+		}
+		utilization = append(utilization, util)
+	}
+	return utilization, nil
+}
+
+// Organization Zone Quota operations
+
+func (s *MemoryStorage) ListOrganizationZoneQuotas(orgID string) ([]*models.OrganizationZoneQuota, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	quotas := make([]*models.OrganizationZoneQuota, 0)
+	for _, quota := range s.orgZoneQuotas {
+		if orgID == "" || quota.OrganizationID == orgID {
+			quotaCopy := *quota
+			// Load the zone relationship
+			if zone, exists := s.zones[quota.ZoneID]; exists {
+				zoneCopy := *zone
+				quotaCopy.Zone = &zoneCopy
+			}
+			quotas = append(quotas, &quotaCopy)
+		}
+	}
+	return quotas, nil
+}
+
+func (s *MemoryStorage) GetOrganizationZoneQuota(orgID, zoneID string) (*models.OrganizationZoneQuota, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	key := fmt.Sprintf("%s-%s", orgID, zoneID)
+	quota, exists := s.orgZoneQuotas[key]
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	quotaCopy := *quota
+	// Load the zone relationship
+	if zone, exists := s.zones[zoneID]; exists {
+		zoneCopy := *zone
+		quotaCopy.Zone = &zoneCopy
+	}
+	return &quotaCopy, nil
+}
+
+func (s *MemoryStorage) CreateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	if quota == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	key := fmt.Sprintf("%s-%s", quota.OrganizationID, quota.ZoneID)
+	if _, exists := s.orgZoneQuotas[key]; exists {
+		return ErrAlreadyExists
+	}
+
+	quota.CreatedAt = time.Now()
+	quota.UpdatedAt = time.Now()
+
+	quotaCopy := *quota
+	s.orgZoneQuotas[key] = &quotaCopy
+	return nil
+}
+
+func (s *MemoryStorage) UpdateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	if quota == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	key := fmt.Sprintf("%s-%s", quota.OrganizationID, quota.ZoneID)
+	if _, exists := s.orgZoneQuotas[key]; !exists {
+		return ErrNotFound
+	}
+
+	quota.UpdatedAt = time.Now()
+	quotaCopy := *quota
+	s.orgZoneQuotas[key] = &quotaCopy
+	return nil
+}
+
+func (s *MemoryStorage) DeleteOrganizationZoneQuota(orgID, zoneID string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	key := fmt.Sprintf("%s-%s", orgID, zoneID)
+	if _, exists := s.orgZoneQuotas[key]; !exists {
+		return ErrNotFound
+	}
+
+	delete(s.orgZoneQuotas, key)
+	return nil
+}
+
+func (s *MemoryStorage) GetOrganizationZoneAccess(orgID string) ([]*models.OrganizationZoneAccess, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	access := make([]*models.OrganizationZoneAccess, 0)
+	for _, quota := range s.orgZoneQuotas {
+		if orgID == "" || quota.OrganizationID == orgID {
+			zone, exists := s.zones[quota.ZoneID]
+			if !exists {
+				continue
+			}
+
+			// Calculate usage for this org in this zone
+			var cpuUsed, memoryUsed, storageUsed, vdcCount int
+			for _, vdc := range s.vdcs {
+				if vdc.ZoneID != nil && *vdc.ZoneID == quota.ZoneID && vdc.OrgID == quota.OrganizationID {
+					vdcCount++
+					cpuUsed += vdc.CPUQuota
+					memoryUsed += vdc.MemoryQuota
+					storageUsed += vdc.StorageQuota
+				}
+			}
+
+			accessItem := &models.OrganizationZoneAccess{
+				OrganizationID: quota.OrganizationID,
+				ZoneID:         quota.ZoneID,
+				ZoneName:       zone.Name,
+				ZoneStatus:     zone.Status,
+				CPUQuota:       quota.CPUQuota,
+				MemoryQuota:    quota.MemoryQuota,
+				StorageQuota:   quota.StorageQuota,
+				IsAllowed:      quota.IsAllowed,
+				CPUUsed:        cpuUsed,
+				MemoryUsed:     memoryUsed,
+				StorageUsed:    storageUsed,
+				VDCCount:       vdcCount,
+			}
+			access = append(access, accessItem)
+		}
+	}
+	return access, nil
 }

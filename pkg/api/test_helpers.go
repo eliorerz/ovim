@@ -361,6 +361,74 @@ func (m *MockStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPo
 	return args.Error(0)
 }
 
+// Zone operations
+func (m *MockStorage) ListZones() ([]*models.Zone, error) {
+	args := m.Called()
+	return args.Get(0).([]*models.Zone), args.Error(1)
+}
+
+func (m *MockStorage) GetZone(id string) (*models.Zone, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Zone), args.Error(1)
+}
+
+func (m *MockStorage) CreateZone(zone *models.Zone) error {
+	args := m.Called(zone)
+	return args.Error(0)
+}
+
+func (m *MockStorage) UpdateZone(zone *models.Zone) error {
+	args := m.Called(zone)
+	return args.Error(0)
+}
+
+func (m *MockStorage) DeleteZone(id string) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) {
+	args := m.Called()
+	return args.Get(0).([]*models.ZoneUtilization), args.Error(1)
+}
+
+// Organization Zone Quota operations
+func (m *MockStorage) ListOrganizationZoneQuotas(orgID string) ([]*models.OrganizationZoneQuota, error) {
+	args := m.Called(orgID)
+	return args.Get(0).([]*models.OrganizationZoneQuota), args.Error(1)
+}
+
+func (m *MockStorage) GetOrganizationZoneQuota(orgID, zoneID string) (*models.OrganizationZoneQuota, error) {
+	args := m.Called(orgID, zoneID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.OrganizationZoneQuota), args.Error(1)
+}
+
+func (m *MockStorage) CreateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	args := m.Called(quota)
+	return args.Error(0)
+}
+
+func (m *MockStorage) UpdateOrganizationZoneQuota(quota *models.OrganizationZoneQuota) error {
+	args := m.Called(quota)
+	return args.Error(0)
+}
+
+func (m *MockStorage) DeleteOrganizationZoneQuota(orgID, zoneID string) error {
+	args := m.Called(orgID, zoneID)
+	return args.Error(0)
+}
+
+func (m *MockStorage) GetOrganizationZoneAccess(orgID string) ([]*models.OrganizationZoneAccess, error) {
+	args := m.Called(orgID)
+	return args.Get(0).([]*models.OrganizationZoneAccess), args.Error(1)
+}
+
 // setupGinContext creates a Gin context for testing
 func setupGinContext(method, url string, body interface{}, userID, username, role, orgID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
