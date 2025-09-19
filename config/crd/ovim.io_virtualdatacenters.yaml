@@ -1,0 +1,188 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: virtualdatacenters.ovim.io
+spec:
+  group: ovim.io
+  names:
+    kind: VirtualDataCenter
+    listKind: VirtualDataCenterList
+    plural: virtualdatacenters
+    singular: virtualdatacenter
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: VirtualDataCenter is the Schema for the virtualdatacenters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VirtualDataCenterSpec defines the desired state of VirtualDataCenter
+            properties:
+              customNetworkConfig:
+                description: CustomNetworkConfig defines custom network configuration
+                  when NetworkPolicy is "custom"
+              description:
+                description: Description describes the VDC
+                type: string
+              displayName:
+                description: DisplayName is the human-readable VDC name
+                type: string
+              limitRange:
+                description: LimitRange defines VM resource constraints (optional)
+                properties:
+                  maxCpu:
+                    type: integer
+                  maxMemory:
+                    type: integer
+                  minCpu:
+                    type: integer
+                  minMemory:
+                    type: integer
+                required:
+                - maxCpu
+                - maxMemory
+                - minCpu
+                - minMemory
+                type: object
+              networkPolicy:
+                description: NetworkPolicy defines network isolation
+                type: string
+              organizationRef:
+                description: OrganizationRef references the parent Organization
+                type: string
+              quota:
+                description: Quota defines resource quotas for this VDC
+                properties:
+                  cpu:
+                    type: string
+                  memory:
+                    type: string
+                  storage:
+                    type: string
+                required:
+                - cpu
+                - memory
+                - storage
+                type: object
+            required:
+            - displayName
+            - organizationRef
+            - quota
+            type: object
+          status:
+            description: VirtualDataCenterStatus defines the observed state of VirtualDataCenter
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastMetricsUpdate:
+                description: LastMetricsUpdate is when metrics were last collected
+                format: date-time
+                type: string
+              namespace:
+                description: Namespace is the VDC workload namespace
+                type: string
+              phase:
+                description: Phase represents the current phase of the VDC
+                type: string
+              resourceUsage:
+                description: ResourceUsage shows current resource consumption
+                properties:
+                  cpuUsed:
+                    type: string
+                  memoryUsed:
+                    type: string
+                  storageUsed:
+                    type: string
+                required:
+                - cpuUsed
+                - memoryUsed
+                - storageUsed
+                type: object
+              totalPods:
+                description: TotalPods is the current number of pods in VDC
+                type: integer
+              totalVMs:
+                description: TotalVMs is the current number of VMs in VDC
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
