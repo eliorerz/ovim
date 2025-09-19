@@ -80,6 +80,9 @@ func (s *PostgresStorage) migrate() error {
 		&models.Template{},
 		&models.VirtualMachine{},
 		&models.OrganizationCatalogSource{},
+		&models.Event{},
+		&models.EventCategory{},
+		&models.EventRetentionPolicy{},
 	)
 }
 
@@ -582,12 +585,15 @@ func NewPostgresStorageForTest(dsn string) (Storage, error) {
 func (s *PostgresStorage) clearAllData() error {
 	// Delete all data in reverse order to respect foreign key constraints
 	tables := []string{
+		"events",
 		"virtual_machines",
 		"templates",
 		"organization_catalog_sources",
 		"virtual_data_centers",
 		"organizations",
 		"users",
+		"event_retention_policies",
+		"event_categories",
 	}
 
 	for _, table := range tables {
@@ -638,6 +644,352 @@ func (s *PostgresStorage) UpdateOrganizationCatalogSource(source *models.Organiz
 func (s *PostgresStorage) DeleteOrganizationCatalogSource(id string) error {
 	if err := s.db.Delete(&models.OrganizationCatalogSource{}, "id = ?", id).Error; err != nil {
 		return fmt.Errorf("failed to delete organization catalog source: %w", err)
+	}
+	return nil
+}
+
+// Event operations
+
+func (s *PostgresStorage) ListEvents(filter *models.EventFilter) (*models.EventsResponse, error) {
+	query := s.db.Model(&models.Event{})
+
+	// Apply filters
+	if filter != nil {
+		// Soft delete filter
+		if !filter.IncludeDeleted {
+			query = query.Where("deleted_at IS NULL")
+		}
+
+		// Type filter
+		if len(filter.Type) > 0 {
+			query = query.Where("type IN ?", filter.Type)
+		}
+
+		// Category filter
+		if len(filter.Category) > 0 {
+			query = query.Where("category IN ?", filter.Category)
+		}
+
+		// Reason filter
+		if len(filter.Reason) > 0 {
+			query = query.Where("reason IN ?", filter.Reason)
+		}
+
+		// Component filter
+		if len(filter.Component) > 0 {
+			query = query.Where("component IN ?", filter.Component)
+		}
+
+		// Namespace filter
+		if len(filter.Namespace) > 0 {
+			query = query.Where("namespace IN ?", filter.Namespace)
+		}
+
+		// Context filters
+		if filter.OrgID != "" {
+			query = query.Where("org_id = ?", filter.OrgID)
+		}
+		if filter.VDCID != "" {
+			query = query.Where("vdc_id = ?", filter.VDCID)
+		}
+		if filter.VMID != "" {
+			query = query.Where("vm_id = ?", filter.VMID)
+		}
+		if filter.UserID != "" {
+			query = query.Where("user_id = ?", filter.UserID)
+		}
+		if filter.Username != "" {
+			query = query.Where("username ILIKE ?", "%"+filter.Username+"%")
+		}
+
+		// Full-text search
+		if filter.Search != "" {
+			query = query.Where("to_tsvector('english', message) @@ plainto_tsquery('english', ?)", filter.Search)
+		}
+
+		// Time range filters
+		if filter.Since != "" {
+			query = query.Where("last_timestamp >= ?", filter.Since)
+		}
+		if filter.Until != "" {
+			query = query.Where("last_timestamp <= ?", filter.Until)
+		}
+
+		// Sorting
+		sortBy := "last_timestamp"
+		if filter.SortBy != "" {
+			// Validate sort field
+			validSortFields := map[string]bool{
+				"last_timestamp": true, "first_timestamp": true, "event_time": true,
+				"created_at": true, "type": true, "category": true, "reason": true,
+				"component": true, "count": true,
+			}
+			if validSortFields[filter.SortBy] {
+				sortBy = filter.SortBy
+			}
+		}
+
+		sortOrder := "DESC"
+		if filter.SortOrder == "asc" {
+			sortOrder = "ASC"
+		}
+
+		query = query.Order(fmt.Sprintf("%s %s", sortBy, sortOrder))
+	} else {
+		// Default: exclude deleted, sort by last_timestamp DESC
+		query = query.Where("deleted_at IS NULL").Order("last_timestamp DESC")
+	}
+
+	// Count total records
+	var totalCount int64
+	if err := query.Count(&totalCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to count events: %w", err)
+	}
+
+	// Apply pagination
+	limit := 50 // default
+	page := 1   // default
+	if filter != nil {
+		if filter.Limit > 0 && filter.Limit <= 200 {
+			limit = filter.Limit
+		}
+		if filter.Page > 0 {
+			page = filter.Page
+		}
+	}
+
+	offset := (page - 1) * limit
+	query = query.Offset(offset).Limit(limit)
+
+	// Execute query
+	var events []models.Event
+	if err := query.Find(&events).Error; err != nil {
+		return nil, fmt.Errorf("failed to list events: %w", err)
+	}
+
+	// Calculate total pages
+	totalPages := int((totalCount + int64(limit) - 1) / int64(limit))
+
+	return &models.EventsResponse{
+		Events:     events,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   limit,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (s *PostgresStorage) GetEvent(id string) (*models.Event, error) {
+	var event models.Event
+	err := s.db.Where("id = ?", id).First(&event).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get event: %w", err)
+	}
+	return &event, nil
+}
+
+func (s *PostgresStorage) CreateEvent(event *models.Event) error {
+	if event == nil {
+		return ErrInvalidInput
+	}
+
+	// Set defaults
+	if event.Type == "" {
+		event.Type = models.EventTypeNormal
+	}
+	if event.Category == "" {
+		event.Category = "General"
+	}
+	if event.Count == 0 {
+		event.Count = 1
+	}
+	if event.FirstTimestamp.IsZero() {
+		event.FirstTimestamp = time.Now()
+	}
+	if event.LastTimestamp.IsZero() {
+		event.LastTimestamp = event.FirstTimestamp
+	}
+	if event.EventTime.IsZero() {
+		event.EventTime = event.FirstTimestamp
+	}
+
+	// Try to find existing event with same name and deduplicate
+	if event.Name != "" {
+		var existingEvent models.Event
+		err := s.db.Where("name = ? AND deleted_at IS NULL", event.Name).First(&existingEvent).Error
+		if err == nil {
+			// Event exists, increment count and update timestamp
+			existingEvent.Count++
+			existingEvent.LastTimestamp = time.Now()
+			existingEvent.Message = event.Message // Update message to latest
+			existingEvent.UpdatedAt = time.Now()
+
+			// Update metadata if provided
+			if len(event.Metadata) > 0 {
+				existingEvent.Metadata = event.Metadata
+			}
+
+			return s.db.Save(&existingEvent).Error
+		} else if err != gorm.ErrRecordNotFound {
+			return fmt.Errorf("failed to check for existing event: %w", err)
+		}
+	}
+
+	// Create new event
+	event.CreatedAt = time.Now()
+	event.UpdatedAt = event.CreatedAt
+
+	err := s.db.Create(event).Error
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrAlreadyExists
+		}
+		return fmt.Errorf("failed to create event: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) CreateEvents(events []*models.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	// Process events in batch
+	now := time.Now()
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+
+		// Set defaults
+		if event.Type == "" {
+			event.Type = models.EventTypeNormal
+		}
+		if event.Category == "" {
+			event.Category = "General"
+		}
+		if event.Count == 0 {
+			event.Count = 1
+		}
+		if event.FirstTimestamp.IsZero() {
+			event.FirstTimestamp = now
+		}
+		if event.LastTimestamp.IsZero() {
+			event.LastTimestamp = event.FirstTimestamp
+		}
+		if event.EventTime.IsZero() {
+			event.EventTime = event.FirstTimestamp
+		}
+
+		event.CreatedAt = now
+		event.UpdatedAt = now
+	}
+
+	// Use transaction for batch insert
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return tx.CreateInBatches(events, 100).Error
+	})
+}
+
+func (s *PostgresStorage) UpdateEvent(event *models.Event) error {
+	if event == nil || event.ID == "" {
+		return ErrInvalidInput
+	}
+
+	event.UpdatedAt = time.Now()
+	result := s.db.Save(event)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update event: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) DeleteEvent(id string) error {
+	// Soft delete
+	result := s.db.Model(&models.Event{}).Where("id = ?", id).Update("deleted_at", time.Now())
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete event: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStorage) CleanupOldEvents() (int, error) {
+	// Call the PostgreSQL cleanup function
+	var deletedCount int
+	err := s.db.Raw("SELECT cleanup_old_events()").Scan(&deletedCount).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup old events: %w", err)
+	}
+	return deletedCount, nil
+}
+
+// Event category operations
+
+func (s *PostgresStorage) ListEventCategories() ([]*models.EventCategory, error) {
+	var categories []*models.EventCategory
+	err := s.db.Find(&categories).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list event categories: %w", err)
+	}
+	return categories, nil
+}
+
+func (s *PostgresStorage) GetEventCategory(name string) (*models.EventCategory, error) {
+	var category models.EventCategory
+	err := s.db.Where("name = ?", name).First(&category).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get event category: %w", err)
+	}
+	return &category, nil
+}
+
+// Event retention policy operations
+
+func (s *PostgresStorage) ListEventRetentionPolicies() ([]*models.EventRetentionPolicy, error) {
+	var policies []*models.EventRetentionPolicy
+	err := s.db.Find(&policies).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list event retention policies: %w", err)
+	}
+	return policies, nil
+}
+
+func (s *PostgresStorage) GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error) {
+	var policy models.EventRetentionPolicy
+	err := s.db.Where("category = ? AND type = ?", category, eventType).First(&policy).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get event retention policy: %w", err)
+	}
+	return &policy, nil
+}
+
+func (s *PostgresStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error {
+	if policy == nil {
+		return ErrInvalidInput
+	}
+
+	policy.UpdatedAt = time.Now()
+	result := s.db.Save(policy)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update event retention policy: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

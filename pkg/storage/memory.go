@@ -20,24 +20,30 @@ var (
 
 // MemoryStorage implements the Storage interface using in-memory storage
 type MemoryStorage struct {
-	users          map[string]*models.User
-	organizations  map[string]*models.Organization
-	vdcs           map[string]*models.VirtualDataCenter
-	templates      map[string]*models.Template
-	vms            map[string]*models.VirtualMachine
-	catalogSources map[string]*models.OrganizationCatalogSource
-	mutex          sync.RWMutex
+	users               map[string]*models.User
+	organizations       map[string]*models.Organization
+	vdcs                map[string]*models.VirtualDataCenter
+	templates           map[string]*models.Template
+	vms                 map[string]*models.VirtualMachine
+	catalogSources      map[string]*models.OrganizationCatalogSource
+	events              map[string]*models.Event
+	eventCategories     map[string]*models.EventCategory
+	retentionPolicies   map[string]*models.EventRetentionPolicy
+	mutex               sync.RWMutex
 }
 
 // NewMemoryStorage creates a new in-memory storage instance
 func NewMemoryStorage() (Storage, error) {
 	storage := &MemoryStorage{
-		users:          make(map[string]*models.User),
-		organizations:  make(map[string]*models.Organization),
-		vdcs:           make(map[string]*models.VirtualDataCenter),
-		templates:      make(map[string]*models.Template),
-		vms:            make(map[string]*models.VirtualMachine),
-		catalogSources: make(map[string]*models.OrganizationCatalogSource),
+		users:             make(map[string]*models.User),
+		organizations:     make(map[string]*models.Organization),
+		vdcs:              make(map[string]*models.VirtualDataCenter),
+		templates:         make(map[string]*models.Template),
+		vms:               make(map[string]*models.VirtualMachine),
+		catalogSources:    make(map[string]*models.OrganizationCatalogSource),
+		events:            make(map[string]*models.Event),
+		eventCategories:   make(map[string]*models.EventCategory),
+		retentionPolicies: make(map[string]*models.EventRetentionPolicy),
 	}
 
 	if err := storage.seedData(); err != nil {
@@ -566,16 +572,244 @@ func (s *MemoryStorage) DeleteOrganizationCatalogSource(id string) error {
 	return nil
 }
 
+// Event operations (in-memory implementation)
+
+func (s *MemoryStorage) ListEvents(filter *models.EventFilter) (*models.EventsResponse, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var events []models.Event
+	for _, event := range s.events {
+		// Apply basic filters (simplified for in-memory storage)
+		if filter != nil {
+			if len(filter.Type) > 0 {
+				found := false
+				for _, t := range filter.Type {
+					if event.Type == t {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
+			if filter.OrgID != "" && (event.OrgID == nil || *event.OrgID != filter.OrgID) {
+				continue
+			}
+
+			if filter.VDCID != "" && (event.VDCID == nil || *event.VDCID != filter.VDCID) {
+				continue
+			}
+		}
+
+		events = append(events, *event)
+	}
+
+	// Apply pagination
+	limit := 50
+	page := 1
+	if filter != nil {
+		if filter.Limit > 0 {
+			limit = filter.Limit
+		}
+		if filter.Page > 0 {
+			page = filter.Page
+		}
+	}
+
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(events) {
+		events = []models.Event{}
+	} else if end > len(events) {
+		events = events[start:]
+	} else {
+		events = events[start:end]
+	}
+
+	return &models.EventsResponse{
+		Events:     events,
+		TotalCount: int64(len(s.events)),
+		Page:       page,
+		PageSize:   limit,
+		TotalPages: (len(s.events) + limit - 1) / limit,
+	}, nil
+}
+
+func (s *MemoryStorage) GetEvent(id string) (*models.Event, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	event, exists := s.events[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	return event, nil
+}
+
+func (s *MemoryStorage) CreateEvent(event *models.Event) error {
+	if event == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if event.ID == "" {
+		event.ID = fmt.Sprintf("event-%d", len(s.events)+1)
+	}
+
+	if _, exists := s.events[event.ID]; exists {
+		return ErrAlreadyExists
+	}
+
+	event.CreatedAt = time.Now()
+	event.UpdatedAt = event.CreatedAt
+	s.events[event.ID] = event
+	return nil
+}
+
+func (s *MemoryStorage) CreateEvents(events []*models.Event) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+
+		if event.ID == "" {
+			event.ID = fmt.Sprintf("event-%d", len(s.events)+1)
+		}
+
+		event.CreatedAt = time.Now()
+		event.UpdatedAt = event.CreatedAt
+		s.events[event.ID] = event
+	}
+	return nil
+}
+
+func (s *MemoryStorage) UpdateEvent(event *models.Event) error {
+	if event == nil || event.ID == "" {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.events[event.ID]; !exists {
+		return ErrNotFound
+	}
+
+	event.UpdatedAt = time.Now()
+	s.events[event.ID] = event
+	return nil
+}
+
+func (s *MemoryStorage) DeleteEvent(id string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.events[id]; !exists {
+		return ErrNotFound
+	}
+
+	delete(s.events, id)
+	return nil
+}
+
+func (s *MemoryStorage) CleanupOldEvents() (int, error) {
+	// Simple cleanup for in-memory storage - remove events older than 30 days
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	cutoff := time.Now().AddDate(0, 0, -30)
+	deletedCount := 0
+
+	for id, event := range s.events {
+		if event.LastTimestamp.Before(cutoff) {
+			delete(s.events, id)
+			deletedCount++
+		}
+	}
+
+	return deletedCount, nil
+}
+
+func (s *MemoryStorage) ListEventCategories() ([]*models.EventCategory, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var categories []*models.EventCategory
+	for _, category := range s.eventCategories {
+		categories = append(categories, category)
+	}
+	return categories, nil
+}
+
+func (s *MemoryStorage) GetEventCategory(name string) (*models.EventCategory, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	category, exists := s.eventCategories[name]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	return category, nil
+}
+
+func (s *MemoryStorage) ListEventRetentionPolicies() ([]*models.EventRetentionPolicy, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var policies []*models.EventRetentionPolicy
+	for _, policy := range s.retentionPolicies {
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
+func (s *MemoryStorage) GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	key := fmt.Sprintf("%s-%s", category, eventType)
+	policy, exists := s.retentionPolicies[key]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	return policy, nil
+}
+
+func (s *MemoryStorage) UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error {
+	if policy == nil {
+		return ErrInvalidInput
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	key := fmt.Sprintf("%s-%s", policy.Category, policy.Type)
+	policy.UpdatedAt = time.Now()
+	s.retentionPolicies[key] = policy
+	return nil
+}
+
 // NewMemoryStorageForTest creates a new in-memory storage instance for testing
 // This version doesn't seed any initial data, providing a clean slate for tests
 func NewMemoryStorageForTest() (Storage, error) {
 	storage := &MemoryStorage{
-		users:          make(map[string]*models.User),
-		organizations:  make(map[string]*models.Organization),
-		vdcs:           make(map[string]*models.VirtualDataCenter),
-		templates:      make(map[string]*models.Template),
-		vms:            make(map[string]*models.VirtualMachine),
-		catalogSources: make(map[string]*models.OrganizationCatalogSource),
+		users:             make(map[string]*models.User),
+		organizations:     make(map[string]*models.Organization),
+		vdcs:              make(map[string]*models.VirtualDataCenter),
+		templates:         make(map[string]*models.Template),
+		vms:               make(map[string]*models.VirtualMachine),
+		catalogSources:    make(map[string]*models.OrganizationCatalogSource),
+		events:            make(map[string]*models.Event),
+		eventCategories:   make(map[string]*models.EventCategory),
+		retentionPolicies: make(map[string]*models.EventRetentionPolicy),
 	}
 
 	klog.Info("Initialized in-memory storage for testing with clean state")

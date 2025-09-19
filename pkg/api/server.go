@@ -332,6 +332,16 @@ func (s *Server) setupRoutes() {
 				events.GET("/recent", eventsHandlers.GetRecentEvents)
 			}
 
+			// Real-time Metrics (all authenticated users)
+			metrics := protected.Group("/metrics")
+			{
+				metricsHandlers := NewMetricsHandlers(s.storage, s.k8sClient)
+				metrics.GET("/realtime", metricsHandlers.GetRealTimeMetrics)
+				metrics.GET("/ws", metricsHandlers.WebSocketMetrics)
+				metrics.GET("/vdc/:id/realtime", metricsHandlers.GetVDCRealTimeMetrics)
+				metrics.GET("/organization/:id/realtime", metricsHandlers.GetOrganizationRealTimeMetrics)
+			}
+
 			// OpenShift integration (all authenticated users)
 			if s.openshiftClient != nil {
 				openshift := protected.Group("/openshift")

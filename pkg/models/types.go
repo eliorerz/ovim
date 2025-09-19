@@ -18,6 +18,29 @@ const (
 	RoleOrgMember   = "org_member"
 )
 
+// Event types
+const (
+	EventTypeNormal  = "Normal"
+	EventTypeWarning = "Warning"
+	EventTypeError   = "Error"
+)
+
+// Event categories
+const (
+	EventCategoryOrganization = "organization"
+	EventCategoryVDC          = "vdc"
+	EventCategoryVM           = "vm"
+	EventCategorySecurity     = "security"
+	EventCategoryPerformance  = "performance"
+	EventCategoryIntegration  = "integration"
+	EventCategorySystem       = "system"
+	EventCategoryAudit        = "audit"
+	EventCategoryQuota        = "quota"
+	EventCategoryNetwork      = "network"
+	EventCategoryStorage      = "storage"
+	EventCategoryBackup       = "backup"
+)
+
 // VM statuses
 const (
 	VMStatusPending      = "pending"
@@ -421,4 +444,157 @@ type CatalogSource struct {
 	Path        string `json:"path,omitempty"`
 	Enabled     bool   `json:"enabled"`
 	Description string `json:"description"`
+}
+
+// Event represents a persistent event in the database
+type Event struct {
+	ID       string `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	Name     string `json:"name" gorm:"not null"`
+	EventUID string `json:"event_uid,omitempty" gorm:"uniqueIndex"`
+
+	// Event classification
+	Type      string `json:"type" gorm:"not null;default:'Normal'"`
+	Reason    string `json:"reason" gorm:"not null"`
+	Category  string `json:"category" gorm:"default:'General'"`
+	Component string `json:"component" gorm:"not null"`
+
+	// Event content
+	Message string `json:"message" gorm:"type:text;not null"`
+	Action  string `json:"action,omitempty"`
+
+	// Event context
+	Namespace string  `json:"namespace,omitempty"`
+	OrgID     *string `json:"org_id,omitempty" gorm:"index"`
+	VDCID     *string `json:"vdc_id,omitempty" gorm:"index"`
+	VMID      *string `json:"vm_id,omitempty" gorm:"index"`
+	UserID    *string `json:"user_id,omitempty" gorm:"index"`
+	Username  string  `json:"username,omitempty"`
+
+	// Involved object (Kubernetes resource)
+	InvolvedObjectKind            string `json:"involved_object_kind,omitempty"`
+	InvolvedObjectName            string `json:"involved_object_name,omitempty"`
+	InvolvedObjectNamespace       string `json:"involved_object_namespace,omitempty"`
+	InvolvedObjectUID             string `json:"involved_object_uid,omitempty"`
+	InvolvedObjectResourceVersion string `json:"involved_object_resource_version,omitempty"`
+
+	// Event metadata
+	Metadata    StringMap `json:"metadata" gorm:"type:jsonb;default:'{}'"`
+	Annotations StringMap `json:"annotations" gorm:"type:jsonb;default:'{}'"`
+	Labels      StringMap `json:"labels" gorm:"type:jsonb;default:'{}'"`
+
+	// Event timing
+	FirstTimestamp time.Time `json:"first_timestamp" gorm:"not null;default:CURRENT_TIMESTAMP"`
+	LastTimestamp  time.Time `json:"last_timestamp" gorm:"not null;default:CURRENT_TIMESTAMP"`
+	EventTime      time.Time `json:"event_time" gorm:"default:CURRENT_TIMESTAMP"`
+
+	// Event counting and aggregation
+	Count int `json:"count" gorm:"default:1"`
+
+	// Event source and reporting
+	SourceComponent       string `json:"source_component,omitempty"`
+	SourceHost            string `json:"source_host,omitempty"`
+	ReportingController   string `json:"reporting_controller,omitempty"`
+	ReportingInstance     string `json:"reporting_instance,omitempty"`
+
+	// Event series (for related events)
+	SeriesCount              *int       `json:"series_count,omitempty"`
+	SeriesLastObservedTime   *time.Time `json:"series_last_observed_time,omitempty"`
+	SeriesState              string     `json:"series_state,omitempty"`
+
+	// Event lifecycle
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// EventCategory represents an event category configuration
+type EventCategory struct {
+	Name        string    `json:"name" gorm:"primaryKey"`
+	Description string    `json:"description"`
+	Color       string    `json:"color" gorm:"default:'#1f77b4'"`
+	Icon        string    `json:"icon"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// EventRetentionPolicy represents event retention configuration
+type EventRetentionPolicy struct {
+	ID            int       `json:"id" gorm:"primaryKey"`
+	Category      string    `json:"category" gorm:"not null"`
+	Type          string    `json:"type" gorm:"not null;default:'all'"`
+	RetentionDays int       `json:"retention_days" gorm:"not null;default:30"`
+	MaxEvents     int       `json:"max_events" gorm:"default:10000"`
+	AutoCleanup   bool      `json:"auto_cleanup" gorm:"default:true"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Event filter and request types
+
+// EventFilter represents filters for event queries
+type EventFilter struct {
+	Type          []string `form:"type"`
+	Category      []string `form:"category"`
+	Reason        []string `form:"reason"`
+	Component     []string `form:"component"`
+	Namespace     []string `form:"namespace"`
+	OrgID         string   `form:"org_id"`
+	VDCID         string   `form:"vdc_id"`
+	VMID          string   `form:"vm_id"`
+	UserID        string   `form:"user_id"`
+	Username      string   `form:"username"`
+	Search        string   `form:"search"`        // Full-text search in message
+	Since         string   `form:"since"`         // Time filter (RFC3339)
+	Until         string   `form:"until"`         // Time filter (RFC3339)
+	Limit         int      `form:"limit"`         // Pagination limit
+	Page          int      `form:"page"`          // Pagination page
+	SortBy        string   `form:"sort_by"`       // Sort field
+	SortOrder     string   `form:"sort_order"`    // asc/desc
+	IncludeDeleted bool    `form:"include_deleted"` // Include soft-deleted events
+}
+
+// EventsResponse represents a paginated list of events
+type EventsResponse struct {
+	Events     []Event `json:"events"`
+	TotalCount int64   `json:"total_count"`
+	Page       int     `json:"page"`
+	PageSize   int     `json:"page_size"`
+	TotalPages int     `json:"total_pages"`
+}
+
+// CreateEventRequest represents a request to create a new event
+type CreateEventRequest struct {
+	Name      string `json:"name" binding:"required"`
+	Type      string `json:"type" binding:"required"`
+	Reason    string `json:"reason" binding:"required"`
+	Message   string `json:"message" binding:"required"`
+	Category  string `json:"category"`
+	Component string `json:"component" binding:"required"`
+	Action    string `json:"action,omitempty"`
+
+	// Context
+	Namespace string `json:"namespace,omitempty"`
+	OrgID     string `json:"org_id,omitempty"`
+	VDCID     string `json:"vdc_id,omitempty"`
+	VMID      string `json:"vm_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	Username  string `json:"username,omitempty"`
+
+	// Involved object
+	InvolvedObjectKind      string `json:"involved_object_kind,omitempty"`
+	InvolvedObjectName      string `json:"involved_object_name,omitempty"`
+	InvolvedObjectNamespace string `json:"involved_object_namespace,omitempty"`
+	InvolvedObjectUID       string `json:"involved_object_uid,omitempty"`
+
+	// Metadata
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+
+	// Timing
+	EventTime *time.Time `json:"event_time,omitempty"`
+}
+
+// BulkCreateEventsRequest represents a request to create multiple events
+type BulkCreateEventsRequest struct {
+	Events []CreateEventRequest `json:"events" binding:"required,min=1,max=100"`
 }

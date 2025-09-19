@@ -81,6 +81,15 @@ spec:
     app.kubernetes.io/name: ovim
     app.kubernetes.io/component: database
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres-sa
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: ovim
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -104,12 +113,13 @@ spec:
         app.kubernetes.io/component: database
         app.kubernetes.io/version: "16"
     spec:
+      serviceAccountName: postgres-sa
       securityContext:
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: postgresql
-          image: postgres:16-alpine
+          image: registry.redhat.io/rhel8/postgresql-16:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsNonRoot: true
@@ -121,17 +131,17 @@ spec:
               drop:
                 - ALL
           env:
-            - name: POSTGRES_USER
+            - name: POSTGRESQL_USER
               valueFrom:
                 secretKeyRef:
                   name: ovim-postgresql-secret
                   key: POSTGRES_USER
-            - name: POSTGRES_PASSWORD
+            - name: POSTGRESQL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: ovim-postgresql-secret
                   key: POSTGRES_PASSWORD
-            - name: POSTGRES_DB
+            - name: POSTGRESQL_DATABASE
               valueFrom:
                 secretKeyRef:
                   name: ovim-postgresql-secret
@@ -147,7 +157,7 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+                - exec pg_isready -U "$POSTGRESQL_USER" -d "$POSTGRESQL_DATABASE" -h 127.0.0.1 -p 5432
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
@@ -160,8 +170,7 @@ spec:
                 - -c
                 - -e
                 - |
-                  exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
-                  [ -f /opt/bitnami/postgresql/tmp/.initialized ] || [ -f /bitnami/postgresql/.initialized ]
+                  exec pg_isready -U "$POSTGRESQL_USER" -d "$POSTGRESQL_DATABASE" -h 127.0.0.1 -p 5432
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5

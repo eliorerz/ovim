@@ -51,6 +51,24 @@ type Storage interface {
 	UpdateOrganizationCatalogSource(source *models.OrganizationCatalogSource) error
 	DeleteOrganizationCatalogSource(id string) error
 
+	// Event operations
+	ListEvents(filter *models.EventFilter) (*models.EventsResponse, error)
+	GetEvent(id string) (*models.Event, error)
+	CreateEvent(event *models.Event) error
+	CreateEvents(events []*models.Event) error
+	UpdateEvent(event *models.Event) error
+	DeleteEvent(id string) error
+	CleanupOldEvents() (int, error)
+
+	// Event category operations
+	ListEventCategories() ([]*models.EventCategory, error)
+	GetEventCategory(name string) (*models.EventCategory, error)
+
+	// Event retention policy operations
+	ListEventRetentionPolicies() ([]*models.EventRetentionPolicy, error)
+	GetEventRetentionPolicy(category, eventType string) (*models.EventRetentionPolicy, error)
+	UpdateEventRetentionPolicy(policy *models.EventRetentionPolicy) error
+
 	// Health check
 	Ping() error
 	Close() error

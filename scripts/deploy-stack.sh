@@ -345,7 +345,20 @@ deploy_database() {
     
     # Deploy PostgreSQL
     $KUBECTL_CMD apply -f "$manifests_dir/"
-    
+
+    # Configure OpenShift-specific settings for PostgreSQL
+    if $KUBECTL_CMD api-resources --api-group=route.openshift.io &> /dev/null; then
+        log_debug "Configuring OpenShift SCC for PostgreSQL..."
+        # Add anyuid SCC to postgres ServiceAccount for hostPath volume compatibility
+        if command -v oc &> /dev/null; then
+            oc adm policy add-scc-to-user anyuid -z postgres-sa -n "$NAMESPACE" &> /dev/null || {
+                log_warn "Failed to add anyuid SCC to postgres-sa. PostgreSQL may have permission issues."
+            }
+        else
+            log_warn "OpenShift CLI (oc) not found. PostgreSQL SCC not configured."
+        fi
+    fi
+
     if [ "$WAIT_FOR_READY" = "true" ]; then
         log_debug "Waiting for PostgreSQL to be ready..."
         # Wait for StatefulSet to be ready instead of individual pods

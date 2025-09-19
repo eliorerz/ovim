@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.15.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/golang-jwt/jwt/v5 v5.0.0
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/openshift/api v0.0.0-20250909085916-be976da65495
 	github.com/openshift/client-go v0.0.0-20250811163556-6193816ae379
 	github.com/stretchr/testify v1.11.1
