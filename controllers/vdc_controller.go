@@ -46,6 +46,13 @@ type VirtualDataCenterReconciler struct {
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods/attach;pods/exec;pods/portforward;pods/proxy,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments;replicasets;statefulsets;daemonsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments/scale;replicasets/scale;statefulsets/scale,verbs=get;update;patch
+// +kubebuilder:rbac:groups=batch,resources=jobs;cronjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=metrics.k8s.io,resources=nodes;pods,verbs=get;list
 
 // Reconcile handles VirtualDataCenter resource changes
 func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -451,9 +458,9 @@ func (r *VirtualDataCenterReconciler) createIsolatedNetworkPolicy(vdc *ovimv1.Vi
 				"type":                         "vdc-network-policy",
 				"org":                          vdc.Spec.OrganizationRef,
 				"vdc":                          vdc.Name,
-				"ovim.io/vdc-id":              vdc.Name,
-				"ovim.io/vdc-namespace":       vdc.Namespace,
-				"ovim.io/policy-type":         "isolated",
+				"ovim.io/vdc-id":               vdc.Name,
+				"ovim.io/vdc-namespace":        vdc.Namespace,
+				"ovim.io/policy-type":          "isolated",
 			},
 			Annotations: map[string]string{
 				"ovim.io/vdc-description": vdc.Spec.Description,
@@ -566,9 +573,9 @@ func (r *VirtualDataCenterReconciler) createCustomNetworkPolicy(vdc *ovimv1.Virt
 				"type":                         "vdc-network-policy",
 				"org":                          vdc.Spec.OrganizationRef,
 				"vdc":                          vdc.Name,
-				"ovim.io/vdc-id":              vdc.Name,
-				"ovim.io/vdc-namespace":       vdc.Namespace,
-				"ovim.io/policy-type":         "custom",
+				"ovim.io/vdc-id":               vdc.Name,
+				"ovim.io/vdc-namespace":        vdc.Namespace,
+				"ovim.io/policy-type":          "custom",
 			},
 			Annotations: map[string]string{
 				"ovim.io/vdc-description": vdc.Spec.Description,
