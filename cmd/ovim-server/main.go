@@ -21,6 +21,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/eliorerz/ovim-updated/pkg/acm"
 	"github.com/eliorerz/ovim-updated/pkg/api"
 	ovimv1 "github.com/eliorerz/ovim-updated/pkg/api/v1"
 	"github.com/eliorerz/ovim-updated/pkg/config"
@@ -203,6 +204,55 @@ func main() {
 		provisioner = kubevirt.NewMockClient()
 	}
 
+	// Initialize ACM zone sync if Kubernetes client is available
+	var acmService *acm.Service
+	if k8sClient != nil {
+		// Create ACM sync configuration
+		syncConfig := acm.SyncConfig{
+			Enabled:                true,
+			Interval:               5 * time.Minute,
+			Namespace:              "open-cluster-management",
+			AutoCreateZones:        true,
+			ZonePrefix:             "",
+			DefaultQuotaPercentage: 80,
+			ExcludedClusters:       []string{},
+			RequiredLabels:         map[string]string{},
+		}
+
+		// Create ACM client options (using in-cluster config)
+		clientOpts := acm.ClientOptions{
+			Namespace: "open-cluster-management",
+			Timeout:   30 * time.Second,
+		}
+
+		// Initialize ACM service with proper options structure
+		serviceOpts := acm.ServiceOptions{
+			Storage:       storageImpl,
+			Config:        syncConfig,
+			ClientOptions: clientOpts,
+		}
+
+		acmService, err := acm.NewService(serviceOpts)
+		if err != nil {
+			klog.Errorf("Failed to initialize ACM service: %v", err)
+			klog.Info("Continuing without ACM zone sync - zones will need to be managed manually")
+		} else {
+			// Start ACM zone sync in background
+			ctx := context.Background()
+			if err := acmService.Start(ctx); err != nil {
+				klog.Errorf("Failed to start ACM zone sync: %v", err)
+				klog.Info("ACM zone sync failed - this is expected if ACM is not installed or RBAC permissions are insufficient")
+				klog.Info("Zones will need to be managed manually through the OVIM API")
+				// Set acmService to nil so we don't try to stop it later
+				acmService = nil
+			} else {
+				klog.Info("ACM zone sync started successfully - zones will be automatically discovered from managed clusters")
+			}
+		}
+	} else {
+		klog.Info("Kubernetes client not available, skipping ACM zone sync")
+	}
+
 	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient, kubernetesClient, eventRecorder)
 	handler := server.Handler()
 
@@ -282,6 +332,12 @@ func main() {
 	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 	defer cancel()
+
+	// Shutdown ACM service
+	if acmService != nil {
+		klog.Info("Stopping ACM zone sync...")
+		acmService.Stop()
+	}
 
 	// Shutdown main server
 	if err := mainSrv.Shutdown(ctx); err != nil {

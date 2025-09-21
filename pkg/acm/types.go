@@ -5,6 +5,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ManagedCluster represents an ACM managed cluster
@@ -246,6 +248,11 @@ func (in *ManagedCluster) DeepCopyObject() runtime.Object {
 	return nil
 }
 
+// GetObjectKind implements runtime.Object interface
+func (in *ManagedCluster) GetObjectKind() schema.ObjectKind {
+	return &in.TypeMeta
+}
+
 // DeepCopyInto copies the ManagedClusterSpec
 func (in *ManagedClusterSpec) DeepCopyInto(out *ManagedClusterSpec) {
 	*out = *in
@@ -356,4 +363,18 @@ func (in *ManagedClusterList) DeepCopyObject() runtime.Object {
 		return c
 	}
 	return nil
+}
+
+// GetObjectKind implements runtime.Object interface
+func (in *ManagedClusterList) GetObjectKind() schema.ObjectKind {
+	return &in.TypeMeta
+}
+
+// GetItems implements client.ObjectList interface
+func (in *ManagedClusterList) GetItems() []client.Object {
+	items := make([]client.Object, len(in.Items))
+	for i := range in.Items {
+		items[i] = &in.Items[i]
+	}
+	return items
 }

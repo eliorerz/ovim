@@ -90,7 +90,8 @@ func (s *MemoryStorage) seedData() error {
 
 	// No seed templates - start with empty list
 
-	klog.Infof("Seeded storage with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
+	// No seed zones - zones will be dynamically created by ACM sync
+	klog.Infof("Seeded storage with %d users, 0 organizations, 0 VDCs, 0 templates, 0 zones (zones will be synced from ACM)", len(users))
 
 	return nil
 }

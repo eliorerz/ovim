@@ -1,7 +1,12 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
@@ -83,100 +88,419 @@ type OrganizationZoneQuotaRequest struct {
 	StorageQuota int `json:"storage_quota" binding:"min=0"`
 }
 
+// SimpleZoneResponse represents a zone response compatible with UI
+type SimpleZoneResponse struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Location        string `json:"location"`
+	Status          string `json:"status"`
+	ClusterEndpoint string `json:"cluster_endpoint,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
 // ListZones handles GET /api/v1/zones
 func (s *Server) ListZones(c *gin.Context) {
-	klog.V(4).Info("Listing zones")
+	klog.V(4).Info("Listing zones from ACM managed clusters")
 
 	// Get query parameters for filtering
 	status := c.Query("status")
 	provider := c.Query("provider")
 	region := c.Query("region")
 
-	// Get all zones from storage
-	zones, err := s.storage.ListZones()
-	if err != nil {
-		klog.Errorf("Failed to list zones: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve zones",
+	// Check if Kubernetes client is available
+	if s.k8sClientset == nil {
+		klog.Warning("Kubernetes client not available, returning empty zones list")
+		c.JSON(http.StatusOK, gin.H{
+			"zones": []SimpleZoneResponse{},
+			"total": 0,
 		})
 		return
 	}
 
-	// Filter zones based on query parameters
-	var filteredZones []*models.Zone
-	for _, zone := range zones {
-		if status != "" && zone.Status != status {
-			continue
+	// Fetch managed clusters from ACM using the same approach as ACM client
+	ctx := context.Background()
+	result := s.k8sClientset.CoreV1().RESTClient().Get().
+		AbsPath("/apis/cluster.open-cluster-management.io/v1/managedclusters").
+		Do(ctx)
+
+	data, err := result.Raw()
+	if err != nil {
+		klog.Errorf("ACM API call failed: %v", err)
+
+		// Check if ACM is installed by trying to access the API group
+		_, apiErr := s.k8sClientset.Discovery().ServerResourcesForGroupVersion("cluster.open-cluster-management.io/v1")
+		if apiErr != nil {
+			klog.Warningf("ACM (Advanced Cluster Management) is not installed or accessible: %v", apiErr)
+			c.JSON(http.StatusOK, gin.H{
+				"zones": []SimpleZoneResponse{},
+				"total": 0,
+			})
+			return
 		}
-		if provider != "" && zone.CloudProvider != provider {
-			continue
-		}
-		if region != "" && zone.Region != region {
-			continue
-		}
-		filteredZones = append(filteredZones, zone)
+
+		klog.Errorf("Failed to list managed clusters from ACM API - insufficient RBAC permissions or ACM not properly configured: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to retrieve zones from ACM",
+		})
+		return
 	}
 
-	// Convert to response format
-	var response []ZoneSummary
-	for _, zone := range filteredZones {
-		response = append(response, ZoneSummary{
-			ID:            zone.ID,
-			Name:          zone.Name,
-			Status:        zone.Status,
-			Region:        zone.Region,
-			CloudProvider: zone.CloudProvider,
-			NodeCount:     zone.NodeCount,
-			CPUQuota:      zone.CPUQuota,
-			MemoryQuota:   zone.MemoryQuota,
-			StorageQuota:  zone.StorageQuota,
+	// Parse the raw JSON response
+	var rawList map[string]interface{}
+	if err := json.Unmarshal(data, &rawList); err != nil {
+		klog.Errorf("Failed to decode managed clusters response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to parse ACM response",
 		})
+		return
 	}
+
+	// Convert managed clusters to zones
+	var zones []SimpleZoneResponse
+	if items, ok := rawList["items"].([]interface{}); ok {
+		for _, item := range items {
+			if clusterData, ok := item.(map[string]interface{}); ok {
+				zone := convertManagedClusterToZone(clusterData)
+				if zone != nil {
+					// Apply filtering
+					if status != "" && zone.Status != status {
+						continue
+					}
+					if provider != "" && zone.Location != provider {
+						continue
+					}
+					if region != "" && zone.Location != region {
+						continue
+					}
+					zones = append(zones, *zone)
+				}
+			}
+		}
+	}
+
+	klog.V(4).Infof("Found %d zones from ACM managed clusters", len(zones))
 
 	c.JSON(http.StatusOK, gin.H{
-		"zones": response,
-		"total": len(response),
+		"zones": zones,
+		"total": len(zones),
 	})
+}
+
+// convertManagedClusterToZone converts a managed cluster to a zone response
+func convertManagedClusterToZone(clusterData map[string]interface{}) *SimpleZoneResponse {
+	// Extract metadata
+	metadata, ok := clusterData["metadata"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	name, ok := metadata["name"].(string)
+	if !ok {
+		return nil
+	}
+
+	// Extract creation timestamp
+	createdAt := time.Now().Format(time.RFC3339)
+	if creationTimestamp, ok := metadata["creationTimestamp"].(string); ok {
+		createdAt = creationTimestamp
+	}
+
+	// Extract status
+	status := "unknown"
+	if statusData, ok := clusterData["status"].(map[string]interface{}); ok {
+		if conditions, ok := statusData["conditions"].([]interface{}); ok {
+			for _, conditionInterface := range conditions {
+				if condition, ok := conditionInterface.(map[string]interface{}); ok {
+					if conditionType, ok := condition["type"].(string); ok && conditionType == "ManagedClusterConditionAvailable" {
+						if conditionStatus, ok := condition["status"].(string); ok {
+							if conditionStatus == "True" {
+								status = "available"
+							} else {
+								status = "unavailable"
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Extract labels for additional info
+	location := "unknown"
+	clusterEndpoint := ""
+	if labels, ok := metadata["labels"].(map[string]interface{}); ok {
+		if cloud, ok := labels["cloud"].(string); ok {
+			location = cloud
+		}
+		if region, ok := labels["region"].(string); ok && region != "" {
+			location = region
+		}
+	}
+
+	// Try to get cluster endpoint from spec
+	if spec, ok := clusterData["spec"].(map[string]interface{}); ok {
+		if hubAcceptsClient, ok := spec["hubAcceptsClient"].(bool); ok && hubAcceptsClient {
+			if managedClusterClientConfigs, ok := spec["managedClusterClientConfigs"].([]interface{}); ok {
+				for _, configInterface := range managedClusterClientConfigs {
+					if config, ok := configInterface.(map[string]interface{}); ok {
+						if url, ok := config["url"].(string); ok && url != "" {
+							clusterEndpoint = url
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return &SimpleZoneResponse{
+		ID:              name,
+		Name:            name,
+		Description:     "Managed cluster from ACM",
+		Location:        location,
+		Status:          status,
+		ClusterEndpoint: clusterEndpoint,
+		CreatedAt:       createdAt,
+		UpdatedAt:       createdAt,
+	}
 }
 
 // GetZone handles GET /api/v1/zones/:id
 func (s *Server) GetZone(c *gin.Context) {
 	zoneID := c.Param("id")
-	klog.V(4).Infof("Getting zone: %s", zoneID)
+	klog.V(4).Infof("Getting zone from ACM: %s", zoneID)
 
-	zone, err := s.storage.GetZone(zoneID)
-	if err != nil {
-		klog.Errorf("Failed to get zone %s: %v", zoneID, err)
+	// Check if Kubernetes client is available
+	if s.k8sClientset == nil {
+		klog.Warning("Kubernetes client not available")
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": "Zone not found",
 		})
 		return
 	}
 
-	// Convert to response format
-	response := ZoneResponse{
-		ID:              zone.ID,
-		Name:            zone.Name,
-		ClusterName:     zone.ClusterName,
-		APIUrl:          zone.APIUrl,
-		Status:          zone.Status,
-		Region:          zone.Region,
-		CloudProvider:   zone.CloudProvider,
-		NodeCount:       zone.NodeCount,
-		CPUCapacity:     zone.CPUCapacity,
-		MemoryCapacity:  zone.MemoryCapacity,
-		StorageCapacity: zone.StorageCapacity,
-		CPUQuota:        zone.CPUQuota,
-		MemoryQuota:     zone.MemoryQuota,
-		StorageQuota:    zone.StorageQuota,
-		Labels:          convertStringMap(zone.Labels),
-		Annotations:     convertStringMap(zone.Annotations),
-		CreatedAt:       zone.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:       zone.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		LastSync:        zone.LastSync.Format("2006-01-02T15:04:05Z07:00"),
+	// Fetch specific managed cluster from ACM
+	ctx := context.Background()
+	result := s.k8sClientset.CoreV1().RESTClient().Get().
+		AbsPath("/apis/cluster.open-cluster-management.io/v1/managedclusters/" + zoneID).
+		Do(ctx)
+
+	data, err := result.Raw()
+	if err != nil {
+		klog.Errorf("Failed to get managed cluster %s: %v", zoneID, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Zone not found",
+		})
+		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	// Parse the raw JSON response
+	var clusterData map[string]interface{}
+	if err := json.Unmarshal(data, &clusterData); err != nil {
+		klog.Errorf("Failed to decode managed cluster response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to parse ACM response",
+		})
+		return
+	}
+
+	// Convert to zone response
+	simpleZone := convertManagedClusterToZone(clusterData)
+	if simpleZone == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Zone not found",
+		})
+		return
+	}
+
+	// Convert to detailed zone response
+	response := convertManagedClusterToDetailedZone(clusterData)
+	if response == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Zone not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, *response)
+}
+
+// convertManagedClusterToDetailedZone converts a managed cluster to a detailed zone response
+func convertManagedClusterToDetailedZone(clusterData map[string]interface{}) *ZoneResponse {
+	// Extract metadata
+	metadata, ok := clusterData["metadata"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	name, ok := metadata["name"].(string)
+	if !ok {
+		return nil
+	}
+
+	// Extract creation timestamp
+	createdAt := time.Now().Format(time.RFC3339)
+	if creationTimestamp, ok := metadata["creationTimestamp"].(string); ok {
+		createdAt = creationTimestamp
+	}
+
+	// Extract labels and annotations
+	labels := make(map[string]string)
+	annotations := make(map[string]string)
+
+	if metaLabels, ok := metadata["labels"].(map[string]interface{}); ok {
+		for k, v := range metaLabels {
+			if strValue, ok := v.(string); ok {
+				labels[k] = strValue
+			}
+		}
+	}
+
+	if metaAnnotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+		for k, v := range metaAnnotations {
+			if strValue, ok := v.(string); ok {
+				annotations[k] = strValue
+			}
+		}
+	}
+
+	// Extract basic info
+	region := "unknown"
+	cloudProvider := "unknown"
+	if cloud, ok := labels["cloud"]; ok && cloud != "" {
+		cloudProvider = cloud
+	}
+	if regionLabel, ok := labels["region"]; ok && regionLabel != "" {
+		region = regionLabel
+	}
+
+	// Extract cluster endpoint from spec
+	apiUrl := ""
+	if spec, ok := clusterData["spec"].(map[string]interface{}); ok {
+		if hubAcceptsClient, ok := spec["hubAcceptsClient"].(bool); ok && hubAcceptsClient {
+			if managedClusterClientConfigs, ok := spec["managedClusterClientConfigs"].([]interface{}); ok {
+				for _, configInterface := range managedClusterClientConfigs {
+					if config, ok := configInterface.(map[string]interface{}); ok {
+						if url, ok := config["url"].(string); ok && url != "" {
+							apiUrl = url
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Extract status
+	status := "unknown"
+	nodeCount := 0
+	cpuCapacity := 0
+	memoryCapacity := 0
+	storageCapacity := 0
+	cpuQuota := 0
+	memoryQuota := 0
+	storageQuota := 0
+	lastSync := createdAt
+
+	if statusData, ok := clusterData["status"].(map[string]interface{}); ok {
+		// Extract cluster conditions for status
+		if conditions, ok := statusData["conditions"].([]interface{}); ok {
+			for _, conditionInterface := range conditions {
+				if condition, ok := conditionInterface.(map[string]interface{}); ok {
+					if conditionType, ok := condition["type"].(string); ok && conditionType == "ManagedClusterConditionAvailable" {
+						if conditionStatus, ok := condition["status"].(string); ok {
+							if conditionStatus == "True" {
+								status = "available"
+							} else {
+								status = "unavailable"
+							}
+						}
+						// Extract last transition time
+						if lastTransitionTime, ok := condition["lastTransitionTime"].(string); ok {
+							lastSync = lastTransitionTime
+						}
+					}
+				}
+			}
+		}
+
+		// Extract capacity information
+		if capacity, ok := statusData["capacity"].(map[string]interface{}); ok {
+			if cpu, ok := capacity["cpu"].(string); ok {
+				if cpuInt, err := parseResourceQuantity(cpu); err == nil {
+					cpuCapacity = cpuInt
+					cpuQuota = cpuInt // Set quota same as capacity for now
+				}
+			}
+			if memory, ok := capacity["memory"].(string); ok {
+				if memoryBytes, err := parseResourceQuantityToBytes(memory); err == nil {
+					memoryCapacity = memoryBytes
+					memoryQuota = memoryBytes // Set quota same as capacity for now
+				}
+			}
+			if ephemeralStorage, ok := capacity["ephemeral-storage"].(string); ok {
+				if storageBytes, err := parseResourceQuantityToBytes(ephemeralStorage); err == nil {
+					storageCapacity = storageBytes
+					storageQuota = storageBytes // Set quota same as capacity for now
+				}
+			}
+		}
+
+		// Extract allocatable information (could be used for more accurate quotas)
+		if allocatable, ok := statusData["allocatable"].(map[string]interface{}); ok {
+			if cpu, ok := allocatable["cpu"].(string); ok {
+				if cpuInt, err := parseResourceQuantity(cpu); err == nil {
+					cpuQuota = cpuInt // Use allocatable for quota
+				}
+			}
+			if memory, ok := allocatable["memory"].(string); ok {
+				if memoryBytes, err := parseResourceQuantityToBytes(memory); err == nil {
+					memoryQuota = memoryBytes // Use allocatable for quota
+				}
+			}
+		}
+
+		// Extract node count from cluster claims or version
+		if clusterClaims, ok := statusData["clusterClaims"].([]interface{}); ok {
+			for _, claimInterface := range clusterClaims {
+				if claim, ok := claimInterface.(map[string]interface{}); ok {
+					if claimName, ok := claim["name"].(string); ok {
+						if claimName == "core_worker.count" || claimName == "socket_worker.count" {
+							if value, ok := claim["value"].(string); ok {
+								if nodeCountInt, err := parseResourceQuantity(value); err == nil {
+									nodeCount += nodeCountInt
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return &ZoneResponse{
+		ID:              name,
+		Name:            name,
+		ClusterName:     name,
+		APIUrl:          apiUrl,
+		Status:          status,
+		Region:          region,
+		CloudProvider:   cloudProvider,
+		NodeCount:       nodeCount,
+		CPUCapacity:     cpuCapacity,
+		MemoryCapacity:  memoryCapacity,
+		StorageCapacity: storageCapacity,
+		CPUQuota:        cpuQuota,
+		MemoryQuota:     memoryQuota,
+		StorageQuota:    storageQuota,
+		Labels:          labels,
+		Annotations:     annotations,
+		CreatedAt:       createdAt,
+		UpdatedAt:       lastSync,
+		LastSync:        lastSync,
+	}
 }
 
 // GetZoneUtilization handles GET /api/v1/zones/:id/utilization
@@ -480,4 +804,128 @@ func convertStringMap(sm models.StringMap) map[string]string {
 		result[k] = string(v)
 	}
 	return result
+}
+
+// parseResourceQuantity parses Kubernetes resource quantities (e.g., "4", "8Gi", "100Gi")
+func parseResourceQuantity(quantity string) (int, error) {
+	if quantity == "" {
+		return 0, strconv.ErrSyntax
+	}
+
+	// Handle plain numbers
+	if val, err := strconv.Atoi(quantity); err == nil {
+		return val, nil
+	}
+
+	// Handle suffixed quantities
+	quantity = strings.TrimSpace(quantity)
+
+	// Binary suffixes (powers of 1024)
+	binarySuffixes := map[string]int64{
+		"Ki": 1024,
+		"Mi": 1024 * 1024,
+		"Gi": 1024 * 1024 * 1024,
+		"Ti": 1024 * 1024 * 1024 * 1024,
+		"Pi": 1024 * 1024 * 1024 * 1024 * 1024,
+		"Ei": 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
+	}
+
+	// Decimal suffixes (powers of 1000)
+	decimalSuffixes := map[string]int64{
+		"k": 1000,
+		"M": 1000 * 1000,
+		"G": 1000 * 1000 * 1000,
+		"T": 1000 * 1000 * 1000 * 1000,
+		"P": 1000 * 1000 * 1000 * 1000 * 1000,
+		"E": 1000 * 1000 * 1000 * 1000 * 1000 * 1000,
+	}
+
+	// Try binary suffixes first
+	for suffix, multiplier := range binarySuffixes {
+		if strings.HasSuffix(quantity, suffix) {
+			numStr := strings.TrimSuffix(quantity, suffix)
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				return int(num * float64(multiplier)), nil
+			}
+		}
+	}
+
+	// Try decimal suffixes
+	for suffix, multiplier := range decimalSuffixes {
+		if strings.HasSuffix(quantity, suffix) {
+			numStr := strings.TrimSuffix(quantity, suffix)
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				return int(num * float64(multiplier)), nil
+			}
+		}
+	}
+
+	// If no suffix matched, try parsing as float and convert to int
+	if num, err := strconv.ParseFloat(quantity, 64); err == nil {
+		return int(num), nil
+	}
+
+	return 0, strconv.ErrSyntax
+}
+
+// parseResourceQuantityToBytes parses Kubernetes resource quantities and returns the value in bytes
+func parseResourceQuantityToBytes(quantity string) (int, error) {
+	if quantity == "" {
+		return 0, strconv.ErrSyntax
+	}
+
+	// Handle plain numbers (assume bytes)
+	if val, err := strconv.Atoi(quantity); err == nil {
+		return val, nil
+	}
+
+	// Handle suffixed quantities
+	quantity = strings.TrimSpace(quantity)
+
+	// Binary suffixes (powers of 1024) - these are the correct ones for memory
+	binarySuffixes := map[string]int64{
+		"Ki": 1024,
+		"Mi": 1024 * 1024,
+		"Gi": 1024 * 1024 * 1024,
+		"Ti": 1024 * 1024 * 1024 * 1024,
+		"Pi": 1024 * 1024 * 1024 * 1024 * 1024,
+		"Ei": 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
+	}
+
+	// Decimal suffixes (powers of 1000)
+	decimalSuffixes := map[string]int64{
+		"k": 1000,
+		"M": 1000 * 1000,
+		"G": 1000 * 1000 * 1000,
+		"T": 1000 * 1000 * 1000 * 1000,
+		"P": 1000 * 1000 * 1000 * 1000 * 1000,
+		"E": 1000 * 1000 * 1000 * 1000 * 1000 * 1000,
+	}
+
+	// Try binary suffixes first (most common for Kubernetes memory)
+	for suffix, multiplier := range binarySuffixes {
+		if strings.HasSuffix(quantity, suffix) {
+			numStr := strings.TrimSuffix(quantity, suffix)
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				return int(num * float64(multiplier)), nil
+			}
+		}
+	}
+
+	// Try decimal suffixes
+	for suffix, multiplier := range decimalSuffixes {
+		if strings.HasSuffix(quantity, suffix) {
+			numStr := strings.TrimSuffix(quantity, suffix)
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				return int(num * float64(multiplier)), nil
+			}
+		}
+	}
+
+	// If no suffix matched, try parsing as float and convert to int (assume bytes)
+	if num, err := strconv.ParseFloat(quantity, 64); err == nil {
+		return int(num), nil
+	}
+
+	return 0, strconv.ErrSyntax
 }

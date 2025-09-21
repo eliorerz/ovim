@@ -90,50 +90,56 @@ func (s *PostgresStorage) migrate() error {
 
 // seedData populates the database with initial test data if it's empty
 func (s *PostgresStorage) seedData() error {
-	// Check if users already exist
+	now := time.Now()
+
+	// Check if users already exist - seed users only if none exist
 	var userCount int64
 	if err := s.db.Model(&models.User{}).Count(&userCount).Error; err != nil {
 		return fmt.Errorf("failed to count users: %w", err)
 	}
 
-	if userCount > 0 {
-		klog.Info("Database already contains data, skipping seeding")
-		return nil
-	}
-
-	adminHash, err := auth.HashPassword("adminpassword")
-	if err != nil {
-		return fmt.Errorf("failed to hash admin password: %w", err)
-	}
-
-	now := time.Now()
-
-	// Seed users
-	users := []*models.User{
-		{
-			ID:           "user-admin",
-			Username:     "admin",
-			Email:        "admin@ovim.local",
-			PasswordHash: adminHash,
-			Role:         models.RoleSystemAdmin,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-	}
-
-	for _, user := range users {
-		if err := s.db.Create(user).Error; err != nil {
-			return fmt.Errorf("failed to create user %s: %w", user.Username, err)
+	var usersSeeded int
+	if userCount == 0 {
+		adminHash, err := auth.HashPassword("adminpassword")
+		if err != nil {
+			return fmt.Errorf("failed to hash admin password: %w", err)
 		}
+
+		// Seed users
+		users := []*models.User{
+			{
+				ID:           "user-admin",
+				Username:     "admin",
+				Email:        "admin@ovim.local",
+				PasswordHash: adminHash,
+				Role:         models.RoleSystemAdmin,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+		}
+
+		for _, user := range users {
+			if err := s.db.Create(user).Error; err != nil {
+				return fmt.Errorf("failed to create user %s: %w", user.Username, err)
+			}
+		}
+		usersSeeded = len(users)
 	}
 
-	// No seed organizations - start with empty list
+	// Check if zones already exist - seed zones if none exist
+	var zoneCount int64
+	if err := s.db.Model(&models.Zone{}).Count(&zoneCount).Error; err != nil {
+		return fmt.Errorf("failed to count zones: %w", err)
+	}
 
-	// No seed VDCs - start with empty list
+	// No seed zones - zones will be dynamically created by ACM sync
+	var zonesSeeded int
 
-	// No seed templates - start with empty list
-
-	klog.Infof("Seeded database with %d users, 0 organizations, 0 VDCs, 0 templates", len(users))
+	if usersSeeded > 0 || zonesSeeded > 0 {
+		klog.Infof("Seeded database with %d users, %d zones", usersSeeded, zonesSeeded)
+	} else {
+		klog.Info("Database already contains data, skipping seeding")
+	}
 
 	return nil
 }

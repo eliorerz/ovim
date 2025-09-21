@@ -2,6 +2,7 @@ package acm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
@@ -70,13 +72,19 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	}
 
 	// Create dynamic client for custom resources
-	scheme := runtime.NewScheme()
-	if err := addManagedClusterToScheme(scheme); err != nil {
+	clientScheme := runtime.NewScheme()
+
+	// Add basic Kubernetes types to scheme first
+	if err := scheme.AddToScheme(clientScheme); err != nil {
+		return nil, fmt.Errorf("failed to add basic scheme: %w", err)
+	}
+
+	if err := addManagedClusterToScheme(clientScheme); err != nil {
 		return nil, fmt.Errorf("failed to add ManagedCluster to scheme: %w", err)
 	}
 
 	dynClient, err := client.New(config, client.Options{
-		Scheme: scheme,
+		Scheme: clientScheme,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
@@ -87,7 +95,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 		dynClient:  dynClient,
 		config:     config,
 		namespace:  opts.Namespace,
-		scheme:     scheme,
+		scheme:     clientScheme,
 	}
 
 	// Test connection
@@ -126,14 +134,52 @@ func (c *Client) healthCheck() error {
 	return nil
 }
 
-// ListManagedClusters retrieves all managed clusters from ACM
+// ListManagedClusters retrieves all managed clusters from ACM using raw REST API
 func (c *Client) ListManagedClusters(ctx context.Context) (*ManagedClusterList, error) {
-	clusters := &ManagedClusterList{}
+	klog.V(3).Info("Attempting to list managed clusters from ACM")
 
-	// List ManagedCluster resources
-	err := c.dynClient.List(ctx, clusters)
+	// Make a direct REST call to list managed clusters
+	result := c.kubeClient.CoreV1().RESTClient().Get().
+		AbsPath("/apis/cluster.open-cluster-management.io/v1/managedclusters").
+		Do(ctx)
+
+	data, err := result.Raw()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list managed clusters: %w", err)
+		klog.Errorf("ACM API call failed: %v", err)
+
+		// Check if ACM is installed by trying to access the API group
+		_, apiErr := c.kubeClient.Discovery().ServerResourcesForGroupVersion("cluster.open-cluster-management.io/v1")
+		if apiErr != nil {
+			return nil, fmt.Errorf("ACM (Advanced Cluster Management) is not installed or accessible in this cluster. API Group 'cluster.open-cluster-management.io/v1' not found: %w. Original error: %v", apiErr, err)
+		}
+
+		return nil, fmt.Errorf("failed to list managed clusters from ACM API - this may be due to insufficient RBAC permissions or ACM not being properly configured: %w", err)
+	}
+
+	// Parse the raw JSON response
+	var rawList map[string]interface{}
+	if err := json.Unmarshal(data, &rawList); err != nil {
+		return nil, fmt.Errorf("failed to decode managed clusters response: %w", err)
+	}
+
+	// Convert to our ManagedClusterList format
+	clusters := &ManagedClusterList{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "cluster.open-cluster-management.io/v1",
+			Kind:       "ManagedClusterList",
+		},
+	}
+
+	// Extract items from the raw response
+	if items, ok := rawList["items"].([]interface{}); ok {
+		for _, item := range items {
+			if clusterData, ok := item.(map[string]interface{}); ok {
+				cluster := c.convertRawToManagedCluster(clusterData)
+				if cluster != nil {
+					clusters.Items = append(clusters.Items, *cluster)
+				}
+			}
+		}
 	}
 
 	klog.V(4).Infof("Found %d managed clusters", len(clusters.Items))
@@ -345,4 +391,65 @@ func addManagedClusterToScheme(scheme *runtime.Scheme) error {
 	)
 
 	return nil
+}
+
+// convertRawToManagedCluster converts raw JSON data to ManagedCluster
+func (c *Client) convertRawToManagedCluster(data map[string]interface{}) *ManagedCluster {
+	cluster := &ManagedCluster{}
+
+	// Extract metadata
+	if metadata, ok := data["metadata"].(map[string]interface{}); ok {
+		if name, ok := metadata["name"].(string); ok {
+			cluster.Name = name
+		}
+		if labels, ok := metadata["labels"].(map[string]interface{}); ok {
+			cluster.Labels = make(map[string]string)
+			for k, v := range labels {
+				if str, ok := v.(string); ok {
+					cluster.Labels[k] = str
+				}
+			}
+		}
+	}
+
+	// Extract spec
+	if spec, ok := data["spec"].(map[string]interface{}); ok {
+		if configs, ok := spec["managedClusterClientConfigs"].([]interface{}); ok {
+			for _, config := range configs {
+				if configMap, ok := config.(map[string]interface{}); ok {
+					if url, ok := configMap["url"].(string); ok {
+						cluster.Spec.ManagedClusterClientConfigs = append(cluster.Spec.ManagedClusterClientConfigs, ClientConfig{
+							URL: url,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Extract status
+	if status, ok := data["status"].(map[string]interface{}); ok {
+		if conditions, ok := status["conditions"].([]interface{}); ok {
+			for _, condition := range conditions {
+				if condMap, ok := condition.(map[string]interface{}); ok {
+					var cond metav1.Condition
+					if condType, ok := condMap["type"].(string); ok {
+						cond.Type = condType
+					}
+					if condStatus, ok := condMap["status"].(string); ok {
+						cond.Status = metav1.ConditionStatus(condStatus)
+					}
+					cluster.Status.Conditions = append(cluster.Status.Conditions, cond)
+				}
+			}
+		}
+	}
+
+	// Set TypeMeta
+	cluster.TypeMeta = metav1.TypeMeta{
+		APIVersion: "cluster.open-cluster-management.io/v1",
+		Kind:       "ManagedCluster",
+	}
+
+	return cluster
 }
