@@ -363,6 +363,7 @@ type ZoneUtilization struct {
 	StorageUsed     int       `json:"storage_used"`
 	VDCCount        int       `json:"vdc_count"`
 	ActiveVDCCount  int       `json:"active_vdc_count"`
+	VMCount         int       `json:"vm_count"`
 	LastSync        time.Time `json:"last_sync"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

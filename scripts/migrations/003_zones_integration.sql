@@ -131,10 +131,12 @@ SELECT
     COALESCE(SUM(vdc.storage_quota), 0) as storage_used,
     COUNT(vdc.id) as vdc_count,
     COUNT(CASE WHEN vdc.phase = 'Active' THEN 1 END) as active_vdc_count,
+    COALESCE(COUNT(CASE WHEN vm.status NOT IN ('error', 'deleting') AND vm.id IS NOT NULL THEN 1 END), 0) as vm_count,
     z.last_sync,
     z.updated_at
 FROM zones z
 LEFT JOIN virtual_data_centers vdc ON z.id = vdc.zone_id
+LEFT JOIN virtual_machines vm ON vdc.id = vm.vdc_id
 GROUP BY z.id, z.name, z.status, z.cpu_capacity, z.memory_capacity,
          z.storage_capacity, z.cpu_quota, z.memory_quota, z.storage_quota,
          z.last_sync, z.updated_at;

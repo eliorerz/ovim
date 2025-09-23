@@ -30,6 +30,7 @@ type ZoneResponse struct {
 	CPUQuota        int               `json:"cpu_quota"`
 	MemoryQuota     int               `json:"memory_quota"`
 	StorageQuota    int               `json:"storage_quota"`
+	VMCount         int               `json:"vm_count"`
 	Labels          map[string]string `json:"labels,omitempty"`
 	Annotations     map[string]string `json:"annotations,omitempty"`
 	CreatedAt       string            `json:"created_at"`
@@ -48,6 +49,7 @@ type ZoneSummary struct {
 	CPUQuota      int    `json:"cpu_quota"`
 	MemoryQuota   int    `json:"memory_quota"`
 	StorageQuota  int    `json:"storage_quota"`
+	VMCount       int    `json:"vm_count"`
 }
 
 // ZoneUtilizationResponse represents zone utilization metrics
@@ -96,6 +98,7 @@ type SimpleZoneResponse struct {
 	Location        string `json:"location"`
 	Status          string `json:"status"`
 	ClusterEndpoint string `json:"cluster_endpoint,omitempty"`
+	VMCount         int    `json:"vm_count"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 }
@@ -157,6 +160,18 @@ func (s *Server) ListZones(c *gin.Context) {
 		return
 	}
 
+	// Get zone utilization for VM counts
+	var vmCountMap map[string]int
+	if allUtilizations, err := s.storage.GetZoneUtilization(); err == nil {
+		vmCountMap = make(map[string]int)
+		for _, util := range allUtilizations {
+			vmCountMap[util.ID] = util.VMCount
+		}
+	} else {
+		klog.Warningf("Failed to get zone utilizations for zone listing: %v", err)
+		vmCountMap = make(map[string]int) // Empty map as fallback
+	}
+
 	// Convert managed clusters to zones
 	var zones []SimpleZoneResponse
 	if items, ok := rawList["items"].([]interface{}); ok {
@@ -174,6 +189,10 @@ func (s *Server) ListZones(c *gin.Context) {
 					if region != "" && zone.Location != region {
 						continue
 					}
+
+					// Add VM count from utilization
+					zone.VMCount = vmCountMap[zone.ID]
+
 					zones = append(zones, *zone)
 				}
 			}
@@ -262,6 +281,7 @@ func convertManagedClusterToZone(clusterData map[string]interface{}) *SimpleZone
 		Location:        location,
 		Status:          status,
 		ClusterEndpoint: clusterEndpoint,
+		VMCount:         0, // Will be populated by the caller from zone utilization
 		CreatedAt:       createdAt,
 		UpdatedAt:       createdAt,
 	}
@@ -322,6 +342,16 @@ func (s *Server) GetZone(c *gin.Context) {
 			"error": "Zone not found",
 		})
 		return
+	}
+
+	// Get VM count from zone utilization
+	if allUtilizations, err := s.storage.GetZoneUtilization(); err == nil {
+		for _, util := range allUtilizations {
+			if util.ID == response.ID {
+				response.VMCount = util.VMCount
+				break
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, *response)
@@ -495,6 +525,7 @@ func convertManagedClusterToDetailedZone(clusterData map[string]interface{}) *Zo
 		CPUQuota:        cpuQuota,
 		MemoryQuota:     memoryQuota,
 		StorageQuota:    storageQuota,
+		VMCount:         0, // Will be populated by the caller from zone utilization
 		Labels:          labels,
 		Annotations:     annotations,
 		CreatedAt:       createdAt,
@@ -573,7 +604,7 @@ func (s *Server) GetZoneUtilization(c *gin.Context) {
 		MemoryUtilization:  memoryUtil,
 		StorageUtilization: storageUtil,
 		VDCCount:           utilization.VDCCount,
-		VMCount:            0, // VM count not tracked in current utilization model
+		VMCount:            utilization.VMCount,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -610,6 +641,18 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 		return
 	}
 
+	// Get zone utilization for VM counts
+	allUtilizations, err := s.storage.GetZoneUtilization()
+	if err != nil {
+		klog.Warningf("Failed to get zone utilizations for organization zones: %v", err)
+	}
+
+	// Create a map for quick lookup of VM counts
+	vmCountMap := make(map[string]int)
+	for _, util := range allUtilizations {
+		vmCountMap[util.ID] = util.VMCount
+	}
+
 	// Get zones that the organization has access to
 	var response []ZoneSummary
 	for _, access := range zoneAccess {
@@ -618,6 +661,8 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 			klog.Warningf("Failed to get zone %s for organization %s: %v", access.ZoneID, orgID, err)
 			continue
 		}
+
+		vmCount := vmCountMap[zone.ID] // Get VM count from utilization
 
 		response = append(response, ZoneSummary{
 			ID:            zone.ID,
@@ -629,6 +674,7 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 			CPUQuota:      access.CPUQuota,
 			MemoryQuota:   access.MemoryQuota,
 			StorageQuota:  access.StorageQuota,
+			VMCount:       vmCount,
 		})
 	}
 

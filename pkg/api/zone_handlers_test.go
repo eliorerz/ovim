@@ -268,6 +268,7 @@ func TestGetZoneUtilization(t *testing.T) {
 			MemoryUsed:  48,
 			StorageUsed: 150,
 			VDCCount:    2,
+			VMCount:     5,
 		},
 	}
 
@@ -290,7 +291,7 @@ func TestGetZoneUtilization(t *testing.T) {
 	assert.Equal(t, 24, response.CPUCapacity)
 	assert.Equal(t, 50.0, response.CPUUtilization) // 12/24 * 100
 	assert.Equal(t, 2, response.VDCCount)
-	assert.Equal(t, 0, response.VMCount) // VM count not tracked in current utilization model
+	assert.Equal(t, 5, response.VMCount) // VM count from zone utilization
 
 	mockStorage.AssertExpectations(t)
 }

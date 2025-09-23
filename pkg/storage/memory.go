@@ -908,7 +908,7 @@ func (s *MemoryStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) 
 	for _, zone := range s.zones {
 		// Calculate basic utilization from VDCs in this zone
 		var cpuUsed, memoryUsed, storageUsed int
-		var vdcCount, activeVDCCount int
+		var vdcCount, activeVDCCount, vmCount int
 
 		for _, vdc := range s.vdcs {
 			if vdc.ZoneID != nil && *vdc.ZoneID == zone.ID {
@@ -919,6 +919,21 @@ func (s *MemoryStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) 
 				cpuUsed += vdc.CPUQuota
 				memoryUsed += vdc.MemoryQuota
 				storageUsed += vdc.StorageQuota
+			}
+		}
+
+		// Count VMs in this zone by going through VDCs
+		for _, vm := range s.vms {
+			if vm.VDCID != nil {
+				// Check if this VM's VDC belongs to this zone
+				if vdc, exists := s.vdcs[*vm.VDCID]; exists {
+					if vdc.ZoneID != nil && *vdc.ZoneID == zone.ID {
+						// Only count VMs that are not in error or deleted state
+						if vm.Status != "error" && vm.Status != "deleting" {
+							vmCount++
+						}
+					}
+				}
 			}
 		}
 
@@ -937,6 +952,7 @@ func (s *MemoryStorage) GetZoneUtilization() ([]*models.ZoneUtilization, error) 
 			StorageUsed:     storageUsed,
 			VDCCount:        vdcCount,
 			ActiveVDCCount:  activeVDCCount,
+			VMCount:         vmCount,
 			LastSync:        zone.LastSync,
 			UpdatedAt:       zone.UpdatedAt,
 		}
