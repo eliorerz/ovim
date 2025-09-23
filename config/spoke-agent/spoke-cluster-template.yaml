@@ -56,6 +56,7 @@ spec:
       - name: spoke-agent
         image: ${SPOKE_AGENT_IMAGE}:${IMAGE_TAG}
         imagePullPolicy: Always
+        command: ["ovim_spoke_agent"]
         ports:
         - name: http
           containerPort: 8080

@@ -1,0 +1,24 @@
+---
+# NodePort service to expose OVIM server for spoke cluster communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-server-nodeport
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: ovim
+    app.kubernetes.io/part-of: ovim
+    ovim.io/service-type: external-access
+spec:
+  type: NodePort
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+    nodePort: 30443
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: ovim
+  sessionAffinity: None

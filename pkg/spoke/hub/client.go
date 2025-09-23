@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"math/rand"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -33,6 +36,12 @@ type HTTPClient struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// Retry configuration
+	maxRetries      int
+	baseRetryDelay  time.Duration
+	maxRetryDelay   time.Duration
+	retryBackoffFactor float64
 }
 
 // NewHTTPClient creates a new HTTP-based hub client
@@ -60,18 +69,32 @@ func NewHTTPClient(cfg *config.SpokeConfig, logger *slog.Logger) *HTTPClient {
 	httpClient := &http.Client{
 		Timeout: cfg.Hub.Timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
+			TLSClientConfig:       tlsConfig,
+			DisableKeepAlives:     false,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
 		},
 	}
 
 	return &HTTPClient{
-		config:     cfg,
-		httpClient: httpClient,
-		baseURL:    cfg.Hub.Endpoint,
-		logger:     logger,
-		operations: make(chan *spoke.Operation, 100),
-		ctx:        ctx,
-		cancel:     cancel,
+		config:             cfg,
+		httpClient:         httpClient,
+		baseURL:            cfg.Hub.Endpoint,
+		logger:             logger,
+		operations:         make(chan *spoke.Operation, 100),
+		ctx:                ctx,
+		cancel:             cancel,
+		maxRetries:         5,
+		baseRetryDelay:     1 * time.Second,
+		maxRetryDelay:      60 * time.Second,
+		retryBackoffFactor: 2.0,
 	}
 }
 
@@ -167,7 +190,7 @@ func (c *HTTPClient) SendStatusReport(ctx context.Context, report *spoke.StatusR
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to send status report: %w", err)
 	}
@@ -210,7 +233,7 @@ func (c *HTTPClient) SendOperationResult(ctx context.Context, result *spoke.Oper
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to send operation result: %w", err)
 	}
@@ -271,7 +294,7 @@ func (c *HTTPClient) pollForOperations() error {
 
 	c.addAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(c.ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to poll for operations: %w", err)
 	}
@@ -327,4 +350,111 @@ func (c *HTTPClient) updateLastContact() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lastContact = time.Now()
+}
+
+// isRetryableError determines if an error is worth retrying
+func (c *HTTPClient) isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Network errors are generally retryable
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+
+	// Context cancellation should not be retried
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return false
+	}
+
+	return true
+}
+
+// isRetryableStatusCode determines if an HTTP status code is worth retrying
+func (c *HTTPClient) isRetryableStatusCode(statusCode int) bool {
+	switch statusCode {
+	case http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+		http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
+}
+
+// calculateRetryDelay calculates the delay for the next retry attempt
+func (c *HTTPClient) calculateRetryDelay(attempt int) time.Duration {
+	delay := time.Duration(float64(c.baseRetryDelay) * math.Pow(c.retryBackoffFactor, float64(attempt)))
+	if delay > c.maxRetryDelay {
+		delay = c.maxRetryDelay
+	}
+
+	// Add some jitter to avoid thundering herd
+	jitter := time.Duration(float64(delay) * 0.1 * (2.0*rand.Float64() - 1.0))
+	return delay + jitter
+}
+
+// doRequestWithRetry performs an HTTP request with retry logic
+func (c *HTTPClient) doRequestWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var lastErr error
+	var resp *http.Response
+
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := c.calculateRetryDelay(attempt - 1)
+			c.logger.Debug("Retrying request",
+				"attempt", attempt,
+				"delay", delay,
+				"method", req.Method,
+				"url", req.URL.String())
+
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// Clone the request for retry attempts
+		reqClone := req.Clone(ctx)
+
+		resp, lastErr = c.httpClient.Do(reqClone)
+		if lastErr != nil {
+			if !c.isRetryableError(lastErr) {
+				c.logger.Debug("Non-retryable error", "error", lastErr)
+				break
+			}
+			c.logger.Warn("Request failed, will retry",
+				"attempt", attempt+1,
+				"error", lastErr,
+				"method", req.Method,
+				"url", req.URL.String())
+			continue
+		}
+
+		// Check if the status code is retryable
+		if c.isRetryableStatusCode(resp.StatusCode) {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("received retryable status code %d: %s", resp.StatusCode, string(body))
+			c.logger.Warn("Retryable status code",
+				"attempt", attempt+1,
+				"status_code", resp.StatusCode,
+				"method", req.Method,
+				"url", req.URL.String())
+			continue
+		}
+
+		// Success or non-retryable error
+		return resp, nil
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("request failed after %d attempts: %w", c.maxRetries+1, lastErr)
+	}
+
+	return resp, nil
 }

@@ -809,6 +809,34 @@ stack-port-forward:
 	@wait
 
 #################################################################################
+# Hub Server Setup for Spoke Communication
+#################################################################################
+
+## setup-hub-for-spokes: Configure hub server for spoke cluster communication
+setup-hub-for-spokes:
+	@echo "Setting up hub server for spoke cluster communication..."
+	@echo "Creating NodePort service for external access..."
+	@$(KUBECTL_CMD) apply -f config/spoke-agent/ovim-server-nodeport.yaml
+	@echo "Waiting for NodePort service to be ready..."
+	@$(KUBECTL_CMD) get service ovim-server-nodeport -n $(OVIM_NAMESPACE) --wait || true
+	@$(eval NODE_IP := $(shell $(KUBECTL_CMD) get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'))
+	@$(eval NODE_PORT := $(shell $(KUBECTL_CMD) get service ovim-server-nodeport -n $(OVIM_NAMESPACE) -o jsonpath='{.spec.ports[0].nodePort}'))
+	@echo ""
+	@echo "Hub server configured for spoke communication:"
+	@echo "============================================="
+	@echo "External endpoint: https://$(NODE_IP):$(NODE_PORT)"
+	@echo "Internal endpoint: https://ovim-server.$(OVIM_NAMESPACE).svc.cluster.local:8443"
+	@echo ""
+	@echo "Use the external endpoint for spoke clusters on different machines/networks"
+	@echo "Use the internal endpoint for spoke agents on the same cluster (hub zone agent)"
+
+## get-hub-endpoint: Get the external hub endpoint for spoke configuration
+get-hub-endpoint:
+	@$(eval NODE_IP := $(shell $(KUBECTL_CMD) get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'))
+	@$(eval NODE_PORT := $(shell $(KUBECTL_CMD) get service ovim-server-nodeport -n $(OVIM_NAMESPACE) -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30443"))
+	@echo "https://$(NODE_IP):$(NODE_PORT)"
+
+#################################################################################
 # Spoke Cluster Deployment Targets
 #################################################################################
 
@@ -830,11 +858,12 @@ deploy-spoke-agent:
 		echo "Usage: make deploy-spoke-agent SPOKE_KUBECONFIG=/path/to/kubeconfig CLUSTER_ID=cluster-name ZONE_ID=zone-name"; \
 		exit 1; \
 	fi
-	@$(eval HUB_ENDPOINT := $(or $(HUB_ENDPOINT),http://ovim-server.ovim-system.svc.cluster.local:8080))
-	@$(eval SPOKE_AGENT_IMAGE := $(or $(SPOKE_AGENT_IMAGE),quay.io/eerez/ovim-spoke-agent))
-	@$(eval SPOKE_IMAGE_TAG := $(or $(SPOKE_IMAGE_TAG),latest))
+	@$(eval AUTO_HUB_ENDPOINT := $(shell $(MAKE) get-hub-endpoint 2>/dev/null || echo "https://ovim-server.ovim-system.svc.cluster.local:8443"))
+	@$(eval HUB_ENDPOINT := $(or $(HUB_ENDPOINT),$(AUTO_HUB_ENDPOINT)))
+	@$(eval SPOKE_AGENT_IMAGE := $(or $(SPOKE_AGENT_IMAGE),quay.io/eerez/ovim))
+	@$(eval IMAGE_TAG := $(or $(IMAGE_TAG),with-spoke-agent))
 	@$(eval HUB_PROTOCOL := $(or $(HUB_PROTOCOL),http))
-	@$(eval HUB_TLS_ENABLED := $(or $(HUB_TLS_ENABLED),false))
+	@$(eval HUB_TLS_ENABLED := $(or $(HUB_TLS_ENABLED),true))
 	@$(eval HUB_TLS_SKIP_VERIFY := $(or $(HUB_TLS_SKIP_VERIFY),true))
 	@$(eval LOG_LEVEL := $(or $(LOG_LEVEL),info))
 	@$(eval API_ENABLED := $(or $(API_ENABLED),true))
@@ -969,7 +998,7 @@ spoke-logs:
 	fi
 
 ## deploy-stack-with-spokes: Deploy hub and spoke agents together
-deploy-stack-with-spokes: deploy-stack deploy-spoke-multiple
+deploy-stack-with-spokes: deploy-stack setup-hub-for-spokes deploy-spoke-multiple
 	@echo "Complete OVIM stack with spoke agents deployed!"
 	@echo ""
 	@echo "Hub cluster components:"

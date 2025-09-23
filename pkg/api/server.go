@@ -371,6 +371,36 @@ func (s *Server) setupRoutes() {
 				}
 			}
 		}
+
+		// Spoke agent routes (authentication via custom middleware)
+		spoke := api.Group("/spoke")
+		{
+			spokeHandlers := NewSpokeHandlers(s.storage)
+			spoke.Use(spokeHandlers.spokeAuthMiddleware())
+			{
+				// Agent status reporting
+				spoke.POST("/status", spokeHandlers.HandleStatusReport)
+
+				// Operation polling and results
+				spoke.GET("/operations", spokeHandlers.GetOperations)
+				spoke.POST("/operations/:operationId/result", spokeHandlers.HandleOperationResult)
+			}
+
+			// Admin routes for spoke management (protected by auth)
+			spokeAdmin := spoke.Group("/admin")
+			spokeAdmin.Use(s.authManager.RequireAuth())
+			spokeAdmin.Use(s.authManager.RequireRole("system_admin"))
+			{
+				// Queue operations for testing
+				spokeAdmin.POST("/operations/queue", spokeHandlers.QueueOperation)
+
+				// Get agent status
+				spokeAdmin.GET("/agents", spokeHandlers.GetAgentStatus)
+
+				// Get operation results
+				spokeAdmin.GET("/operations/:operationId/result", spokeHandlers.GetOperationResult)
+			}
+		}
 	}
 
 	klog.Infof("API routes configured with prefix %s", APIPrefix)
