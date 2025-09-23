@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovim-spoke-agent
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovim-spoke-agent
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+rules:
+# Namespace management for VDCs
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+# Resource quota and limit range management
+- apiGroups: [""]
+  resources: ["resourcequotas", "limitranges"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+# Pod and node metrics for resource monitoring
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+
+# Pod resource usage metrics
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["get", "list"]
+
+# Metrics API access
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+
+# KubeVirt VM management
+- apiGroups: ["kubevirt.io"]
+  resources: ["virtualmachines", "virtualmachineinstances"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+- apiGroups: ["kubevirt.io"]
+  resources: ["virtualmachines/status", "virtualmachineinstances/status"]
+  verbs: ["get", "list", "watch"]
+
+# CDI DataVolume management for VM storage
+- apiGroups: ["cdi.kubevirt.io"]
+  resources: ["datavolumes"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+# Network policy management
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+# Template access (for VM templates)
+- apiGroups: ["template.openshift.io"]
+  resources: ["templates"]
+  verbs: ["get", "list", "watch"]
+
+# ConfigMap and Secret access (for templates and configuration)
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+
+# Event creation for audit trail
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+# RBAC management for VDC access control
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+# Service and endpoint management
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+
+# Storage class access for VM storage
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+
+# PVC management for VM storage
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovim-spoke-agent
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ovim-spoke-agent
+subjects:
+- kind: ServiceAccount
+  name: ovim-spoke-agent
+  namespace: ovim-system

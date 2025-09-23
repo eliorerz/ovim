@@ -1,0 +1,174 @@
+# Template for deploying OVIM Spoke Agent to a spoke cluster
+# This file should be customized for each spoke cluster deployment
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ovim-system
+  labels:
+    name: ovim-system
+    app.kubernetes.io/part-of: ovim
+
+---
+# Spoke Agent Deployment with cluster-specific configuration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovim-spoke-agent
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+    app.kubernetes.io/version: "v1.0.0"
+    ovim.io/cluster-id: "${CLUSTER_ID}"
+    ovim.io/zone-id: "${ZONE_ID}"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ovim-spoke-agent
+      app.kubernetes.io/component: spoke-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ovim-spoke-agent
+        app.kubernetes.io/component: spoke-agent
+        app.kubernetes.io/part-of: ovim
+        app.kubernetes.io/version: "v1.0.0"
+        ovim.io/cluster-id: "${CLUSTER_ID}"
+        ovim.io/zone-id: "${ZONE_ID}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ovim-spoke-agent
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: spoke-agent
+        image: ${SPOKE_AGENT_IMAGE}:${IMAGE_TAG}
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        # Cluster-specific identification
+        - name: OVIM_AGENT_ID
+          value: "ovim-spoke-${CLUSTER_ID}"
+        - name: OVIM_CLUSTER_ID
+          value: "${CLUSTER_ID}"
+        - name: OVIM_ZONE_ID
+          value: "${ZONE_ID}"
+        - name: OVIM_VERSION
+          value: "${IMAGE_TAG}"
+
+        # Hub connection configuration
+        - name: OVIM_HUB_ENDPOINT
+          value: "${HUB_ENDPOINT}"
+        - name: OVIM_HUB_PROTOCOL
+          value: "${HUB_PROTOCOL}"
+        - name: OVIM_HUB_TLS_ENABLED
+          value: "${HUB_TLS_ENABLED}"
+        - name: OVIM_HUB_TLS_SKIP_VERIFY
+          value: "${HUB_TLS_SKIP_VERIFY}"
+
+        # Kubernetes configuration
+        - name: OVIM_K8S_IN_CLUSTER
+          value: "true"
+
+        # Local API configuration
+        - name: OVIM_API_ENABLED
+          value: "${API_ENABLED}"
+        - name: OVIM_API_ADDRESS
+          value: "0.0.0.0"
+        - name: OVIM_API_PORT
+          value: "8080"
+
+        # Logging configuration
+        - name: OVIM_LOG_LEVEL
+          value: "${LOG_LEVEL}"
+        - name: OVIM_LOG_FORMAT
+          value: "json"
+
+        # Feature flags
+        - name: OVIM_FEATURE_VDC_MANAGEMENT
+          value: "${FEATURE_VDC_MANAGEMENT}"
+        - name: OVIM_FEATURE_TEMPLATE_SYNC
+          value: "${FEATURE_TEMPLATE_SYNC}"
+        - name: OVIM_FEATURE_LOCAL_API
+          value: "${FEATURE_LOCAL_API}"
+        - name: OVIM_FEATURE_EVENT_RECORDING
+          value: "${FEATURE_EVENT_RECORDING}"
+
+        # Metrics and health
+        - name: OVIM_METRICS_ENABLED
+          value: "${METRICS_ENABLED}"
+        - name: OVIM_HEALTH_ENABLED
+          value: "${HEALTH_ENABLED}"
+        - name: OVIM_METRICS_COLLECTION_INTERVAL
+          value: "${METRICS_COLLECTION_INTERVAL}"
+        - name: OVIM_METRICS_REPORTING_INTERVAL
+          value: "${METRICS_REPORTING_INTERVAL}"
+
+        resources:
+          requests:
+            cpu: ${CPU_REQUEST}
+            memory: ${MEMORY_REQUEST}
+          limits:
+            cpu: ${CPU_LIMIT}
+            memory: ${MEMORY_LIMIT}
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+      nodeSelector:
+        kubernetes.io/os: linux
+        node-role.kubernetes.io/worker: ""
+
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300

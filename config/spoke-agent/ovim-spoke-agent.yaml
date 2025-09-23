@@ -1,0 +1,236 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovim-spoke-agent-config
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+data:
+  config.yaml: |
+    api:
+      enabled: true
+      address: "0.0.0.0"
+      port: 8080
+      tls: false
+
+    kubernetes:
+      in_cluster: true
+      qps: 20
+      burst: 30
+      timeout: "30s"
+      resync_interval: "10m"
+
+    metrics:
+      enabled: true
+      collection_interval: "30s"
+      reporting_interval: "60s"
+      retention_period: "24h"
+      include_node_metrics: true
+
+    health:
+      enabled: true
+      check_interval: "30s"
+      report_interval: "60s"
+      timeout: "10s"
+      failure_threshold: 3
+
+    logging:
+      level: "info"
+      format: "json"
+      output: "stdout"
+
+    features:
+      vdc_management: true
+      template_sync: true
+      network_policies: true
+      local_api: true
+      event_recording: true
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovim-spoke-agent
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+    app.kubernetes.io/version: "v1.0.0"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ovim-spoke-agent
+      app.kubernetes.io/component: spoke-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ovim-spoke-agent
+        app.kubernetes.io/component: spoke-agent
+        app.kubernetes.io/part-of: ovim
+        app.kubernetes.io/version: "v1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ovim-spoke-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: spoke-agent
+        image: quay.io/eerez/ovim-spoke-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        # Agent identification - these will be overridden by deployment
+        - name: OVIM_AGENT_ID
+          value: "ovim-spoke-agent"
+        - name: OVIM_CLUSTER_ID
+          value: "default-cluster"
+        - name: OVIM_ZONE_ID
+          value: "default-zone"
+        - name: OVIM_VERSION
+          value: "v1.0.0"
+
+        # Hub connection - these must be configured per deployment
+        - name: OVIM_HUB_ENDPOINT
+          value: "https://ovim-hub.ovim-system.svc.cluster.local:8443"
+        - name: OVIM_HUB_PROTOCOL
+          value: "http"
+        - name: OVIM_HUB_TLS_ENABLED
+          value: "false"
+        - name: OVIM_HUB_TLS_SKIP_VERIFY
+          value: "true"
+
+        # Kubernetes configuration
+        - name: OVIM_K8S_IN_CLUSTER
+          value: "true"
+
+        # Local API configuration
+        - name: OVIM_API_ENABLED
+          value: "true"
+        - name: OVIM_API_ADDRESS
+          value: "0.0.0.0"
+        - name: OVIM_API_PORT
+          value: "8080"
+
+        # Logging configuration
+        - name: OVIM_LOG_LEVEL
+          value: "info"
+        - name: OVIM_LOG_FORMAT
+          value: "json"
+
+        # Feature flags
+        - name: OVIM_FEATURE_VDC_MANAGEMENT
+          value: "true"
+        - name: OVIM_FEATURE_TEMPLATE_SYNC
+          value: "true"
+        - name: OVIM_FEATURE_LOCAL_API
+          value: "true"
+        - name: OVIM_FEATURE_EVENT_RECORDING
+          value: "true"
+
+        # Metrics and health
+        - name: OVIM_METRICS_ENABLED
+          value: "true"
+        - name: OVIM_HEALTH_ENABLED
+          value: "true"
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ovim
+          readOnly: true
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+
+      volumes:
+      - name: config
+        configMap:
+          name: ovim-spoke-agent-config
+
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-spoke-agent
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent
+    app.kubernetes.io/part-of: ovim
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: ovim-spoke-agent
+    app.kubernetes.io/component: spoke-agent

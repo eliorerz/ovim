@@ -6,8 +6,10 @@ PROJECT_NAME := ovim-backend
 BUILD_DIR := build
 BINARY_NAME := $(BUILD_DIR)/ovim_server
 CONTROLLER_BINARY_NAME := $(BUILD_DIR)/ovim_controller
+SPOKE_AGENT_BINARY_NAME := $(BUILD_DIR)/ovim_spoke_agent
 MAIN_PATH := ./cmd/ovim-server
 CONTROLLER_MAIN_PATH := ./cmd/controller
+SPOKE_AGENT_MAIN_PATH := ./cmd/ovim-spoke-agent
 MODULE_NAME := github.com/eliorerz/ovim-updated
 
 # Container configuration
@@ -237,6 +239,38 @@ build-controller: deps fmt
 		-o $(CONTROLLER_BINARY_NAME) $(CONTROLLER_MAIN_PATH)
 
 controller-build: build-controller
+
+build-spoke-agent: deps fmt
+	@echo "Building $(SPOKE_AGENT_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
+		$(GO_BUILD_FLAGS) $(LDFLAGS) \
+		-o $(SPOKE_AGENT_BINARY_NAME) $(SPOKE_AGENT_MAIN_PATH)
+
+spoke-agent-build: build-spoke-agent
+
+spoke-agent-run: spoke-agent-stop spoke-agent-build
+	@echo "Starting OVIM spoke agent..."
+	@OVIM_CLUSTER_ID="test-cluster" \
+	 OVIM_ZONE_ID="test-zone" \
+	 OVIM_HUB_ENDPOINT="http://localhost:8080" \
+	 OVIM_LOG_LEVEL=debug \
+	 ./$(SPOKE_AGENT_BINARY_NAME)
+
+spoke-agent-dev: spoke-agent-stop
+	@echo "Starting OVIM spoke agent in development mode..."
+	@OVIM_CLUSTER_ID="dev-cluster" \
+	 OVIM_ZONE_ID="dev-zone" \
+	 OVIM_HUB_ENDPOINT="http://localhost:8080" \
+	 OVIM_LOG_LEVEL=debug \
+	 OVIM_API_ENABLED=true \
+	 OVIM_FEATURE_LOCAL_API=true \
+	 go run $(SPOKE_AGENT_MAIN_PATH) --log-level=debug
+
+spoke-agent-stop:
+	@echo "Stopping OVIM spoke agent..."
+	@pkill -f "ovim_spoke_agent" || true
+	@pkill -f "ovim-spoke-agent" || true
 
 controller-run: controller-stop controller-build
 	@echo "Starting OVIM controller..."
@@ -774,6 +808,176 @@ stack-port-forward:
 	@$(KUBECTL_CMD) port-forward svc/ovim-postgresql 5433:5432 -n $(OVIM_NAMESPACE) &
 	@wait
 
+#################################################################################
+# Spoke Cluster Deployment Targets
+#################################################################################
+
+## deploy-spoke-agent: Deploy spoke agent to a single cluster
+deploy-spoke-agent:
+	@echo "Deploying OVIM spoke agent to cluster..."
+	@if [ -z "$(SPOKE_KUBECONFIG)" ]; then \
+		echo "Error: SPOKE_KUBECONFIG must be specified"; \
+		echo "Usage: make deploy-spoke-agent SPOKE_KUBECONFIG=/path/to/kubeconfig CLUSTER_ID=cluster-name ZONE_ID=zone-name"; \
+		exit 1; \
+	fi
+	@if [ -z "$(CLUSTER_ID)" ]; then \
+		echo "Error: CLUSTER_ID must be specified"; \
+		echo "Usage: make deploy-spoke-agent SPOKE_KUBECONFIG=/path/to/kubeconfig CLUSTER_ID=cluster-name ZONE_ID=zone-name"; \
+		exit 1; \
+	fi
+	@if [ -z "$(ZONE_ID)" ]; then \
+		echo "Error: ZONE_ID must be specified"; \
+		echo "Usage: make deploy-spoke-agent SPOKE_KUBECONFIG=/path/to/kubeconfig CLUSTER_ID=cluster-name ZONE_ID=zone-name"; \
+		exit 1; \
+	fi
+	@$(eval HUB_ENDPOINT := $(or $(HUB_ENDPOINT),http://ovim-server.ovim-system.svc.cluster.local:8080))
+	@$(eval SPOKE_AGENT_IMAGE := $(or $(SPOKE_AGENT_IMAGE),quay.io/eerez/ovim-spoke-agent))
+	@$(eval SPOKE_IMAGE_TAG := $(or $(SPOKE_IMAGE_TAG),latest))
+	@$(eval HUB_PROTOCOL := $(or $(HUB_PROTOCOL),http))
+	@$(eval HUB_TLS_ENABLED := $(or $(HUB_TLS_ENABLED),false))
+	@$(eval HUB_TLS_SKIP_VERIFY := $(or $(HUB_TLS_SKIP_VERIFY),true))
+	@$(eval LOG_LEVEL := $(or $(LOG_LEVEL),info))
+	@$(eval API_ENABLED := $(or $(API_ENABLED),true))
+	@$(eval METRICS_ENABLED := $(or $(METRICS_ENABLED),true))
+	@$(eval HEALTH_ENABLED := $(or $(HEALTH_ENABLED),true))
+	@$(eval FEATURE_VDC_MANAGEMENT := $(or $(FEATURE_VDC_MANAGEMENT),true))
+	@$(eval FEATURE_TEMPLATE_SYNC := $(or $(FEATURE_TEMPLATE_SYNC),true))
+	@$(eval FEATURE_LOCAL_API := $(or $(FEATURE_LOCAL_API),true))
+	@$(eval FEATURE_EVENT_RECORDING := $(or $(FEATURE_EVENT_RECORDING),true))
+	@$(eval METRICS_COLLECTION_INTERVAL := $(or $(METRICS_COLLECTION_INTERVAL),30s))
+	@$(eval METRICS_REPORTING_INTERVAL := $(or $(METRICS_REPORTING_INTERVAL),60s))
+	@$(eval CPU_REQUEST := $(or $(CPU_REQUEST),100m))
+	@$(eval MEMORY_REQUEST := $(or $(MEMORY_REQUEST),128Mi))
+	@$(eval CPU_LIMIT := $(or $(CPU_LIMIT),500m))
+	@$(eval MEMORY_LIMIT := $(or $(MEMORY_LIMIT),512Mi))
+	@echo "Deploying to cluster: $(CLUSTER_ID)"
+	@echo "Zone: $(ZONE_ID)"
+	@echo "Hub endpoint: $(HUB_ENDPOINT)"
+	@echo "Image: $(SPOKE_AGENT_IMAGE):$(SPOKE_IMAGE_TAG)"
+	@echo ""
+	@echo "Creating namespace..."
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl create namespace ovim-system --dry-run=client -o yaml | KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl apply -f -
+	@echo "Applying RBAC..."
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl apply -f config/spoke-agent/ovim-spoke-agent-rbac.yaml
+	@echo "Creating deployment..."
+	@sed -e 's|$${CLUSTER_ID}|$(CLUSTER_ID)|g' \
+	     -e 's|$${ZONE_ID}|$(ZONE_ID)|g' \
+	     -e 's|$${HUB_ENDPOINT}|$(HUB_ENDPOINT)|g' \
+	     -e 's|$${SPOKE_AGENT_IMAGE}|$(SPOKE_AGENT_IMAGE)|g' \
+	     -e 's|$${IMAGE_TAG}|$(SPOKE_IMAGE_TAG)|g' \
+	     -e 's|$${HUB_PROTOCOL}|$(HUB_PROTOCOL)|g' \
+	     -e 's|$${HUB_TLS_ENABLED}|$(HUB_TLS_ENABLED)|g' \
+	     -e 's|$${HUB_TLS_SKIP_VERIFY}|$(HUB_TLS_SKIP_VERIFY)|g' \
+	     -e 's|$${LOG_LEVEL}|$(LOG_LEVEL)|g' \
+	     -e 's|$${API_ENABLED}|$(API_ENABLED)|g' \
+	     -e 's|$${METRICS_ENABLED}|$(METRICS_ENABLED)|g' \
+	     -e 's|$${HEALTH_ENABLED}|$(HEALTH_ENABLED)|g' \
+	     -e 's|$${FEATURE_VDC_MANAGEMENT}|$(FEATURE_VDC_MANAGEMENT)|g' \
+	     -e 's|$${FEATURE_TEMPLATE_SYNC}|$(FEATURE_TEMPLATE_SYNC)|g' \
+	     -e 's|$${FEATURE_LOCAL_API}|$(FEATURE_LOCAL_API)|g' \
+	     -e 's|$${FEATURE_EVENT_RECORDING}|$(FEATURE_EVENT_RECORDING)|g' \
+	     -e 's|$${METRICS_COLLECTION_INTERVAL}|$(METRICS_COLLECTION_INTERVAL)|g' \
+	     -e 's|$${METRICS_REPORTING_INTERVAL}|$(METRICS_REPORTING_INTERVAL)|g' \
+	     -e 's|$${CPU_REQUEST}|$(CPU_REQUEST)|g' \
+	     -e 's|$${MEMORY_REQUEST}|$(MEMORY_REQUEST)|g' \
+	     -e 's|$${CPU_LIMIT}|$(CPU_LIMIT)|g' \
+	     -e 's|$${MEMORY_LIMIT}|$(MEMORY_LIMIT)|g' \
+	     config/spoke-agent/spoke-cluster-template.yaml | KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl apply -f -
+	@echo "Waiting for deployment to be ready..."
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl rollout status deployment/ovim-spoke-agent -n ovim-system --timeout=300s
+	@echo "Spoke agent deployed successfully!"
+
+## deploy-spoke-multiple: Deploy spoke agent to multiple clusters
+deploy-spoke-multiple:
+	@echo "Deploying OVIM spoke agents to multiple clusters..."
+	@if [ -z "$(SPOKE_CLUSTERS)" ]; then \
+		echo "Error: SPOKE_CLUSTERS must be specified"; \
+		echo "Usage: make deploy-spoke-multiple SPOKE_CLUSTERS='cluster1:/path/to/kubeconfig1:zone1 cluster2:/path/to/kubeconfig2:zone2'"; \
+		echo ""; \
+		echo "Example:"; \
+		echo "  make deploy-spoke-multiple SPOKE_CLUSTERS='spoke1:~/.kube/spoke1:east-1 spoke2:~/.kube/spoke2:west-1'"; \
+		exit 1; \
+	fi
+	@for cluster_spec in $(SPOKE_CLUSTERS); do \
+		cluster_id=$$(echo $$cluster_spec | cut -d: -f1); \
+		kubeconfig=$$(echo $$cluster_spec | cut -d: -f2); \
+		zone_id=$$(echo $$cluster_spec | cut -d: -f3); \
+		echo ""; \
+		echo "Deploying to cluster: $$cluster_id (zone: $$zone_id)"; \
+		echo "========================================"; \
+		$(MAKE) deploy-spoke-agent SPOKE_KUBECONFIG=$$kubeconfig CLUSTER_ID=$$cluster_id ZONE_ID=$$zone_id || echo "Failed to deploy to $$cluster_id"; \
+	done
+	@echo ""
+	@echo "Multi-cluster deployment completed!"
+
+## undeploy-spoke-agent: Remove spoke agent from a cluster
+undeploy-spoke-agent:
+	@echo "Removing OVIM spoke agent from cluster..."
+	@if [ -z "$(SPOKE_KUBECONFIG)" ]; then \
+		echo "Error: SPOKE_KUBECONFIG must be specified"; \
+		echo "Usage: make undeploy-spoke-agent SPOKE_KUBECONFIG=/path/to/kubeconfig"; \
+		exit 1; \
+	fi
+	@echo "Removing spoke agent deployment..."
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl delete deployment ovim-spoke-agent -n ovim-system --ignore-not-found=true
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl delete service ovim-spoke-agent -n ovim-system --ignore-not-found=true
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl delete configmap ovim-spoke-agent-config -n ovim-system --ignore-not-found=true
+	@echo "Removing RBAC..."
+	@KUBECONFIG=$(SPOKE_KUBECONFIG) kubectl delete -f config/spoke-agent/ovim-spoke-agent-rbac.yaml --ignore-not-found=true
+	@echo "Spoke agent removed successfully!"
+
+## spoke-status: Show status of spoke agents across clusters
+spoke-status:
+	@echo "OVIM Spoke Agent Status:"
+	@echo "======================="
+	@if [ -z "$(SPOKE_CLUSTERS)" ]; then \
+		echo "No SPOKE_CLUSTERS specified."; \
+		echo "Set SPOKE_CLUSTERS='cluster1:/path/to/kubeconfig1:zone1 cluster2:/path/to/kubeconfig2:zone2'"; \
+	else \
+		for cluster_spec in $(SPOKE_CLUSTERS); do \
+			cluster_id=$$(echo $$cluster_spec | cut -d: -f1); \
+			kubeconfig=$$(echo $$cluster_spec | cut -d: -f2); \
+			zone_id=$$(echo $$cluster_spec | cut -d: -f3); \
+			echo ""; \
+			echo "Cluster: $$cluster_id (zone: $$zone_id)"; \
+			echo "------------------------------"; \
+			if KUBECONFIG=$$kubeconfig kubectl get namespace ovim-system >/dev/null 2>&1; then \
+				echo "Namespace: EXISTS"; \
+				KUBECONFIG=$$kubeconfig kubectl get deployment,pod,service -n ovim-system -l app.kubernetes.io/name=ovim-spoke-agent 2>/dev/null || echo "  No spoke agent found"; \
+			else \
+				echo "Namespace: NOT FOUND"; \
+			fi; \
+		done; \
+	fi
+
+## spoke-logs: Show logs from spoke agents
+spoke-logs:
+	@echo "OVIM Spoke Agent Logs:"
+	@echo "====================="
+	@if [ -z "$(SPOKE_CLUSTERS)" ]; then \
+		echo "No SPOKE_CLUSTERS specified."; \
+		echo "Set SPOKE_CLUSTERS='cluster1:/path/to/kubeconfig1:zone1'"; \
+	else \
+		for cluster_spec in $(SPOKE_CLUSTERS); do \
+			cluster_id=$$(echo $$cluster_spec | cut -d: -f1); \
+			kubeconfig=$$(echo $$cluster_spec | cut -d: -f2); \
+			echo ""; \
+			echo "Logs from cluster: $$cluster_id"; \
+			echo "-------------------------------"; \
+			KUBECONFIG=$$kubeconfig kubectl logs -l app.kubernetes.io/name=ovim-spoke-agent -n ovim-system --tail=20 --prefix=true 2>/dev/null || echo "  No logs found"; \
+		done; \
+	fi
+
+## deploy-stack-with-spokes: Deploy hub and spoke agents together
+deploy-stack-with-spokes: deploy-stack deploy-spoke-multiple
+	@echo "Complete OVIM stack with spoke agents deployed!"
+	@echo ""
+	@echo "Hub cluster components:"
+	@$(MAKE) stack-status
+	@echo ""
+	@echo "Spoke cluster agents:"
+	@$(MAKE) spoke-status
+
 # Build UI container (helper target)
 build-ui:
 	@echo "Building OVIM UI container..."
@@ -792,6 +996,21 @@ build-push: clean
 	podman push quay.io/eerez/ovim:$(UNIQUE_TAG)
 	podman push quay.io/eerez/ovim:latest
 	@echo "Backend image pushed with tag: $(UNIQUE_TAG)"
+
+## build-push-spoke-agent: Build and push spoke agent container
+build-push-spoke-agent: clean
+	@echo "Building and pushing spoke agent container with unique tag..."
+	$(eval UNIQUE_TAG := $(BUILD_TIMESTAMP)-$(GIT_SHORT_COMMIT))
+	@echo "Using tag: $(UNIQUE_TAG)"
+	podman build --no-cache -f Dockerfile.spoke-agent -t quay.io/eerez/ovim-spoke-agent:$(UNIQUE_TAG) .
+	podman tag quay.io/eerez/ovim-spoke-agent:$(UNIQUE_TAG) quay.io/eerez/ovim-spoke-agent:latest
+	podman push quay.io/eerez/ovim-spoke-agent:$(UNIQUE_TAG)
+	podman push quay.io/eerez/ovim-spoke-agent:latest
+	@echo "Spoke agent image pushed with tag: $(UNIQUE_TAG)"
+
+## build-push-all: Build and push both hub and spoke agent containers
+build-push-all: build-push build-push-spoke-agent
+	@echo "All container images built and pushed successfully"
 
 ## deploy-image: Update backend deployment with latest unique image
 deploy-image:
