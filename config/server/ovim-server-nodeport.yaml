@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-server-external
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: ovim
+    ovim.io/service-type: external
+spec:
+  type: NodePort
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+    nodePort: 32443  # Fixed NodePort for consistent external access
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: ovim
+  sessionAffinity: None
