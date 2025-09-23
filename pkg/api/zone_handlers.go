@@ -207,13 +207,13 @@ func (s *Server) ListZones(c *gin.Context) {
 						continue
 					}
 
-					// Add VM count from utilization
-					zone.VMCount = vmCountMap[zone.ID]
-
-					// Add spoke agent status if available
+					// Add spoke agent status if available and use it for VM count
 					if agentStatus, exists := zoneAgentStatuses[zone.ID]; exists {
 						// Calculate if agent is connected (last contact within 2 minutes)
 						isConnected := time.Since(agentStatus.LastHubContact) < 2*time.Minute
+
+						// Use VM count from spoke agent (real-time data)
+						zone.VMCount = len(agentStatus.VMs)
 
 						zone.SpokeAgent = &SpokeAgentZoneStatus{
 							AgentID:     agentStatus.AgentID,
@@ -225,6 +225,9 @@ func (s *Server) ListZones(c *gin.Context) {
 							VDCCount:    len(agentStatus.VDCs),
 							ErrorCount:  len(agentStatus.Errors),
 						}
+					} else {
+						// Fallback to storage utilization if no spoke agent available
+						zone.VMCount = vmCountMap[zone.ID]
 					}
 
 					zones = append(zones, *zone)
@@ -378,12 +381,32 @@ func (s *Server) GetZone(c *gin.Context) {
 		return
 	}
 
-	// Get VM count from zone utilization
-	if allUtilizations, err := s.storage.GetZoneUtilization(); err == nil {
-		for _, util := range allUtilizations {
-			if util.ID == response.ID {
-				response.VMCount = util.VMCount
-				break
+	// Get VM count from spoke agent status first, fallback to zone utilization
+	zoneAgentStatuses := s.spokeHandlers.GetAllZoneStatuses()
+	if agentStatus, exists := zoneAgentStatuses[response.ID]; exists {
+		// Use VM count from spoke agent (real-time data)
+		response.VMCount = len(agentStatus.VMs)
+
+		// Also add spoke agent status to detailed response
+		isConnected := time.Since(agentStatus.LastHubContact) < 2*time.Minute
+		response.SpokeAgent = &SpokeAgentZoneStatus{
+			AgentID:     agentStatus.AgentID,
+			Status:      agentStatus.Status,
+			LastContact: agentStatus.LastHubContact,
+			Version:     agentStatus.Version,
+			IsConnected: isConnected,
+			VMCount:     len(agentStatus.VMs),
+			VDCCount:    len(agentStatus.VDCs),
+			ErrorCount:  len(agentStatus.Errors),
+		}
+	} else {
+		// Fallback to storage utilization if no spoke agent available
+		if allUtilizations, err := s.storage.GetZoneUtilization(); err == nil {
+			for _, util := range allUtilizations {
+				if util.ID == response.ID {
+					response.VMCount = util.VMCount
+					break
+				}
 			}
 		}
 	}
@@ -675,13 +698,16 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 		return
 	}
 
-	// Get zone utilization for VM counts
+	// Get spoke agent statuses for VM counts (prioritize over storage utilization)
+	zoneAgentStatuses := s.spokeHandlers.GetAllZoneStatuses()
+
+	// Also get zone utilization as fallback
 	allUtilizations, err := s.storage.GetZoneUtilization()
 	if err != nil {
 		klog.Warningf("Failed to get zone utilizations for organization zones: %v", err)
 	}
 
-	// Create a map for quick lookup of VM counts
+	// Create a map for quick lookup of VM counts from storage (fallback)
 	vmCountMap := make(map[string]int)
 	for _, util := range allUtilizations {
 		vmCountMap[util.ID] = util.VMCount
@@ -696,7 +722,13 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 			continue
 		}
 
-		vmCount := vmCountMap[zone.ID] // Get VM count from utilization
+		// Get VM count from spoke agent first, fallback to storage utilization
+		vmCount := 0
+		if agentStatus, exists := zoneAgentStatuses[zone.ID]; exists {
+			vmCount = len(agentStatus.VMs) // Use real-time data from spoke agent
+		} else {
+			vmCount = vmCountMap[zone.ID] // Fallback to storage utilization
+		}
 
 		response = append(response, ZoneSummary{
 			ID:            zone.ID,

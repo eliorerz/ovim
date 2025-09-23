@@ -4,20 +4,40 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/eliorerz/ovim-updated/pkg/spoke"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/config"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
 // Manager implements the VMManager interface for KubeVirt VM management
 type Manager struct {
-	config     *config.SpokeConfig
-	logger     *slog.Logger
-	kubeClient kubernetes.Interface
-	restConfig *rest.Config
+	config        *config.SpokeConfig
+	logger        *slog.Logger
+	kubeClient    kubernetes.Interface
+	dynamicClient dynamic.Interface
+	restConfig    *rest.Config
 }
+
+var (
+	// KubeVirt resource definitions
+	vmGVR = schema.GroupVersionResource{
+		Group:    "kubevirt.io",
+		Version:  "v1",
+		Resource: "virtualmachines",
+	}
+	vmiGVR = schema.GroupVersionResource{
+		Group:    "kubevirt.io",
+		Version:  "v1",
+		Resource: "virtualmachineinstances",
+	}
+)
 
 // NewManager creates a new VM manager
 func NewManager(cfg *config.SpokeConfig, logger *slog.Logger) (*Manager, error) {
@@ -33,11 +53,18 @@ func NewManager(cfg *config.SpokeConfig, logger *slog.Logger) (*Manager, error) 
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	// Create dynamic client for KubeVirt resources
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic Kubernetes client: %w", err)
+	}
+
 	return &Manager{
-		config:     cfg,
-		logger:     logger.With("component", "vm-manager"),
-		kubeClient: kubeClient,
-		restConfig: restConfig,
+		config:        cfg,
+		logger:        logger.With("component", "vm-manager"),
+		kubeClient:    kubeClient,
+		dynamicClient: dynamicClient,
+		restConfig:    restConfig,
 	}, nil
 }
 
@@ -88,9 +115,25 @@ func (m *Manager) GetVMStatus(ctx context.Context, namespace, name string) (*spo
 func (m *Manager) ListVMs(ctx context.Context) ([]spoke.VMStatus, error) {
 	m.logger.Debug("Listing VMs")
 
-	// TODO: Implement KubeVirt VM listing
-	// For now, return an empty list
-	return []spoke.VMStatus{}, nil
+	// List all VirtualMachines across all namespaces
+	vmList, err := m.dynamicClient.Resource(vmGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		m.logger.Error("Failed to list VirtualMachines", "error", err)
+		return nil, fmt.Errorf("failed to list VirtualMachines: %w", err)
+	}
+
+	var vmStatuses []spoke.VMStatus
+	for _, vm := range vmList.Items {
+		vmStatus, err := m.convertUnstructuredToVMStatus(&vm)
+		if err != nil {
+			m.logger.Warn("Failed to convert VM to status", "vm_name", vm.GetName(), "error", err)
+			continue
+		}
+		vmStatuses = append(vmStatuses, *vmStatus)
+	}
+
+	m.logger.Debug("Listed VMs successfully", "count", len(vmStatuses))
+	return vmStatuses, nil
 }
 
 // StartVM starts a virtual machine
@@ -134,6 +177,10 @@ func (m *Manager) ValidateConfiguration() error {
 		return fmt.Errorf("kubernetes client is not initialized")
 	}
 
+	if m.dynamicClient == nil {
+		return fmt.Errorf("dynamic kubernetes client is not initialized")
+	}
+
 	// Test connectivity to Kubernetes API
 	_, err := m.kubeClient.Discovery().ServerVersion()
 	if err != nil {
@@ -142,4 +189,94 @@ func (m *Manager) ValidateConfiguration() error {
 
 	m.logger.Info("VM manager configuration validated successfully")
 	return nil
+}
+
+// convertUnstructuredToVMStatus converts an unstructured KubeVirt VM to VMStatus
+func (m *Manager) convertUnstructuredToVMStatus(vm *unstructured.Unstructured) (*spoke.VMStatus, error) {
+	name := vm.GetName()
+	namespace := vm.GetNamespace()
+	labels := vm.GetLabels()
+	createdAt := vm.GetCreationTimestamp().Time
+
+	// Extract VM status and phase from the VM object
+	status := "Unknown"
+	phase := "Unknown"
+
+	// Get status from the VM object
+	if statusMap, found, err := unstructured.NestedMap(vm.Object, "status"); found && err == nil {
+		if conditionsRaw, found, err := unstructured.NestedSlice(statusMap, "conditions"); found && err == nil {
+			for _, conditionRaw := range conditionsRaw {
+				if condition, ok := conditionRaw.(map[string]interface{}); ok {
+					if condType, found := condition["type"].(string); found && condType == "Ready" {
+						if condStatus, found := condition["status"].(string); found {
+							if condStatus == "True" {
+								status = "Running"
+							} else {
+								status = "NotReady"
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Try to get phase from printableStatus
+		if printableStatus, found, err := unstructured.NestedString(statusMap, "printableStatus"); found && err == nil {
+			phase = printableStatus
+		}
+	}
+
+	// If we couldn't determine status from conditions, check if VM is started
+	if status == "Unknown" {
+		if spec, found, err := unstructured.NestedMap(vm.Object, "spec"); found && err == nil {
+			if running, found, err := unstructured.NestedBool(spec, "running"); found && err == nil {
+				if running {
+					status = "Starting"
+					phase = "Starting"
+				} else {
+					status = "Stopped"
+					phase = "Stopped"
+				}
+			}
+		}
+	}
+
+	// Extract resource specifications
+	cpu := ""
+	memory := ""
+	storage := ""
+
+	if spec, found, err := unstructured.NestedMap(vm.Object, "spec"); found && err == nil {
+		if template, found, err := unstructured.NestedMap(spec, "template"); found && err == nil {
+			if templateSpec, found, err := unstructured.NestedMap(template, "spec"); found && err == nil {
+				if domain, found, err := unstructured.NestedMap(templateSpec, "domain"); found && err == nil {
+					if resources, found, err := unstructured.NestedMap(domain, "resources"); found && err == nil {
+						if requests, found, err := unstructured.NestedMap(resources, "requests"); found && err == nil {
+							if cpuVal, found, err := unstructured.NestedString(requests, "cpu"); found && err == nil {
+								cpu = cpuVal
+							}
+							if memVal, found, err := unstructured.NestedString(requests, "memory"); found && err == nil {
+								memory = memVal
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	vmStatus := &spoke.VMStatus{
+		Name:      name,
+		Namespace: namespace,
+		Status:    status,
+		Phase:     phase,
+		CPU:       cpu,
+		Memory:    memory,
+		Storage:   storage,
+		Labels:    labels,
+		CreatedAt: createdAt,
+		UpdatedAt: time.Now(),
+	}
+
+	return vmStatus, nil
 }
