@@ -74,6 +74,32 @@ func NewSpokeHandlers(storage storage.Storage) *SpokeHandlers {
 	}
 }
 
+// GetZoneAgentStatus returns the status of spoke agent for a specific zone
+func (h *SpokeHandlers) GetZoneAgentStatus(zoneID string) *SpokeStatusReport {
+	h.statusMutex.RLock()
+	defer h.statusMutex.RUnlock()
+
+	// Find agent by zone ID
+	for _, status := range h.agentStatuses {
+		if status.ZoneID == zoneID {
+			return status
+		}
+	}
+	return nil
+}
+
+// GetAllZoneStatuses returns a map of zone IDs to their spoke agent status
+func (h *SpokeHandlers) GetAllZoneStatuses() map[string]*SpokeStatusReport {
+	h.statusMutex.RLock()
+	defer h.statusMutex.RUnlock()
+
+	zoneStatuses := make(map[string]*SpokeStatusReport)
+	for _, status := range h.agentStatuses {
+		zoneStatuses[status.ZoneID] = status
+	}
+	return zoneStatuses
+}
+
 // HandleStatusReport handles status reports from spoke agents
 // POST /api/v1/spoke/status
 func (h *SpokeHandlers) HandleStatusReport(c *gin.Context) {
@@ -178,10 +204,10 @@ func (h *SpokeHandlers) HandleOperationResult(c *gin.Context) {
 // POST /api/v1/spoke/operations/queue
 func (h *SpokeHandlers) QueueOperation(c *gin.Context) {
 	var request struct {
-		AgentID   string                 `json:"agent_id"`
-		Type      string                 `json:"type"`
-		Payload   map[string]interface{} `json:"payload"`
-		TimeoutSecs int                  `json:"timeout_seconds,omitempty"`
+		AgentID     string                 `json:"agent_id"`
+		Type        string                 `json:"type"`
+		Payload     map[string]interface{} `json:"payload"`
+		TimeoutSecs int                    `json:"timeout_seconds,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {

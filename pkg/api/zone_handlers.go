@@ -16,26 +16,27 @@ import (
 
 // ZoneResponse represents a zone in API responses
 type ZoneResponse struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	ClusterName     string            `json:"cluster_name"`
-	APIUrl          string            `json:"api_url"`
-	Status          string            `json:"status"`
-	Region          string            `json:"region"`
-	CloudProvider   string            `json:"cloud_provider"`
-	NodeCount       int               `json:"node_count"`
-	CPUCapacity     int               `json:"cpu_capacity"`
-	MemoryCapacity  int               `json:"memory_capacity"`
-	StorageCapacity int               `json:"storage_capacity"`
-	CPUQuota        int               `json:"cpu_quota"`
-	MemoryQuota     int               `json:"memory_quota"`
-	StorageQuota    int               `json:"storage_quota"`
-	VMCount         int               `json:"vm_count"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	Annotations     map[string]string `json:"annotations,omitempty"`
-	CreatedAt       string            `json:"created_at"`
-	UpdatedAt       string            `json:"updated_at"`
-	LastSync        string            `json:"last_sync"`
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	ClusterName     string                `json:"cluster_name"`
+	APIUrl          string                `json:"api_url"`
+	Status          string                `json:"status"`
+	Region          string                `json:"region"`
+	CloudProvider   string                `json:"cloud_provider"`
+	NodeCount       int                   `json:"node_count"`
+	CPUCapacity     int                   `json:"cpu_capacity"`
+	MemoryCapacity  int                   `json:"memory_capacity"`
+	StorageCapacity int                   `json:"storage_capacity"`
+	CPUQuota        int                   `json:"cpu_quota"`
+	MemoryQuota     int                   `json:"memory_quota"`
+	StorageQuota    int                   `json:"storage_quota"`
+	VMCount         int                   `json:"vm_count"`
+	Labels          map[string]string     `json:"labels,omitempty"`
+	Annotations     map[string]string     `json:"annotations,omitempty"`
+	CreatedAt       string                `json:"created_at"`
+	UpdatedAt       string                `json:"updated_at"`
+	LastSync        string                `json:"last_sync"`
+	SpokeAgent      *SpokeAgentZoneStatus `json:"spoke_agent,omitempty"`
 }
 
 // ZoneSummary represents a simplified zone for listing
@@ -92,15 +93,28 @@ type OrganizationZoneQuotaRequest struct {
 
 // SimpleZoneResponse represents a zone response compatible with UI
 type SimpleZoneResponse struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	Location        string `json:"location"`
-	Status          string `json:"status"`
-	ClusterEndpoint string `json:"cluster_endpoint,omitempty"`
-	VMCount         int    `json:"vm_count"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	Description     string                `json:"description"`
+	Location        string                `json:"location"`
+	Status          string                `json:"status"`
+	ClusterEndpoint string                `json:"cluster_endpoint,omitempty"`
+	VMCount         int                   `json:"vm_count"`
+	CreatedAt       string                `json:"created_at"`
+	UpdatedAt       string                `json:"updated_at"`
+	SpokeAgent      *SpokeAgentZoneStatus `json:"spoke_agent,omitempty"`
+}
+
+// SpokeAgentZoneStatus represents the status of a spoke agent for a zone
+type SpokeAgentZoneStatus struct {
+	AgentID     string    `json:"agent_id"`
+	Status      string    `json:"status"`
+	LastContact time.Time `json:"last_contact"`
+	Version     string    `json:"version,omitempty"`
+	IsConnected bool      `json:"is_connected"`
+	VMCount     int       `json:"vm_count"`
+	VDCCount    int       `json:"vdc_count"`
+	ErrorCount  int       `json:"error_count"`
 }
 
 // ListZones handles GET /api/v1/zones
@@ -172,6 +186,9 @@ func (s *Server) ListZones(c *gin.Context) {
 		vmCountMap = make(map[string]int) // Empty map as fallback
 	}
 
+	// Get spoke agent statuses for all zones
+	zoneAgentStatuses := s.spokeHandlers.GetAllZoneStatuses()
+
 	// Convert managed clusters to zones
 	var zones []SimpleZoneResponse
 	if items, ok := rawList["items"].([]interface{}); ok {
@@ -192,6 +209,23 @@ func (s *Server) ListZones(c *gin.Context) {
 
 					// Add VM count from utilization
 					zone.VMCount = vmCountMap[zone.ID]
+
+					// Add spoke agent status if available
+					if agentStatus, exists := zoneAgentStatuses[zone.ID]; exists {
+						// Calculate if agent is connected (last contact within 2 minutes)
+						isConnected := time.Since(agentStatus.LastHubContact) < 2*time.Minute
+
+						zone.SpokeAgent = &SpokeAgentZoneStatus{
+							AgentID:     agentStatus.AgentID,
+							Status:      agentStatus.Status,
+							LastContact: agentStatus.LastHubContact,
+							Version:     agentStatus.Version,
+							IsConnected: isConnected,
+							VMCount:     len(agentStatus.VMs),
+							VDCCount:    len(agentStatus.VDCs),
+							ErrorCount:  len(agentStatus.Errors),
+						}
+					}
 
 					zones = append(zones, *zone)
 				}

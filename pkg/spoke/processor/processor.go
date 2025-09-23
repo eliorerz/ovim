@@ -231,7 +231,7 @@ func (p *Processor) handleGetHealth(ctx context.Context, operation *spoke.Operat
 		OperationID: operation.ID,
 		Status:      spoke.OperationStatusCompleted,
 		Result: map[string]interface{}{
-			"status": "healthy",
+			"status":  "healthy",
 			"message": "spoke agent is running",
 		},
 	}

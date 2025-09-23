@@ -37,6 +37,7 @@ type Server struct {
 	openshiftClient *openshift.Client
 	catalogService  *catalog.Service
 	eventRecorder   *EventRecorder
+	spokeHandlers   *SpokeHandlers
 	router          *gin.Engine
 }
 
@@ -109,6 +110,9 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		klog.Warningf("Event recorder or k8s client not available, API events will not be recorded")
 	}
 
+	// Create spoke handlers
+	spokeHandlers := NewSpokeHandlers(storage)
+
 	server := &Server{
 		config:          cfg,
 		storage:         storage,
@@ -121,6 +125,7 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 		openshiftClient: openshiftClient,
 		catalogService:  catalogService,
 		eventRecorder:   eventRecorder,
+		spokeHandlers:   spokeHandlers,
 		router:          gin.New(),
 	}
 
@@ -375,15 +380,14 @@ func (s *Server) setupRoutes() {
 		// Spoke agent routes (authentication via custom middleware)
 		spoke := api.Group("/spoke")
 		{
-			spokeHandlers := NewSpokeHandlers(s.storage)
-			spoke.Use(spokeHandlers.spokeAuthMiddleware())
+			spoke.Use(s.spokeHandlers.spokeAuthMiddleware())
 			{
 				// Agent status reporting
-				spoke.POST("/status", spokeHandlers.HandleStatusReport)
+				spoke.POST("/status", s.spokeHandlers.HandleStatusReport)
 
 				// Operation polling and results
-				spoke.GET("/operations", spokeHandlers.GetOperations)
-				spoke.POST("/operations/:operationId/result", spokeHandlers.HandleOperationResult)
+				spoke.GET("/operations", s.spokeHandlers.GetOperations)
+				spoke.POST("/operations/:operationId/result", s.spokeHandlers.HandleOperationResult)
 			}
 
 			// Admin routes for spoke management (protected by auth)
@@ -392,13 +396,13 @@ func (s *Server) setupRoutes() {
 			spokeAdmin.Use(s.authManager.RequireRole("system_admin"))
 			{
 				// Queue operations for testing
-				spokeAdmin.POST("/operations/queue", spokeHandlers.QueueOperation)
+				spokeAdmin.POST("/operations/queue", s.spokeHandlers.QueueOperation)
 
 				// Get agent status
-				spokeAdmin.GET("/agents", spokeHandlers.GetAgentStatus)
+				spokeAdmin.GET("/agents", s.spokeHandlers.GetAgentStatus)
 
 				// Get operation results
-				spokeAdmin.GET("/operations/:operationId/result", spokeHandlers.GetOperationResult)
+				spokeAdmin.GET("/operations/:operationId/result", s.spokeHandlers.GetOperationResult)
 			}
 		}
 	}

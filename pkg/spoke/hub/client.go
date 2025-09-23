@@ -38,9 +38,9 @@ type HTTPClient struct {
 	wg     sync.WaitGroup
 
 	// Retry configuration
-	maxRetries      int
-	baseRetryDelay  time.Duration
-	maxRetryDelay   time.Duration
+	maxRetries         int
+	baseRetryDelay     time.Duration
+	maxRetryDelay      time.Duration
 	retryBackoffFactor float64
 }
 
