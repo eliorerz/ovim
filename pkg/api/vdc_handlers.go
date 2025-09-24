@@ -50,6 +50,9 @@ func (h *VDCHandlers) List(c *gin.Context) {
 		return
 	}
 
+	// Get query parameters for filtering
+	zoneFilter := c.Query("zone_id")
+
 	var orgFilter string
 	// Filter VDCs based on user role
 	if role == models.RoleSystemAdmin {
@@ -72,6 +75,17 @@ func (h *VDCHandlers) List(c *gin.Context) {
 		klog.Errorf("Failed to list VDCs for user %s (%s): %v", username, userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list VDCs"})
 		return
+	}
+
+	// Apply zone filtering if specified
+	if zoneFilter != "" {
+		var filteredVDCs []*models.VirtualDataCenter
+		for _, vdc := range vdcs {
+			if vdc.ZoneID != nil && *vdc.ZoneID == zoneFilter {
+				filteredVDCs = append(filteredVDCs, vdc)
+			}
+		}
+		vdcs = filteredVDCs
 	}
 
 	klog.V(6).Infof("Listed %d VDCs for user %s (%s)", len(vdcs), username, userID)
@@ -538,12 +552,26 @@ func (h *VDCHandlers) ListUserVDCs(c *gin.Context) {
 		return
 	}
 
+	// Get query parameters for filtering
+	zoneFilter := c.Query("zone_id")
+
 	// Get VDCs for the user's organization
 	vdcs, err := h.storage.ListVDCs(userOrgID)
 	if err != nil {
 		klog.Errorf("Failed to list VDCs for user %s (%s) in org %s: %v", username, userID, userOrgID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list VDCs"})
 		return
+	}
+
+	// Apply zone filtering if specified
+	if zoneFilter != "" {
+		var filteredVDCs []*models.VirtualDataCenter
+		for _, vdc := range vdcs {
+			if vdc.ZoneID != nil && *vdc.ZoneID == zoneFilter {
+				filteredVDCs = append(filteredVDCs, vdc)
+			}
+		}
+		vdcs = filteredVDCs
 	}
 
 	klog.V(6).Infof("Listed %d VDCs for user %s (%s) in org %s", len(vdcs), username, userID, userOrgID)

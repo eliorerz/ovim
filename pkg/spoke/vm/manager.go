@@ -448,7 +448,7 @@ func (m *Manager) buildVirtualMachine(req *spoke.VMCreateRequest) *unstructured.
 						},
 						"interfaces": []interface{}{
 							map[string]interface{}{
-								"name": "default",
+								"name":       "default",
 								"masquerade": map[string]interface{}{},
 							},
 						},

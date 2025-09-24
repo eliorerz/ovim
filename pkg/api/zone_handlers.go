@@ -673,7 +673,9 @@ func (s *Server) ListOrganizationZones(c *gin.Context) {
 	klog.V(4).Infof("Listing zones for organization: %s", orgID)
 
 	// Verify organization exists
-	_, err := s.storage.GetOrganization(orgID)
+	// Create temporary organization handlers to access the same storage pattern used by working endpoints
+	orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
+	_, err := orgHandlers.storage.GetOrganization(orgID)
 	if err != nil {
 		klog.Errorf("Failed to get organization %s: %v", orgID, err)
 		c.JSON(http.StatusNotFound, gin.H{

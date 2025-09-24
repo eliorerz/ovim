@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -98,9 +99,7 @@ func main() {
 			restConfig, err = rest.InClusterConfig()
 		} else {
 			klog.Infof("Initializing Kubernetes client with kubeconfig: %s", cfg.Kubernetes.ConfigPath)
-			// TODO: Implement kubeconfig loading if needed
-			// For now, try in-cluster as fallback
-			restConfig, err = rest.InClusterConfig()
+			restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubernetes.ConfigPath)
 		}
 
 		if err != nil {
@@ -219,10 +218,11 @@ func main() {
 			RequiredLabels:         map[string]string{},
 		}
 
-		// Create ACM client options (using in-cluster config)
+		// Create ACM client options with kubeconfig
 		clientOpts := acm.ClientOptions{
-			Namespace: "open-cluster-management",
-			Timeout:   30 * time.Second,
+			Namespace:  "open-cluster-management",
+			Timeout:    30 * time.Second,
+			Kubeconfig: cfg.Kubernetes.ConfigPath,
 		}
 
 		// Initialize ACM service with proper options structure
