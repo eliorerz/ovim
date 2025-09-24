@@ -89,10 +89,14 @@ spec:
                 - memory
                 - storage
                 type: object
+              zoneId:
+                description: ZoneID specifies the zone where this VDC will be deployed
+                type: string
             required:
             - displayName
             - organizationRef
             - quota
+            - zoneId
             type: object
           status:
             description: VirtualDataCenterStatus defines the observed state of VirtualDataCenter

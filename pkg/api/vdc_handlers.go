@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -23,15 +25,17 @@ import (
 type VDCHandlers struct {
 	storage         storage.Storage
 	k8sClient       client.Client
+	k8sClientset    kubernetes.Interface
 	openShiftClient *openshift.Client
 	eventRecorder   *EventRecorder
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
-func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, openShiftClient *openshift.Client) *VDCHandlers {
+func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, k8sClientset kubernetes.Interface, openShiftClient *openshift.Client) *VDCHandlers {
 	return &VDCHandlers{
 		storage:         storage,
 		k8sClient:       k8sClient,
+		k8sClientset:    k8sClientset,
 		openShiftClient: openShiftClient,
 	}
 }
@@ -104,32 +108,86 @@ func (h *VDCHandlers) Get(c *gin.Context) {
 	}
 
 	// Get user info from context
-	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	_, _, role, userOrgID, ok := auth.GetUserFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
 		return
 	}
 
-	vdc, err := h.storage.GetVDC(id)
-	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
-			return
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// First, find the VDC CRD - we need to check both the org namespace and discover the right one
+	var vdcCR *ovimv1.VirtualDataCenter
+	var orgNamespace string
+
+	// Try to find the VDC by listing all VDCs and finding the one with matching name
+	vdcList := &ovimv1.VirtualDataCenterList{}
+	if err := h.k8sClient.List(ctx, vdcList); err != nil {
+		klog.Errorf("Failed to list VDCs to find %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+		return
+	}
+
+	for _, vdc := range vdcList.Items {
+		if vdc.Name == id {
+			vdcCR = &vdc
+			orgNamespace = vdc.Namespace
+			break
 		}
-		klog.Errorf("Failed to get VDC %s for user %s (%s): %v", id, username, userID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get VDC"})
+	}
+
+	if vdcCR == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
 		return
 	}
 
 	// Check access permissions
 	if role != models.RoleSystemAdmin {
-		if userOrgID == "" || userOrgID != vdc.OrgID {
+		expectedOrgNamespace := fmt.Sprintf("org-%s", userOrgID)
+		if userOrgID == "" || orgNamespace != expectedOrgNamespace {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied to this VDC"})
 			return
 		}
 	}
 
-	c.JSON(http.StatusOK, vdc)
+	// Parse CPU and memory quotas from CRD
+	var cpuQuota, memoryQuota, storageQuota int
+	if vdcCR.Spec.Quota.CPU != "" {
+		if cpu, err := parseResourceQuantity(vdcCR.Spec.Quota.CPU); err == nil {
+			cpuQuota = cpu
+		}
+	}
+	if vdcCR.Spec.Quota.Memory != "" {
+		if memory, err := parseResourceQuantityToBytes(vdcCR.Spec.Quota.Memory); err == nil {
+			memoryQuota = memory / (1024 * 1024 * 1024) // Convert bytes to GB
+		}
+	}
+	if vdcCR.Spec.Quota.Storage != "" {
+		if storage, err := parseResourceQuantityToBytes(vdcCR.Spec.Quota.Storage); err == nil {
+			storageQuota = storage / (1024 * 1024 * 1024) // Convert bytes to GB
+		}
+	}
+
+	// Return VDC response from CRD
+	response := &models.VirtualDataCenter{
+		ID:                vdcCR.Name,
+		Name:              vdcCR.Spec.DisplayName,
+		Description:       vdcCR.Spec.Description,
+		OrgID:             vdcCR.Spec.OrganizationRef,
+		ZoneID:            &vdcCR.Spec.ZoneID, // Include zone information from CRD
+		DisplayName:       &vdcCR.Spec.DisplayName,
+		CRName:            vdcCR.Name,
+		CRNamespace:       vdcCR.Namespace,
+		WorkloadNamespace: vdcCR.Status.Namespace,
+		CPUQuota:          cpuQuota,
+		MemoryQuota:       memoryQuota,
+		StorageQuota:      storageQuota,
+		NetworkPolicy:     vdcCR.Spec.NetworkPolicy,
+		Phase:             string(vdcCR.Status.Phase),
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // Create handles creating a new VDC
@@ -174,22 +232,74 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Verify that the zone exists and is available
-	zone, err := h.storage.GetZone(req.ZoneID)
+	// Verify that the zone exists and is available via Kubernetes API (ACM ManagedCluster)
+	if h.k8sClientset == nil {
+		klog.Warning("Kubernetes client not available for zone verification")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Zone verification not available"})
+		return
+	}
+
+	// Fetch specific managed cluster from ACM to verify zone exists
+	ctx := context.Background()
+	result := h.k8sClientset.CoreV1().RESTClient().Get().
+		AbsPath("/apis/cluster.open-cluster-management.io/v1/managedclusters/" + req.ZoneID).
+		Do(ctx)
+
+	data, err := result.Raw()
 	if err != nil {
-		if err == storage.ErrNotFound {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Zone not found"})
+		klog.Errorf("Failed to verify zone %s from ACM: %v", req.ZoneID, err)
+
+		// Check if ACM is available
+		_, apiErr := h.k8sClientset.Discovery().ServerResourcesForGroupVersion("cluster.open-cluster-management.io/v1")
+		if apiErr != nil {
+			klog.Warningf("ACM (Advanced Cluster Management) is not installed or accessible: %v", apiErr)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Zone verification failed - ACM not available"})
 			return
 		}
-		klog.Errorf("Failed to verify zone %s: %v", req.ZoneID, err)
+
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Zone not found"})
+		return
+	}
+
+	// Parse the zone data to verify it's valid and available
+	var clusterData map[string]interface{}
+	if err := json.Unmarshal(data, &clusterData); err != nil {
+		klog.Errorf("Failed to decode managed cluster response for zone %s: %v", req.ZoneID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify zone"})
 		return
 	}
 
+	// Extract zone metadata and status
+	zoneName := req.ZoneID
+	if metadata, ok := clusterData["metadata"].(map[string]interface{}); ok {
+		if name, ok := metadata["name"].(string); ok {
+			zoneName = name
+		}
+	}
+
+	zoneStatus := "unknown"
+	if statusData, ok := clusterData["status"].(map[string]interface{}); ok {
+		if conditions, ok := statusData["conditions"].([]interface{}); ok {
+			for _, conditionInterface := range conditions {
+				if condition, ok := conditionInterface.(map[string]interface{}); ok {
+					if conditionType, ok := condition["type"].(string); ok && conditionType == "ManagedClusterConditionAvailable" {
+						if conditionStatus, ok := condition["status"].(string); ok {
+							if conditionStatus == "True" {
+								zoneStatus = "available"
+							} else {
+								zoneStatus = "unavailable"
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Check if zone is available
-	if zone.Status != models.ZoneStatusAvailable {
+	if zoneStatus != "available" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Zone '%s' is not available (status: %s)", zone.Name, zone.Status),
+			"error": fmt.Sprintf("Zone '%s' is not available (status: %s)", zoneName, zoneStatus),
 		})
 		return
 	}
@@ -215,7 +325,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 			}
 			if !hasAccess {
 				c.JSON(http.StatusForbidden, gin.H{
-					"error": fmt.Sprintf("Organization does not have access to zone '%s'", zone.Name),
+					"error": fmt.Sprintf("Organization does not have access to zone '%s'", zoneName),
 				})
 				return
 			}
