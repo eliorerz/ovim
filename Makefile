@@ -83,7 +83,7 @@ KUBECTL_CMD ?= kubectl
 .PHONY: generate manifests
 .PHONY: deploy deploy-dry-run undeploy deploy-samples deploy-full deploy-dev deploy-prod undeploy-force deployment-status
 .PHONY: deploy-stack deploy-stack-dry-run deploy-stack-dev deploy-stack-prod undeploy-stack deploy-database deploy-server deploy-ui deploy-ingress stack-status stack-logs stack-port-forward build-ui
-.PHONY: version build-push deploy-image
+.PHONY: version build-push deploy-image deploy-spoke-agent-image
 
 help:
 	@echo "OVIM Backend Makefile"
@@ -158,6 +158,10 @@ help:
 	@echo "  container-push-ui    Build and push UI image to registry"
 	@echo "  container-push-all   Build and push all images to registry"
 	@echo "  container-clean      Clean container"
+	@echo ""
+	@echo "Image deployment targets:"
+	@echo "  deploy-image         Update backend deployment with latest image"
+	@echo "  deploy-spoke-agent-image Update spoke agent deployment with latest image"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  clean              Clean build artifacts and containers"
@@ -1054,3 +1058,18 @@ deploy-image:
 		kubectl set image deployment/ovim-server server=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
 		kubectl set image deployment/ovim-controller controller=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
 	fi
+
+## deploy-spoke-agent-image: Update spoke agent deployment with latest unique image
+deploy-spoke-agent-image:
+	@echo "Updating spoke agent deployment with latest image..."
+	$(eval LATEST_TAG := $(shell podman images quay.io/eerez/ovim --format "{{.Tag}}" | grep -E '^[0-9]{8}-[0-9]{6}-' | head -1))
+	@if [ -z "$(LATEST_TAG)" ]; then \
+		echo "No timestamped tag found, using latest"; \
+		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim:latest -n ovim-system; \
+	else \
+		echo "Using tag: $(LATEST_TAG)"; \
+		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
+	fi
+	@echo "Waiting for rollout to complete..."
+	@kubectl rollout status deployment/ovim-spoke-agent -n ovim-system --timeout=300s
+	@echo "Spoke agent deployment updated successfully!"
