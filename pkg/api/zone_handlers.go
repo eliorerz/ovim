@@ -99,6 +99,12 @@ type SimpleZoneResponse struct {
 	Location        string                `json:"location"`
 	Status          string                `json:"status"`
 	ClusterEndpoint string                `json:"cluster_endpoint,omitempty"`
+	CPUCapacity     int                   `json:"cpu_capacity"`
+	MemoryCapacity  int                   `json:"memory_capacity"`
+	StorageCapacity int                   `json:"storage_capacity"`
+	CPUQuota        int                   `json:"cpu_quota"`
+	MemoryQuota     int                   `json:"memory_quota"`
+	StorageQuota    int                   `json:"storage_quota"`
 	VMCount         int                   `json:"vm_count"`
 	CreatedAt       string                `json:"created_at"`
 	UpdatedAt       string                `json:"updated_at"`
@@ -311,6 +317,54 @@ func convertManagedClusterToZone(clusterData map[string]interface{}) *SimpleZone
 		}
 	}
 
+	// Extract capacity information from status
+	cpuCapacity := 0
+	memoryCapacity := 0
+	storageCapacity := 0
+	cpuQuota := 0
+	memoryQuota := 0
+	storageQuota := 0
+
+	if statusData, ok := clusterData["status"].(map[string]interface{}); ok {
+		// Extract capacity information
+		if capacity, ok := statusData["capacity"].(map[string]interface{}); ok {
+			if cpu, ok := capacity["cpu"].(string); ok {
+				if cpuInt, err := parseResourceQuantity(cpu); err == nil {
+					cpuCapacity = cpuInt
+				}
+			}
+			if memory, ok := capacity["memory"].(string); ok {
+				if memoryBytes, err := parseResourceQuantityToBytes(memory); err == nil {
+					memoryCapacity = memoryBytes
+				}
+			}
+			if ephemeralStorage, ok := capacity["ephemeral-storage"].(string); ok {
+				if storageBytes, err := parseResourceQuantityToBytes(ephemeralStorage); err == nil {
+					storageCapacity = storageBytes
+				}
+			}
+		}
+
+		// Extract allocatable information (could be used for more accurate quotas)
+		if allocatable, ok := statusData["allocatable"].(map[string]interface{}); ok {
+			if cpu, ok := allocatable["cpu"].(string); ok {
+				if cpuInt, err := parseResourceQuantity(cpu); err == nil {
+					cpuQuota = cpuInt // Use allocatable for quota
+				}
+			}
+			if memory, ok := allocatable["memory"].(string); ok {
+				if memoryBytes, err := parseResourceQuantityToBytes(memory); err == nil {
+					memoryQuota = memoryBytes // Use allocatable for quota
+				}
+			}
+			if storage, ok := allocatable["ephemeral-storage"].(string); ok {
+				if storageBytes, err := parseResourceQuantityToBytes(storage); err == nil {
+					storageQuota = storageBytes // Use allocatable for quota
+				}
+			}
+		}
+	}
+
 	return &SimpleZoneResponse{
 		ID:              name,
 		Name:            name,
@@ -318,6 +372,12 @@ func convertManagedClusterToZone(clusterData map[string]interface{}) *SimpleZone
 		Location:        location,
 		Status:          status,
 		ClusterEndpoint: clusterEndpoint,
+		CPUCapacity:     cpuCapacity,
+		MemoryCapacity:  memoryCapacity,
+		StorageCapacity: storageCapacity,
+		CPUQuota:        cpuQuota,
+		MemoryQuota:     memoryQuota,
+		StorageQuota:    storageQuota,
 		VMCount:         0, // Will be populated by the caller from zone utilization
 		CreatedAt:       createdAt,
 		UpdatedAt:       createdAt,
@@ -545,6 +605,11 @@ func convertManagedClusterToDetailedZone(clusterData map[string]interface{}) *Zo
 			if memory, ok := allocatable["memory"].(string); ok {
 				if memoryBytes, err := parseResourceQuantityToBytes(memory); err == nil {
 					memoryQuota = memoryBytes // Use allocatable for quota
+				}
+			}
+			if storage, ok := allocatable["ephemeral-storage"].(string); ok {
+				if storageBytes, err := parseResourceQuantityToBytes(storage); err == nil {
+					storageQuota = storageBytes // Use allocatable for quota
 				}
 			}
 		}
