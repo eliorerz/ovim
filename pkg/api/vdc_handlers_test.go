@@ -21,7 +21,7 @@ func TestNewVDCHandlers(t *testing.T) {
 	mockStorage := &MockStorage{}
 	mockK8sClient := &MockK8sClient{}
 
-	handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil)
+	handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil, nil)
 
 	assert.NotNil(t, handlers)
 	assert.Equal(t, mockStorage, handlers.storage)
@@ -83,7 +83,7 @@ func TestVDCHandlers_List(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVDCHandlers(mockStorage, nil, nil)
+			handlers := NewVDCHandlers(mockStorage, nil, nil, nil)
 			url := "/vdcs"
 			if tt.orgFilter != "" {
 				url += "?org=" + tt.orgFilter
@@ -168,7 +168,7 @@ func TestVDCHandlers_Get(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVDCHandlers(mockStorage, nil, nil)
+			handlers := NewVDCHandlers(mockStorage, nil, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/vdcs/%s", tt.vdcID), nil, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vdcID}}
 
@@ -381,7 +381,7 @@ func TestVDCHandlers_Create_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil)
+			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil, nil)
 			c, w := setupGinContext("POST", "/vdcs", tt.requestBody, "user1", "admin", tt.userRole, tt.userOrgID)
 
 			handlers.Create(c)
@@ -499,7 +499,7 @@ func TestVDCHandlers_Update_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil)
+			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil, nil)
 			c, w := setupGinContext("PUT", fmt.Sprintf("/vdcs/%s", tt.vdcID), tt.requestBody, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vdcID}}
 
@@ -638,7 +638,7 @@ func TestVDCHandlers_Delete_CRDOnly(t *testing.T) {
 			tt.mockStorageBehavior(mockStorage)
 			tt.mockK8sBehavior(mockK8sClient)
 
-			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil)
+			handlers := NewVDCHandlers(mockStorage, mockK8sClient, nil, nil)
 			c, w := setupGinContext("DELETE", fmt.Sprintf("/vdcs/%s", tt.vdcID), nil, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vdcID}}
 
@@ -692,7 +692,7 @@ func TestVDCHandlers_ListUserVDCs(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVDCHandlers(mockStorage, nil, nil)
+			handlers := NewVDCHandlers(mockStorage, nil, nil, nil)
 			c, w := setupGinContext("GET", "/user/vdcs", nil, "user1", "user", models.RoleOrgUser, tt.userOrgID)
 
 			handlers.ListUserVDCs(c)
@@ -834,7 +834,7 @@ func TestVDCHandlers_GetResourceUsage(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.mockStorageBehavior(mockStorage)
 
-			handlers := NewVDCHandlers(mockStorage, nil, nil)
+			handlers := NewVDCHandlers(mockStorage, nil, nil, nil)
 			c, w := setupGinContext("GET", fmt.Sprintf("/vdcs/%s/usage", tt.vdcID), nil, "user1", "admin", tt.userRole, tt.userOrgID)
 			c.Params = []gin.Param{{Key: "id", Value: tt.vdcID}}
 

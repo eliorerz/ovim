@@ -33,8 +33,16 @@ const (
 // VirtualDataCenterReconciler reconciles a VirtualDataCenter object
 type VirtualDataCenterReconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Storage storage.Storage
+	Scheme        *runtime.Scheme
+	Storage       storage.Storage
+	SpokeHandlers *SpokeHandlers // Reference to spoke handlers for operation sending
+}
+
+// SpokeHandlers interface to avoid import cycles
+type SpokeHandlers interface {
+	QueueVDCCreation(agentID string, vdc *ovimv1.VirtualDataCenter) error
+	QueueVDCDeletion(agentID, vdcName, vdcNamespace, targetNamespace string) error
+	GetZoneAgentStatus(zoneID string) interface{}
 }
 
 // +kubebuilder:rbac:groups=ovim.io,resources=virtualdatacenters,verbs=get;list;watch;create;update;patch;delete
@@ -42,8 +50,9 @@ type VirtualDataCenterReconciler struct {
 // +kubebuilder:rbac:groups=ovim.io,resources=virtualdatacenters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ovim.io,resources=organizations,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
+// ResourceQuotas and LimitRanges are now managed by spoke agents
+// +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
@@ -57,43 +66,59 @@ type VirtualDataCenterReconciler struct {
 // Reconcile handles VirtualDataCenter resource changes
 func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("vdc", req.NamespacedName)
+	logger.Info("Starting VDC reconciliation", "name", req.Name, "namespace", req.Namespace)
 
 	// Fetch the VirtualDataCenter instance
 	var vdc ovimv1.VirtualDataCenter
 	if err := r.Get(ctx, req.NamespacedName, &vdc); err != nil {
 		if errors.IsNotFound(err) {
+			logger.Info("VDC not found, assuming deleted", "name", req.Name, "namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "unable to fetch VirtualDataCenter")
 		return ctrl.Result{}, err
 	}
 
+	logger.Info("Found VDC for reconciliation",
+		"vdc_name", vdc.Name,
+		"organization", vdc.Spec.OrganizationRef,
+		"zone_id", vdc.Spec.ZoneID,
+		"phase", vdc.Status.Phase,
+		"generation", vdc.Generation,
+		"observed_generation", vdc.Status.ObservedGeneration)
+
 	// Handle deletion
 	if vdc.DeletionTimestamp != nil {
+		logger.Info("VDC marked for deletion, processing cleanup", "deletion_timestamp", vdc.DeletionTimestamp)
 		return r.handleVDCDeletion(ctx, &vdc)
 	}
 
 	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(&vdc, VDCFinalizer) {
+		logger.Info("Adding finalizer to VDC", "finalizer", VDCFinalizer)
 		controllerutil.AddFinalizer(&vdc, VDCFinalizer)
 		if err := r.Update(ctx, &vdc); err != nil {
 			logger.Error(err, "unable to add finalizer")
 			return ctrl.Result{}, err
 		}
+		logger.Info("Successfully added finalizer to VDC")
 		return ctrl.Result{}, nil
 	}
 
 	// Get parent organization
+	logger.Info("Looking up parent organization", "organization", vdc.Spec.OrganizationRef)
 	orgCR := &ovimv1.Organization{}
 	if err := r.Get(ctx, types.NamespacedName{Name: vdc.Spec.OrganizationRef}, orgCR); err != nil {
-		logger.Error(err, "unable to get parent organization")
+		logger.Error(err, "unable to get parent organization", "organization", vdc.Spec.OrganizationRef)
 		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "OrganizationNotFound",
 			fmt.Sprintf("Parent organization %s not found", vdc.Spec.OrganizationRef))
 		if err := r.Status().Update(ctx, &vdc); err != nil {
 			logger.Error(err, "unable to update status")
 		}
+		logger.Info("Requeuing VDC reconciliation due to missing organization", "requeue_after", "30s")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
+	logger.Info("Found parent organization", "organization", vdc.Spec.OrganizationRef, "org_display_name", orgCR.Spec.DisplayName)
 
 	// Create VDC workload namespace - ensure uniqueness across organizations
 	// Format: vdc-{org}-{vdc-name}
@@ -102,35 +127,28 @@ func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		strings.ToLower(vdc.Spec.OrganizationRef),
 		strings.ToLower(vdc.Name))
 
+	logger.Info("Ensuring VDC workload namespace", "target_namespace", vdcNamespace)
 	if err := r.ensureVDCNamespace(ctx, &vdc, vdcNamespace); err != nil {
-		logger.Error(err, "unable to ensure VDC namespace")
+		logger.Error(err, "unable to ensure VDC namespace", "target_namespace", vdcNamespace)
 		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "NamespaceCreationFailed", err.Error())
 		if err := r.Status().Update(ctx, &vdc); err != nil {
 			logger.Error(err, "unable to update status")
 		}
+		logger.Info("Requeuing VDC reconciliation due to namespace creation failure", "requeue_after", "30s")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
+	logger.Info("VDC workload namespace ready", "namespace", vdcNamespace)
 
-	// Apply ResourceQuota
-	if err := r.ensureResourceQuota(ctx, &vdc, vdcNamespace); err != nil {
-		logger.Error(err, "unable to ensure resource quota")
-		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "ResourceQuotaFailed", err.Error())
+	// Replicate VDC to spoke cluster for actual resource creation
+	// ResourceQuota and LimitRange will be created by spoke agents
+	logger.Info("Initiating VDC replication to spoke cluster", "zone_id", vdc.Spec.ZoneID, "target_namespace", vdcNamespace)
+	if err := r.replicateVDCToSpoke(ctx, &vdc, vdcNamespace); err != nil {
+		logger.Error(err, "unable to replicate VDC to spoke cluster", "zone_id", vdc.Spec.ZoneID, "target_namespace", vdcNamespace)
+		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "SpokeReplicationFailed", err.Error())
 		if err := r.Status().Update(ctx, &vdc); err != nil {
 			logger.Error(err, "unable to update status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-	}
-
-	// Apply LimitRange if specified
-	if vdc.Spec.LimitRange != nil {
-		if err := r.ensureLimitRange(ctx, &vdc, vdcNamespace); err != nil {
-			logger.Error(err, "unable to ensure limit range")
-			r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "LimitRangeFailed", err.Error())
-			if err := r.Status().Update(ctx, &vdc); err != nil {
-				logger.Error(err, "unable to update status")
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-		}
 	}
 
 	// Set up RBAC - inherit org admins from parent Org
@@ -153,10 +171,42 @@ func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// Update status
+	// Update status - check if spoke VDC is present
 	vdc.Status.Namespace = vdcNamespace
-	vdc.Status.Phase = ovimv1.VirtualDataCenterPhaseActive
-	r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionTrue, "VDCReady", "VDC is ready and active")
+
+	// Check for spoke VDC presence before marking as Active
+	spokeVDCPresent, spokeStatus, err := r.checkSpokeVDCStatus(ctx, &vdc, vdcNamespace)
+	if err != nil {
+		logger.Error(err, "unable to check spoke VDC status")
+		vdc.Status.Phase = ovimv1.VirtualDataCenterPhaseWaitingForSpoke
+		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "SpokeStatusCheckFailed", err.Error())
+	} else if !spokeVDCPresent {
+		logger.Info("VDC waiting for spoke VDC deployment", "zone_id", vdc.Spec.ZoneID, "target_namespace", vdcNamespace)
+		vdc.Status.Phase = ovimv1.VirtualDataCenterPhaseWaitingForSpoke
+		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionFalse, "WaitingForSpoke", "Waiting for spoke VDC to be created in target zone")
+
+		// Initialize spoke deployment status
+		vdc.Status.SpokeDeploymentStatus = &ovimv1.SpokeDeploymentStatus{
+			TotalSpokes:    1, // For now, assume 1 spoke per zone
+			DeployedSpokes: 0,
+			HealthySpokes:  0,
+			FailedSpokes:   0,
+			LastSyncTime:   &metav1.Time{Time: time.Now()},
+		}
+	} else {
+		logger.Info("VDC spoke deployment confirmed active", "zone_id", vdc.Spec.ZoneID, "spoke_status", spokeStatus)
+		vdc.Status.Phase = ovimv1.VirtualDataCenterPhaseActive
+		r.updateVDCCondition(&vdc, ConditionReady, metav1.ConditionTrue, "VDCReady", "VDC is ready and active with healthy spoke deployment")
+
+		// Update spoke deployment status
+		vdc.Status.SpokeDeploymentStatus = &ovimv1.SpokeDeploymentStatus{
+			TotalSpokes:    1,
+			DeployedSpokes: 1,
+			HealthySpokes:  1,
+			FailedSpokes:   0,
+			LastSyncTime:   &metav1.Time{Time: time.Now()},
+		}
+	}
 
 	if err := r.Status().Update(ctx, &vdc); err != nil {
 		logger.Error(err, "unable to update status")
@@ -169,7 +219,19 @@ func (r *VirtualDataCenterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Don't fail reconciliation for database sync issues
 	}
 
-	logger.Info("VDC reconciled successfully")
+	logger.Info("VDC reconciliation completed successfully",
+		"vdc_name", vdc.Name,
+		"organization", vdc.Spec.OrganizationRef,
+		"zone_id", vdc.Spec.ZoneID,
+		"phase", vdc.Status.Phase,
+		"namespace", vdc.Status.Namespace)
+
+	// If VDC is waiting for spoke deployment, requeue to check again
+	if vdc.Status.Phase == ovimv1.VirtualDataCenterPhaseWaitingForSpoke {
+		logger.Info("Requeuing VDC reconciliation to check for spoke deployment", "requeue_after", "30s")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -223,112 +285,78 @@ func (r *VirtualDataCenterReconciler) ensureVDCNamespace(ctx context.Context, vd
 	return nil
 }
 
-// ensureResourceQuota creates or updates ResourceQuota for the VDC
-func (r *VirtualDataCenterReconciler) ensureResourceQuota(ctx context.Context, vdc *ovimv1.VirtualDataCenter, namespaceName string) error {
+// replicateVDCToSpoke replicates the VDC resource to the target spoke cluster
+// The spoke agent will handle ResourceQuota and LimitRange creation
+func (r *VirtualDataCenterReconciler) replicateVDCToSpoke(ctx context.Context, vdc *ovimv1.VirtualDataCenter, namespaceName string) error {
 	logger := log.FromContext(ctx)
 
-	quota := &corev1.ResourceQuota{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "vdc-quota",
-			Namespace: namespaceName,
-			Labels: map[string]string{
-				"managed-by": "ovim",
-				"type":       "vdc-quota",
-				"org":        vdc.Spec.OrganizationRef,
-				"vdc":        vdc.Name,
-			},
-		},
-		Spec: corev1.ResourceQuotaSpec{
-			Hard: corev1.ResourceList{
-				corev1.ResourceRequestsCPU:     resource.MustParse(vdc.Spec.Quota.CPU),
-				corev1.ResourceRequestsMemory:  resource.MustParse(vdc.Spec.Quota.Memory),
-				corev1.ResourceRequestsStorage: resource.MustParse(vdc.Spec.Quota.Storage),
-			},
-		},
+	// Skip replication for spoke VDCs to prevent infinite loops
+	if vdc.Spec.VDCType == ovimv1.VDCTypeSpoke {
+		logger.V(1).Info("Skipping replication for spoke VDC", "vdc_name", vdc.Name, "vdc_type", vdc.Spec.VDCType)
+		return nil
 	}
 
-	// Note: Cannot set cross-namespace owner references, using labels for tracking
-	quota.Labels["ovim.io/vdc-id"] = vdc.Name
-	quota.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
+	if vdc.Annotations == nil {
+		vdc.Annotations = make(map[string]string)
+	}
 
-	// Try to create, if exists, update
-	if err := r.Create(ctx, quota); err != nil {
-		if errors.IsAlreadyExists(err) {
-			// Update existing quota
-			existingQuota := &corev1.ResourceQuota{}
-			if err := r.Get(ctx, types.NamespacedName{Name: "vdc-quota", Namespace: namespaceName}, existingQuota); err != nil {
-				return err
-			}
+	// Mark VDC as requiring spoke cluster replication (for monitoring)
+	vdc.Annotations["ovim.io/spoke-replication-required"] = "true"
+	vdc.Annotations["ovim.io/target-zone"] = vdc.Spec.ZoneID
+	vdc.Annotations["ovim.io/target-namespace"] = namespaceName
+	vdc.Annotations["ovim.io/replication-timestamp"] = time.Now().Format(time.RFC3339)
 
-			existingQuota.Spec.Hard = quota.Spec.Hard
-			if err := r.Update(ctx, existingQuota); err != nil {
-				return err
+	// Update the VDC with replication annotations first
+	if err := r.Update(ctx, vdc); err != nil {
+		return fmt.Errorf("failed to add spoke replication annotations: %w", err)
+	}
+
+	// Use SpokeHandlers to directly send operation to spoke agent
+	if r.SpokeHandlers != nil {
+		// Find spoke agent for this zone
+		agentStatus := (*r.SpokeHandlers).GetZoneAgentStatus(vdc.Spec.ZoneID)
+		if agentStatus != nil {
+			// Extract agent ID from status
+			if statusMap, ok := agentStatus.(map[string]interface{}); ok {
+				if agentID, ok := statusMap["agent_id"].(string); ok {
+					logger.Info("Sending VDC creation operation to spoke agent",
+						"vdc_name", vdc.Name,
+						"zone_id", vdc.Spec.ZoneID,
+						"agent_id", agentID,
+						"target_namespace", namespaceName)
+
+					// Queue VDC creation operation
+					if err := (*r.SpokeHandlers).QueueVDCCreation(agentID, vdc); err != nil {
+						logger.Error(err, "Failed to queue VDC creation operation", "agent_id", agentID)
+						return fmt.Errorf("failed to queue VDC creation operation: %w", err)
+					}
+
+					logger.Info("Successfully queued VDC creation operation",
+						"vdc_name", vdc.Name,
+						"zone_id", vdc.Spec.ZoneID,
+						"agent_id", agentID,
+						"target_namespace", namespaceName)
+				} else {
+					logger.V(1).Info("Could not extract agent ID from status", "zone_id", vdc.Spec.ZoneID)
+				}
+			} else {
+				logger.V(1).Info("Agent status not in expected format", "zone_id", vdc.Spec.ZoneID)
 			}
-			logger.Info("Updated VDC resource quota", "namespace", namespaceName)
 		} else {
-			return err
+			logger.Info("No spoke agent found for zone, operation will be processed by monitoring",
+				"zone_id", vdc.Spec.ZoneID,
+				"vdc_name", vdc.Name)
 		}
 	} else {
-		logger.Info("Created VDC resource quota", "namespace", namespaceName)
+		logger.Info("SpokeHandlers not available, VDC replication will be handled by monitoring",
+			"vdc_name", vdc.Name,
+			"zone_id", vdc.Spec.ZoneID)
 	}
 
-	return nil
-}
-
-// ensureLimitRange creates or updates LimitRange for the VDC
-func (r *VirtualDataCenterReconciler) ensureLimitRange(ctx context.Context, vdc *ovimv1.VirtualDataCenter, namespaceName string) error {
-	logger := log.FromContext(ctx)
-
-	limitRange := &corev1.LimitRange{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "vdc-limits",
-			Namespace: namespaceName,
-			Labels: map[string]string{
-				"managed-by": "ovim",
-				"type":       "vdc-limits",
-				"org":        vdc.Spec.OrganizationRef,
-				"vdc":        vdc.Name,
-			},
-		},
-		Spec: corev1.LimitRangeSpec{
-			Limits: []corev1.LimitRangeItem{{
-				Type: corev1.LimitTypeContainer,
-				Min: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", vdc.Spec.LimitRange.MinCpu)),
-					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", vdc.Spec.LimitRange.MinMemory)),
-				},
-				Max: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", vdc.Spec.LimitRange.MaxCpu)),
-					corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", vdc.Spec.LimitRange.MaxMemory)),
-				},
-			}},
-		},
-	}
-
-	// Note: Cannot set cross-namespace owner references, using labels for tracking
-	limitRange.Labels["ovim.io/vdc-id"] = vdc.Name
-	limitRange.Labels["ovim.io/vdc-namespace"] = vdc.Namespace
-
-	// Try to create, if exists, update
-	if err := r.Create(ctx, limitRange); err != nil {
-		if errors.IsAlreadyExists(err) {
-			// Update existing limit range
-			existingLimitRange := &corev1.LimitRange{}
-			if err := r.Get(ctx, types.NamespacedName{Name: "vdc-limits", Namespace: namespaceName}, existingLimitRange); err != nil {
-				return err
-			}
-
-			existingLimitRange.Spec.Limits = limitRange.Spec.Limits
-			if err := r.Update(ctx, existingLimitRange); err != nil {
-				return err
-			}
-			logger.Info("Updated VDC limit range", "namespace", namespaceName)
-		} else {
-			return err
-		}
-	} else {
-		logger.Info("Created VDC limit range", "namespace", namespaceName)
-	}
+	logger.Info("VDC replication initiated",
+		"vdc_name", vdc.Name,
+		"zone_id", vdc.Spec.ZoneID,
+		"target_namespace", namespaceName)
 
 	return nil
 }
@@ -710,6 +738,27 @@ func (r *VirtualDataCenterReconciler) cleanupNetworkPolicies(ctx context.Context
 func (r *VirtualDataCenterReconciler) handleVDCDeletion(ctx context.Context, vdc *ovimv1.VirtualDataCenter) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("vdc", vdc.Name)
 
+	// Signal spoke agents for cascade deletion
+	// Add deletion annotation so spoke agents can clean up ResourceQuota, LimitRange, and VMs
+	if vdc.Annotations == nil {
+		vdc.Annotations = make(map[string]string)
+	}
+
+	if _, exists := vdc.Annotations["ovim.io/spoke-deletion-required"]; !exists {
+		vdc.Annotations["ovim.io/spoke-deletion-required"] = "true"
+		vdc.Annotations["ovim.io/deletion-timestamp"] = time.Now().Format(time.RFC3339)
+
+		if err := r.Update(ctx, vdc); err != nil {
+			logger.Error(err, "failed to add spoke deletion annotations")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Marked VDC for spoke cluster deletion", "vdc", vdc.Name, "zone", vdc.Spec.ZoneID)
+
+		// Requeue after a short delay to allow spoke agents to process deletion
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	// Clean up NetworkPolicies before deleting namespace
 	if vdc.Status.Namespace != "" {
 		if err := r.cleanupNetworkPolicies(ctx, vdc.Status.Namespace); err != nil {
@@ -718,7 +767,7 @@ func (r *VirtualDataCenterReconciler) handleVDCDeletion(ctx context.Context, vdc
 		}
 	}
 
-	// Delete VDC namespace if it exists
+	// Delete VDC namespace if it exists (hub namespace only - spoke cleanup is handled by agents)
 	if vdc.Status.Namespace != "" {
 		vdcNamespace := &corev1.Namespace{}
 		err := r.Get(ctx, types.NamespacedName{Name: vdc.Status.Namespace}, vdcNamespace)
@@ -727,7 +776,7 @@ func (r *VirtualDataCenterReconciler) handleVDCDeletion(ctx context.Context, vdc
 				logger.Error(err, "unable to delete VDC namespace")
 				return ctrl.Result{}, err
 			}
-			logger.Info("Deleted VDC namespace", "namespace", vdc.Status.Namespace)
+			logger.Info("Deleted VDC namespace on hub", "namespace", vdc.Status.Namespace)
 		} else if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -750,6 +799,47 @@ func (r *VirtualDataCenterReconciler) handleVDCDeletion(ctx context.Context, vdc
 
 	logger.Info("VDC deleted successfully")
 	return ctrl.Result{}, nil
+}
+
+// checkSpokeVDCStatus checks if a corresponding spoke VDC exists and is healthy
+func (r *VirtualDataCenterReconciler) checkSpokeVDCStatus(ctx context.Context, vdc *ovimv1.VirtualDataCenter, targetNamespace string) (bool, string, error) {
+	logger := log.FromContext(ctx)
+
+	// Look for spoke VDCs that reference this hub VDC
+	spokeVDCs := &ovimv1.VirtualDataCenterList{}
+	if err := r.List(ctx, spokeVDCs); err != nil {
+		return false, "", fmt.Errorf("failed to list VDCs: %w", err)
+	}
+
+	// Check for spoke VDCs that reference this hub VDC
+	for _, spokeVDC := range spokeVDCs.Items {
+		// Check if this is a spoke VDC that references our hub VDC
+		if spokeVDC.Spec.VDCType == ovimv1.VDCTypeSpoke &&
+			spokeVDC.Spec.HubVDCRef != nil &&
+			spokeVDC.Spec.HubVDCRef.Name == vdc.Name &&
+			spokeVDC.Spec.HubVDCRef.Namespace == vdc.Namespace &&
+			spokeVDC.Spec.HubVDCRef.ZoneID == vdc.Spec.ZoneID {
+
+			logger.Info("Found spoke VDC",
+				"spoke_vdc", spokeVDC.Name,
+				"spoke_namespace", spokeVDC.Namespace,
+				"spoke_phase", spokeVDC.Status.Phase,
+				"hub_vdc", vdc.Name)
+
+			// Check if spoke VDC is active
+			if spokeVDC.Status.Phase == ovimv1.VirtualDataCenterPhaseActive {
+				return true, "active", nil
+			} else {
+				return true, string(spokeVDC.Status.Phase), nil
+			}
+		}
+	}
+
+	// Also check via spoke API if available (fallback approach)
+	// This could be implemented later to query spoke agents directly
+
+	logger.V(1).Info("No spoke VDC found", "hub_vdc", vdc.Name, "target_zone", vdc.Spec.ZoneID)
+	return false, "not_found", nil
 }
 
 // syncVDCToDatabase synchronizes VDC data to the database
@@ -875,8 +965,7 @@ func (r *VirtualDataCenterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&ovimv1.VirtualDataCenter{}).
 		// Note: Cannot use Owns() for cluster-scoped resources like Namespace
 		// due to cross-scope ownership restrictions. Using labels for tracking.
-		Owns(&corev1.ResourceQuota{}).
-		Owns(&corev1.LimitRange{}).
+		// ResourceQuota and LimitRange are now handled by spoke agents.
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Named("ovim-vdc-controller").

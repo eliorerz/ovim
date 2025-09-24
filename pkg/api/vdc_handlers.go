@@ -28,6 +28,7 @@ type VDCHandlers struct {
 	k8sClientset    kubernetes.Interface
 	openShiftClient *openshift.Client
 	eventRecorder   *EventRecorder
+	spokeHandlers   *SpokeHandlers
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
@@ -43,6 +44,11 @@ func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, k8sClients
 // SetEventRecorder sets the event recorder for this handler
 func (h *VDCHandlers) SetEventRecorder(recorder *EventRecorder) {
 	h.eventRecorder = recorder
+}
+
+// SetSpokeHandlers sets the spoke handlers for this handler
+func (h *VDCHandlers) SetSpokeHandlers(spokeHandlers *SpokeHandlers) {
+	h.spokeHandlers = spokeHandlers
 }
 
 // List handles listing VDCs
@@ -923,4 +929,178 @@ func (h *VDCHandlers) GetLimitRange(c *gin.Context) {
 	klog.V(6).Infof("Retrieved LimitRange for VDC %s by user %s (%s)", id, username, userID)
 
 	c.JSON(http.StatusOK, limitRangeInfo)
+}
+
+// GetVDCStatusWithSpoke handles getting comprehensive VDC status including hub and spoke information
+func (h *VDCHandlers) GetVDCStatusWithSpoke(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VDC ID required"})
+		return
+	}
+
+	// Get user info from context
+	userID, username, role, userOrgID, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User context not found"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// First, find the VDC CRD
+	var vdcCR *ovimv1.VirtualDataCenter
+	var orgNamespace string
+
+	// Try to find the VDC by listing all VDCs and finding the one with matching name
+	vdcList := &ovimv1.VirtualDataCenterList{}
+	if err := h.k8sClient.List(ctx, vdcList); err != nil {
+		klog.Errorf("Failed to list VDCs to find %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+		return
+	}
+
+	for _, vdc := range vdcList.Items {
+		if vdc.Name == id {
+			vdcCR = &vdc
+			orgNamespace = vdc.Namespace
+			break
+		}
+	}
+
+	if vdcCR == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+		return
+	}
+
+	// Check permissions - only system admin and org admin can access VDC status
+	if role != models.RoleSystemAdmin && role != models.RoleOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to view VDC status"})
+		return
+	}
+
+	// For org admin, ensure they can only access VDCs in their own organization
+	if role == models.RoleOrgAdmin {
+		expectedOrgNamespace := fmt.Sprintf("org-%s", userOrgID)
+		if userOrgID == "" || orgNamespace != expectedOrgNamespace {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Can only view VDC status in your own organization"})
+			return
+		}
+	}
+
+	// Parse CPU and memory quotas from CRD
+	var cpuQuota, memoryQuota, storageQuota int
+	if vdcCR.Spec.Quota.CPU != "" {
+		if cpu, err := parseResourceQuantity(vdcCR.Spec.Quota.CPU); err == nil {
+			cpuQuota = cpu
+		}
+	}
+	if vdcCR.Spec.Quota.Memory != "" {
+		if memory, err := parseResourceQuantityToBytes(vdcCR.Spec.Quota.Memory); err == nil {
+			memoryQuota = memory / (1024 * 1024 * 1024) // Convert bytes to GB
+		}
+	}
+	if vdcCR.Spec.Quota.Storage != "" {
+		if storage, err := parseResourceQuantityToBytes(vdcCR.Spec.Quota.Storage); err == nil {
+			storageQuota = storage / (1024 * 1024 * 1024) // Convert bytes to GB
+		}
+	}
+
+	// Build hub VDC information
+	hubStatus := gin.H{
+		"id":                 vdcCR.Name,
+		"name":               vdcCR.Spec.DisplayName,
+		"description":        vdcCR.Spec.Description,
+		"organization":       vdcCR.Spec.OrganizationRef,
+		"zone_id":            vdcCR.Spec.ZoneID,
+		"display_name":       vdcCR.Spec.DisplayName,
+		"cr_name":            vdcCR.Name,
+		"cr_namespace":       vdcCR.Namespace,
+		"workload_namespace": vdcCR.Status.Namespace,
+		"cpu_quota":          cpuQuota,
+		"memory_quota":       memoryQuota,
+		"storage_quota":      storageQuota,
+		"network_policy":     vdcCR.Spec.NetworkPolicy,
+		"phase":              string(vdcCR.Status.Phase),
+		"conditions":         vdcCR.Status.Conditions,
+		"created_at":         vdcCR.CreationTimestamp,
+	}
+
+	// Get spoke status if spoke handlers are available
+	var spokeStatus gin.H
+	if h.spokeHandlers != nil && vdcCR.Spec.ZoneID != "" {
+		spokeAgent, err := h.spokeHandlers.GetSpokeAgent(vdcCR.Spec.ZoneID)
+		if err != nil {
+			klog.Warningf("Failed to get spoke agent for zone %s: %v", vdcCR.Spec.ZoneID, err)
+			spokeStatus = gin.H{
+				"status":  "unreachable",
+				"message": fmt.Sprintf("Could not connect to spoke agent in zone %s", vdcCR.Spec.ZoneID),
+				"error":   err.Error(),
+			}
+		} else if spokeAgent != nil && vdcCR.Status.Namespace != "" {
+			// Query spoke agent for VDC namespace status
+			vdcStatus, err := h.spokeHandlers.GetVDCStatus(spokeAgent, vdcCR.Status.Namespace)
+			if err != nil {
+				klog.Warningf("Failed to get VDC status from spoke %s: %v", vdcCR.Spec.ZoneID, err)
+				spokeStatus = gin.H{
+					"status":  "error",
+					"message": fmt.Sprintf("Error getting VDC status from spoke cluster"),
+					"error":   err.Error(),
+				}
+			} else {
+				spokeStatus = gin.H{
+					"status":         "active",
+					"namespace":      vdcStatus.Namespace,
+					"spoke_status":   vdcStatus.Status,
+					"resource_usage": vdcStatus.ResourceUsage,
+					"created_at":     vdcStatus.CreatedAt,
+					"last_updated":   time.Now(),
+				}
+			}
+		} else {
+			spokeStatus = gin.H{
+				"status":  "not_deployed",
+				"message": "VDC namespace not yet created on spoke cluster",
+			}
+		}
+	} else {
+		spokeStatus = gin.H{
+			"status":  "unknown",
+			"message": "Spoke integration not available",
+		}
+	}
+
+	klog.V(6).Infof("Retrieved comprehensive VDC status for %s by user %s (%s)", id, username, userID)
+
+	// Return comprehensive status
+	response := gin.H{
+		"vdc_id":       id,
+		"hub_status":   hubStatus,
+		"spoke_status": spokeStatus,
+		"overall_status": func() string {
+			hubPhase := string(vdcCR.Status.Phase)
+			spokeStatusStr, ok := spokeStatus["status"].(string)
+			if !ok {
+				spokeStatusStr = "unknown"
+			}
+
+			// Determine overall status based on both hub and spoke
+			if hubPhase == "Active" && spokeStatusStr == "active" {
+				return "fully_active"
+			} else if hubPhase == "Active" && spokeStatusStr == "not_deployed" {
+				return "hub_active_spoke_pending"
+			} else if hubPhase == "Pending" {
+				return "creating"
+			} else if spokeStatusStr == "unreachable" || spokeStatusStr == "error" {
+				return "spoke_issues"
+			} else {
+				return "unknown"
+			}
+		}(),
+		"zone_id":      vdcCR.Spec.ZoneID,
+		"last_checked": time.Now(),
+	}
+
+	c.JSON(http.StatusOK, response)
 }

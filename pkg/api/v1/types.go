@@ -104,6 +104,15 @@ type VirtualDataCenterSpec struct {
 	// CustomNetworkConfig defines custom network configuration when NetworkPolicy is "custom"
 	// +kubebuilder:pruning:PreserveUnknownFields
 	CustomNetworkConfig map[string]string `json:"customNetworkConfig,omitempty"`
+
+	// VDCType indicates whether this is a hub or spoke VDC
+	VDCType VDCType `json:"vdcType,omitempty"`
+
+	// HubVDCRef references the hub VDC (for spoke VDCs)
+	HubVDCRef *VDCReference `json:"hubVDCRef,omitempty"`
+
+	// SpokeVDCRefs references the spoke VDCs (for hub VDCs)
+	SpokeVDCRefs []VDCReference `json:"spokeVDCRefs,omitempty"`
 }
 
 // ResourceQuota defines resource limits
@@ -143,6 +152,15 @@ type VirtualDataCenterStatus struct {
 
 	// Conditions represent the latest available observations
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// SpokeDeploymentStatus tracks spoke VDC deployment status (for hub VDCs)
+	SpokeDeploymentStatus *SpokeDeploymentStatus `json:"spokeDeploymentStatus,omitempty"`
+
+	// HubConnectionStatus tracks connection to hub (for spoke VDCs)
+	HubConnectionStatus *HubConnectionStatus `json:"hubConnectionStatus,omitempty"`
+
+	// ObservedGeneration tracks the generation that was observed
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // ResourceUsage represents current resource consumption
@@ -156,15 +174,49 @@ type ResourceUsage struct {
 type VirtualDataCenterPhase string
 
 const (
-	VirtualDataCenterPhasePending   VirtualDataCenterPhase = "Pending"
-	VirtualDataCenterPhaseActive    VirtualDataCenterPhase = "Active"
-	VirtualDataCenterPhaseFailed    VirtualDataCenterPhase = "Failed"
-	VirtualDataCenterPhaseSuspended VirtualDataCenterPhase = "Suspended"
+	VirtualDataCenterPhasePending         VirtualDataCenterPhase = "Pending"
+	VirtualDataCenterPhaseActive          VirtualDataCenterPhase = "Active"
+	VirtualDataCenterPhaseFailed          VirtualDataCenterPhase = "Failed"
+	VirtualDataCenterPhaseSuspended       VirtualDataCenterPhase = "Suspended"
+	VirtualDataCenterPhaseWaitingForSpoke VirtualDataCenterPhase = "WaitingForSpoke"
 )
+
+// VDCType represents the type of VDC (hub or spoke)
+type VDCType string
+
+const (
+	VDCTypeHub   VDCType = "hub"
+	VDCTypeSpoke VDCType = "spoke"
+)
+
+// VDCReference represents a reference to another VDC
+type VDCReference struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	ZoneID    string `json:"zoneId"`
+	ClusterID string `json:"clusterId,omitempty"`
+}
+
+// SpokeDeploymentStatus tracks deployment status on spoke clusters
+type SpokeDeploymentStatus struct {
+	TotalSpokes    int          `json:"totalSpokes"`
+	DeployedSpokes int          `json:"deployedSpokes"`
+	HealthySpokes  int          `json:"healthySpokes"`
+	FailedSpokes   int          `json:"failedSpokes"`
+	LastSyncTime   *metav1.Time `json:"lastSyncTime,omitempty"`
+}
+
+// HubConnectionStatus tracks connection status to hub (for spoke VDCs)
+type HubConnectionStatus struct {
+	Connected    bool         `json:"connected"`
+	LastPingTime *metav1.Time `json:"lastPingTime,omitempty"`
+	HubEndpoint  string       `json:"hubEndpoint,omitempty"`
+	Error        string       `json:"error,omitempty"`
+}
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:resource:scope=Namespaced,shortName=vdc
 
 // VirtualDataCenter is the Schema for the virtualdatacenters API
 type VirtualDataCenter struct {

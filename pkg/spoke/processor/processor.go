@@ -263,11 +263,72 @@ func (p *Processor) handleCreateVDC(ctx context.Context, operation *spoke.Operat
 	result := &spoke.OperationResult{
 		OperationID: operation.ID,
 		Status:      spoke.OperationStatusFailed,
-		Error:       "VDC creation not yet implemented",
 	}
 
-	// TODO: Parse payload and call VDC manager
-	p.logger.Info("VDC creation requested but not implemented", "operation_id", operation.ID)
+	// Check if VDC manager is available
+	p.mu.RLock()
+	vdcManager := p.vdcManager
+	p.mu.RUnlock()
+
+	if vdcManager == nil {
+		result.Error = "VDC manager not available"
+		p.logger.Error("VDC creation failed: VDC manager not available", "operation_id", operation.ID)
+		return result
+	}
+
+	// Parse VDC creation request from payload
+	vdcName, ok := operation.Payload["vdc_name"].(string)
+	if !ok {
+		result.Error = "missing or invalid vdc_name in payload"
+		p.logger.Error("VDC creation failed: missing vdc_name", "operation_id", operation.ID)
+		return result
+	}
+
+	targetNamespace, ok := operation.Payload["target_namespace"].(string)
+	if !ok {
+		result.Error = "missing or invalid target_namespace in payload"
+		p.logger.Error("VDC creation failed: missing target_namespace", "operation_id", operation.ID)
+		return result
+	}
+
+	p.logger.Info("Creating VDC in spoke cluster",
+		"operation_id", operation.ID,
+		"vdc_name", vdcName,
+		"target_namespace", targetNamespace)
+
+	// Create VDC request
+	vdcRequest := &spoke.VDCCreateRequest{
+		Name:             vdcName,
+		OrganizationName: getStringFromPayload(operation.Payload, "organization"),
+		NetworkPolicy:    getStringFromPayload(operation.Payload, "network_policy"),
+	}
+
+	// Parse quota information
+	if quota, ok := operation.Payload["quota"].(map[string]interface{}); ok {
+		vdcRequest.CPUQuota = getInt64FromPayload(quota, "cpu")
+		vdcRequest.MemoryQuota = getInt64FromPayload(quota, "memory")
+		vdcRequest.StorageQuota = getInt64FromPayload(quota, "storage")
+	}
+
+	// Create VDC through manager
+	vdcStatus, err := vdcManager.CreateVDC(ctx, vdcRequest)
+	if err != nil {
+		result.Error = fmt.Sprintf("failed to create VDC: %v", err)
+		p.logger.Error("VDC creation failed", "operation_id", operation.ID, "error", err)
+		return result
+	}
+
+	// Success
+	result.Status = spoke.OperationStatusCompleted
+	result.Result = map[string]interface{}{
+		"vdc_status": vdcStatus,
+		"message":    "VDC created successfully",
+	}
+
+	p.logger.Info("VDC created successfully",
+		"operation_id", operation.ID,
+		"vdc_name", vdcName,
+		"namespace", targetNamespace)
 
 	return result
 }
@@ -276,11 +337,57 @@ func (p *Processor) handleDeleteVDC(ctx context.Context, operation *spoke.Operat
 	result := &spoke.OperationResult{
 		OperationID: operation.ID,
 		Status:      spoke.OperationStatusFailed,
-		Error:       "VDC deletion not yet implemented",
 	}
 
-	// TODO: Parse payload and call VDC manager
-	p.logger.Info("VDC deletion requested but not implemented", "operation_id", operation.ID)
+	// Check if VDC manager is available
+	p.mu.RLock()
+	vdcManager := p.vdcManager
+	p.mu.RUnlock()
+
+	if vdcManager == nil {
+		result.Error = "VDC manager not available"
+		p.logger.Error("VDC deletion failed: VDC manager not available", "operation_id", operation.ID)
+		return result
+	}
+
+	// Parse VDC deletion request from payload
+	vdcName, ok := operation.Payload["vdc_name"].(string)
+	if !ok {
+		result.Error = "missing or invalid vdc_name in payload"
+		p.logger.Error("VDC deletion failed: missing vdc_name", "operation_id", operation.ID)
+		return result
+	}
+
+	targetNamespace, ok := operation.Payload["target_namespace"].(string)
+	if !ok {
+		result.Error = "missing or invalid target_namespace in payload"
+		p.logger.Error("VDC deletion failed: missing target_namespace", "operation_id", operation.ID)
+		return result
+	}
+
+	p.logger.Info("Deleting VDC from spoke cluster",
+		"operation_id", operation.ID,
+		"vdc_name", vdcName,
+		"target_namespace", targetNamespace)
+
+	// Delete VDC through manager
+	err := vdcManager.DeleteVDC(ctx, targetNamespace)
+	if err != nil {
+		result.Error = fmt.Sprintf("failed to delete VDC: %v", err)
+		p.logger.Error("VDC deletion failed", "operation_id", operation.ID, "error", err)
+		return result
+	}
+
+	// Success
+	result.Status = spoke.OperationStatusCompleted
+	result.Result = map[string]interface{}{
+		"message": "VDC deleted successfully",
+	}
+
+	p.logger.Info("VDC deleted successfully",
+		"operation_id", operation.ID,
+		"vdc_name", vdcName,
+		"namespace", targetNamespace)
 
 	return result
 }
@@ -296,4 +403,36 @@ func (p *Processor) handleSyncTemplates(ctx context.Context, operation *spoke.Op
 	p.logger.Info("Template sync requested but not implemented", "operation_id", operation.ID)
 
 	return result
+}
+
+// Helper functions for payload parsing
+
+func getStringFromPayload(payload map[string]interface{}, key string) string {
+	if value, ok := payload[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func getIntFromPayload(payload map[string]interface{}, key string) int {
+	if value, ok := payload[key].(int); ok {
+		return value
+	}
+	if value, ok := payload[key].(float64); ok {
+		return int(value)
+	}
+	return 0
+}
+
+func getInt64FromPayload(payload map[string]interface{}, key string) int64 {
+	if value, ok := payload[key].(int); ok {
+		return int64(value)
+	}
+	if value, ok := payload[key].(int64); ok {
+		return value
+	}
+	if value, ok := payload[key].(float64); ok {
+		return int64(value)
+	}
+	return 0
 }

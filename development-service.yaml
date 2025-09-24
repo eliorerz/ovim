@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-server-dev
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-server
+    app.kubernetes.io/component: development
+spec:
+  type: ExternalName
+  externalName: 192.168.68.17
+  ports:
+  - port: 8443
+    targetPort: 8443
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-server-dev-nodeport
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-server
+    app.kubernetes.io/component: development
+spec:
+  type: NodePort
+  ports:
+  - port: 8443
+    targetPort: 8443
+    nodePort: 31443
+    protocol: TCP
+  selector: {}
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: ovim-server-dev-nodeport
+  namespace: ovim-system
+subsets:
+- addresses:
+  - ip: 192.168.68.17
+  ports:
+  - port: 8443
+    protocol: TCP

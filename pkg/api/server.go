@@ -111,7 +111,7 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 	}
 
 	// Create spoke handlers
-	spokeHandlers := NewSpokeHandlers(storage)
+	spokeHandlers := NewSpokeHandlers(storage, k8sClient)
 
 	server := &Server{
 		config:          cfg,
@@ -131,6 +131,11 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 
 	server.setupMiddleware()
 	server.setupRoutes()
+
+	// Start VDC monitoring for spoke agent communication
+	if k8sClient != nil {
+		spokeHandlers.StartVDCMonitoring()
+	}
 
 	return server
 }
@@ -229,7 +234,7 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/catalog/templates", catalogHandlers.GetOrganizationCatalogTemplates)
 
 				// VDC requirements check endpoint for VM deployment
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
 				orgs.GET("/:id/vdc-requirements", vdcHandlers.CheckVDCRequirements)
 
 				// Organization zone management (system admin only)
@@ -254,7 +259,7 @@ func (s *Server) setupRoutes() {
 			userProfile := protected.Group("/profile")
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -274,9 +279,12 @@ func (s *Server) setupRoutes() {
 			vdcs := protected.Group("/vdcs")
 			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
 			{
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
 				if s.eventRecorder != nil {
 					vdcHandlers.SetEventRecorder(s.eventRecorder)
+				}
+				if s.spokeHandlers != nil {
+					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
 				}
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
@@ -289,6 +297,7 @@ func (s *Server) setupRoutes() {
 
 				// VDC status and limitrange endpoints
 				vdcs.GET("/:id/status", vdcHandlers.GetStatus)
+				vdcs.GET("/:id/status-with-spoke", vdcHandlers.GetVDCStatusWithSpoke)
 				vdcs.GET("/:id/limitrange", vdcHandlers.GetLimitRange)
 			}
 

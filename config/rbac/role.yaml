@@ -8,13 +8,21 @@ rules:
   - ""
   resources:
   - limitranges
+  - pods
+  - resourcequotas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - namespaces
   - persistentvolumeclaims
   - pods/attach
   - pods/exec
   - pods/portforward
   - pods/proxy
-  - resourcequotas
   - serviceaccounts
   verbs:
   - create
@@ -23,14 +31,6 @@ rules:
   - list
   - patch
   - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
   - watch
 - apiGroups:
   - apps

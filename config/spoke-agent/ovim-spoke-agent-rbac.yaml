@@ -98,6 +98,20 @@ rules:
   resources: ["persistentvolumeclaims"]
   verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
 
+# OVIM VirtualDataCenter CRD management
+- apiGroups: ["ovim.io"]
+  resources: ["virtualdatacenters"]
+  verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+
+- apiGroups: ["ovim.io"]
+  resources: ["virtualdatacenters/status"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+
+# OVIM Organization CRD access (might be needed for VDC operations)
+- apiGroups: ["ovim.io"]
+  resources: ["organizations"]
+  verbs: ["get", "list", "watch"]
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

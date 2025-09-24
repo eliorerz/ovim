@@ -70,6 +70,12 @@ type VMManager interface {
 
 // VDCManager defines the interface for managing VDCs on the spoke cluster
 type VDCManager interface {
+	// Start begins watching for VDC replication requests from the hub
+	Start(ctx context.Context) error
+
+	// Stop stops the VDC manager
+	Stop() error
+
 	// CreateVDC creates a new VDC from the given request
 	CreateVDC(ctx context.Context, req *VDCCreateRequest) (*VDCStatus, error)
 

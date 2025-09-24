@@ -14,10 +14,12 @@ const (
 	OperationStopVM        OperationType = "stop_vm"
 	OperationGetVMStatus   OperationType = "get_vm_status"
 	OperationListVMs       OperationType = "list_vms"
-	OperationGetHealth     OperationType = "get_health"
-	OperationGetMetrics    OperationType = "get_metrics"
 	OperationCreateVDC     OperationType = "create_vdc"
 	OperationDeleteVDC     OperationType = "delete_vdc"
+	OperationGetVDCStatus  OperationType = "get_vdc_status"
+	OperationListVDCs      OperationType = "list_vdcs"
+	OperationGetHealth     OperationType = "get_health"
+	OperationGetMetrics    OperationType = "get_metrics"
 	OperationSyncTemplates OperationType = "sync_templates"
 )
 

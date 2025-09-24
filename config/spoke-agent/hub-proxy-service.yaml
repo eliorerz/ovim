@@ -1,0 +1,39 @@
+---
+# Service for spoke clusters to reach hub server via HAProxy
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-hub-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server
+    app.kubernetes.io/component: hub-proxy
+    app.kubernetes.io/part-of: ovim
+spec:
+  type: ExternalName
+  externalName: 192.168.111.20  # HAProxy host
+  ports:
+  - port: 32443
+    targetPort: 32443
+    protocol: TCP
+    name: https
+
+---
+# For development: Service to reach development server directly
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-hub-server-dev
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server-dev
+    app.kubernetes.io/component: hub-proxy-dev
+    app.kubernetes.io/part-of: ovim
+spec:
+  type: ExternalName
+  externalName: 192.168.68.17  # Development server host
+  ports:
+  - port: 8443
+    targetPort: 8443
+    protocol: TCP
+    name: https

@@ -1,0 +1,75 @@
+---
+# Service with endpoints for spoke clusters to reach hub server
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-hub-server-dev
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server-dev
+    app.kubernetes.io/component: hub-proxy-dev
+    app.kubernetes.io/part-of: ovim
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8443
+    targetPort: 8443
+    protocol: TCP
+    name: https
+
+---
+# Endpoints pointing to the development server
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: ovim-hub-server-dev
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server-dev
+    app.kubernetes.io/component: hub-proxy-dev
+    app.kubernetes.io/part-of: ovim
+subsets:
+- addresses:
+  - ip: 192.168.68.17
+  ports:
+  - port: 8443
+    protocol: TCP
+    name: https
+
+---
+# Service for production (via HAProxy)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovim-hub-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server
+    app.kubernetes.io/component: hub-proxy
+    app.kubernetes.io/part-of: ovim
+spec:
+  type: ClusterIP
+  ports:
+  - port: 32443
+    targetPort: 32443
+    protocol: TCP
+    name: https
+
+---
+# Endpoints pointing to HAProxy
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: ovim-hub-server
+  namespace: ovim-system
+  labels:
+    app.kubernetes.io/name: ovim-hub-server
+    app.kubernetes.io/component: hub-proxy
+    app.kubernetes.io/part-of: ovim
+subsets:
+- addresses:
+  - ip: 192.168.111.20
+  ports:
+  - port: 32443
+    protocol: TCP
+    name: https

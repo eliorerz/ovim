@@ -152,6 +152,14 @@ func (a *Agent) Start(ctx context.Context) error {
 		}
 	}
 
+	// Start VDC management if enabled
+	if a.config.Features.VDCManagement && a.vdcManager != nil {
+		if err := a.startVDCManagement(); err != nil {
+			a.logger.Error("Failed to start VDC management", "error", err)
+			// Non-critical, continue
+		}
+	}
+
 	// Start operation processing
 	if err := a.startOperationProcessing(); err != nil {
 		a.logger.Error("Failed to start operation processing", "error", err)
@@ -345,6 +353,21 @@ func (a *Agent) startHealthReporting() error {
 		defer a.wg.Done()
 		if err := a.healthReporter.StartPeriodicReporting(a.ctx, a.config.Health.ReportInterval); err != nil {
 			a.logger.Error("Health reporting error", "error", err)
+		}
+	}()
+
+	return nil
+}
+
+// startVDCManagement starts VDC management (watching for VDC replication requests)
+func (a *Agent) startVDCManagement() error {
+	a.logger.Info("Starting VDC management")
+
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		if err := a.vdcManager.Start(a.ctx); err != nil {
+			a.logger.Error("VDC management error", "error", err)
 		}
 	}()
 
