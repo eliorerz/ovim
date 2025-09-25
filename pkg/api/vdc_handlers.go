@@ -21,11 +21,12 @@ import (
 
 // VDCHandlers handles VDC-related requests
 type VDCHandlers struct {
-	storage         storage.Storage
-	k8sClient       client.Client
-	openShiftClient *openshift.Client
-	eventRecorder   *EventRecorder
-	spokeHandlers   *SpokeHandlers
+	storage           storage.Storage
+	k8sClient         client.Client
+	openShiftClient   *openshift.Client
+	eventRecorder     *EventRecorder
+	spokeHandlers     *SpokeHandlers
+	spokeIntegration  *SpokeIntegration
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
@@ -45,6 +46,11 @@ func (h *VDCHandlers) SetEventRecorder(recorder *EventRecorder) {
 // SetSpokeHandlers sets the spoke handlers for VDC replication
 func (h *VDCHandlers) SetSpokeHandlers(spokeHandlers *SpokeHandlers) {
 	h.spokeHandlers = spokeHandlers
+}
+
+// SetSpokeIntegration sets the spoke integration for dynamic FQDN-based communication
+func (h *VDCHandlers) SetSpokeIntegration(spokeIntegration *SpokeIntegration) {
+	h.spokeIntegration = spokeIntegration
 }
 
 // List handles listing VDCs
@@ -314,9 +320,32 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 
 	klog.Infof("Created VirtualDataCenter CRD %s in org %s by user %s (%s)", vdcID, req.OrgID, username, userID)
 
-	// Queue VDC creation operation for spoke agent if available
-	if h.spokeHandlers != nil {
-		// Use zone ID as agent ID (spoke agent for this zone)
+	// Queue VDC creation operation for spoke agent using new dynamic integration
+	if h.spokeIntegration != nil {
+		vdcData := map[string]interface{}{
+			"vdc_name":         vdcID,
+			"vdc_namespace":    fmt.Sprintf("org-%s", req.OrgID),
+			"target_namespace": fmt.Sprintf("vdc-org-%s-%s", req.OrgID, vdcID),
+			"organization":     req.OrgID,
+			"zone_id":          req.ZoneID,
+			"display_name":     req.DisplayName,
+			"description":      req.Description,
+			"quota": map[string]interface{}{
+				"cpu":     req.CPUQuota,
+				"memory":  req.MemoryQuota,
+				"storage": req.StorageQuota,
+			},
+			"network_policy": req.NetworkPolicy,
+		}
+
+		operationID, err := h.spokeIntegration.QueueVDCCreation(req.ZoneID, vdcData)
+		if err != nil {
+			klog.Errorf("Failed to queue VDC creation operation for zone %s: %v", req.ZoneID, err)
+		} else {
+			klog.Infof("Queued VDC creation operation %s for zone %s using dynamic spoke integration", operationID, req.ZoneID)
+		}
+	} else if h.spokeHandlers != nil {
+		// Fallback to legacy spoke handlers
 		agentID := fmt.Sprintf("spoke-agent-%s", req.ZoneID)
 
 		vdcData := map[string]interface{}{
@@ -336,7 +365,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		}
 
 		operationID := h.spokeHandlers.QueueVDCCreation(agentID, vdcData)
-		klog.Infof("Queued VDC creation operation %s for zone %s (agent: %s)", operationID, req.ZoneID, agentID)
+		klog.Infof("Queued VDC creation operation %s for zone %s (legacy agent: %s)", operationID, req.ZoneID, agentID)
 	}
 
 	// Return VDC response from CRD

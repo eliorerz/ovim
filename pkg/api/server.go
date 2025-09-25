@@ -26,19 +26,20 @@ const (
 
 // Server represents the HTTP server for the OVIM API
 type Server struct {
-	config          *config.Config
-	storage         storage.Storage
-	provisioner     kubevirt.VMProvisioner
-	authManager     *auth.Middleware
-	tokenManager    *auth.TokenManager
-	oidcProvider    *auth.OIDCProvider
-	k8sClient       client.Client
-	k8sClientset    kubernetes.Interface
-	openshiftClient *openshift.Client
-	catalogService  *catalog.Service
-	eventRecorder   *EventRecorder
-	spokeHandlers   *SpokeHandlers
-	router          *gin.Engine
+	config           *config.Config
+	storage          storage.Storage
+	provisioner      kubevirt.VMProvisioner
+	authManager      *auth.Middleware
+	tokenManager     *auth.TokenManager
+	oidcProvider     *auth.OIDCProvider
+	k8sClient        client.Client
+	k8sClientset     kubernetes.Interface
+	openshiftClient  *openshift.Client
+	catalogService   *catalog.Service
+	eventRecorder    *EventRecorder
+	spokeHandlers    *SpokeHandlers
+	spokeIntegration *SpokeIntegration
+	router           *gin.Engine
 }
 
 // NewServer creates a new API server instance
@@ -113,20 +114,31 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 	// Create spoke handlers
 	spokeHandlers := NewSpokeHandlers(storage)
 
+	// Create spoke integration with dynamic FQDN discovery
+	klog.Info("Creating spoke integration with dynamic FQDN discovery...")
+	spokeIntegration, err := NewSpokeIntegration(cfg, storage)
+	if err != nil {
+		klog.Errorf("Failed to create spoke integration: %v", err)
+		spokeIntegration = nil
+	} else {
+		klog.Info("Spoke integration created successfully")
+	}
+
 	server := &Server{
-		config:          cfg,
-		storage:         storage,
-		provisioner:     provisioner,
-		authManager:     authManager,
-		tokenManager:    tokenManager,
-		oidcProvider:    oidcProvider,
-		k8sClient:       k8sClient,
-		k8sClientset:    k8sClientset,
-		openshiftClient: openshiftClient,
-		catalogService:  catalogService,
-		eventRecorder:   eventRecorder,
-		spokeHandlers:   spokeHandlers,
-		router:          gin.New(),
+		config:           cfg,
+		storage:          storage,
+		provisioner:      provisioner,
+		authManager:      authManager,
+		tokenManager:     tokenManager,
+		oidcProvider:     oidcProvider,
+		k8sClient:        k8sClient,
+		k8sClientset:     k8sClientset,
+		openshiftClient:  openshiftClient,
+		catalogService:   catalogService,
+		eventRecorder:    eventRecorder,
+		spokeHandlers:    spokeHandlers,
+		spokeIntegration: spokeIntegration,
+		router:           gin.New(),
 	}
 
 	server.setupMiddleware()
@@ -138,6 +150,11 @@ func NewServer(cfg *config.Config, storage storage.Storage, provisioner kubevirt
 // Handler returns the HTTP handler for the server
 func (s *Server) Handler() http.Handler {
 	return s.router
+}
+
+// GetSpokeIntegration returns the spoke integration instance
+func (s *Server) GetSpokeIntegration() *SpokeIntegration {
+	return s.spokeIntegration
 }
 
 // setupMiddleware configures global middleware
@@ -212,6 +229,9 @@ func (s *Server) setupRoutes() {
 				if s.spokeHandlers != nil {
 					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
 				}
+				if s.spokeIntegration != nil {
+					vdcHandlers.SetSpokeIntegration(s.spokeIntegration)
+				}
 				orgs.GET("/", orgHandlers.List)
 				orgs.POST("/", orgHandlers.Create)
 				orgs.GET("/:id", orgHandlers.Get)
@@ -266,6 +286,9 @@ func (s *Server) setupRoutes() {
 				if s.spokeHandlers != nil {
 					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
 				}
+				if s.spokeIntegration != nil {
+					vdcHandlers.SetSpokeIntegration(s.spokeIntegration)
+				}
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -292,6 +315,9 @@ func (s *Server) setupRoutes() {
 				// Connect spoke handlers for VDC replication
 				if s.spokeHandlers != nil {
 					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
+				}
+				if s.spokeIntegration != nil {
+					vdcHandlers.SetSpokeIntegration(s.spokeIntegration)
 				}
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
