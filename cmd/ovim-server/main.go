@@ -254,6 +254,21 @@ func main() {
 	}
 
 	server := api.NewServer(cfg, storageImpl, provisioner, k8sClient, kubernetesClient, eventRecorder)
+
+	// Start spoke integration if available
+	klog.Info("Checking for spoke integration...")
+	if spokeIntegration := server.GetSpokeIntegration(); spokeIntegration != nil {
+		klog.Info("Spoke integration found, starting...")
+		if err := spokeIntegration.Start(); err != nil {
+			klog.Errorf("Failed to start spoke integration: %v", err)
+			klog.Info("Spoke integration disabled - VDC operations will use legacy queue mechanism")
+		} else {
+			klog.Info("Spoke integration started successfully - VDC operations will use dynamic FQDN discovery")
+		}
+	} else {
+		klog.Warning("No spoke integration found - VDC operations will use legacy queue mechanism only")
+	}
+
 	handler := server.Handler()
 
 	// Channel to collect server errors
