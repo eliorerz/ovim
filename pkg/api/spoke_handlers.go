@@ -1,6 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -27,6 +31,10 @@ type SpokeHandlers struct {
 	// Store agent status reports
 	agentStatuses map[string]*SpokeStatusReport
 	statusMutex   sync.RWMutex
+
+	// Store agent endpoints for push notifications
+	agentEndpoints map[string]string
+	endpointsMutex sync.RWMutex
 }
 
 // SpokeStatusReport represents a status report from a spoke agent
@@ -42,6 +50,7 @@ type SpokeStatusReport struct {
 	LastHubContact time.Time              `json:"last_hub_contact"`
 	ReportTime     time.Time              `json:"report_time"`
 	Errors         []string               `json:"errors,omitempty"`
+	CallbackURL    string                 `json:"callback_url,omitempty"`
 }
 
 // SpokeOperation represents an operation to be sent to a spoke agent
@@ -71,6 +80,7 @@ func NewSpokeHandlers(storage storage.Storage) *SpokeHandlers {
 		operationQueues:  make(map[string][]*SpokeOperation),
 		operationResults: make(map[string]*SpokeOperationResult),
 		agentStatuses:    make(map[string]*SpokeStatusReport),
+		agentEndpoints:   make(map[string]string),
 	}
 }
 
@@ -124,6 +134,14 @@ func (h *SpokeHandlers) HandleStatusReport(c *gin.Context) {
 	h.statusMutex.Lock()
 	h.agentStatuses[report.AgentID] = &report
 	h.statusMutex.Unlock()
+
+	// Store agent callback endpoint if provided
+	if report.CallbackURL != "" {
+		h.endpointsMutex.Lock()
+		h.agentEndpoints[report.AgentID] = report.CallbackURL
+		h.endpointsMutex.Unlock()
+		klog.Infof("Registered callback endpoint for agent %s: %s", report.AgentID, report.CallbackURL)
+	}
 
 	klog.Infof("Received status report from spoke agent %s (cluster: %s, zone: %s, status: %s)",
 		report.AgentID, report.ClusterID, report.ZoneID, report.Status)
@@ -299,6 +317,34 @@ func (h *SpokeHandlers) GetOperationResult(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// QueueVDCCreation queues a VDC creation operation for a spoke agent
+func (h *SpokeHandlers) QueueVDCCreation(agentID string, vdcData map[string]interface{}) string {
+	operation := &SpokeOperation{
+		ID:        generateOperationID(),
+		Type:      "create_vdc",
+		Timestamp: time.Now(),
+		Payload:   vdcData,
+	}
+
+	// Try to push operation directly to agent first
+	h.endpointsMutex.RLock()
+	endpoint, hasEndpoint := h.agentEndpoints[agentID]
+	h.endpointsMutex.RUnlock()
+
+	if hasEndpoint {
+		// Push operation directly to agent
+		go h.pushOperationToAgent(agentID, endpoint, operation)
+	} else {
+		// Fallback to queue-based approach
+		h.operationsMutex.Lock()
+		h.operationQueues[agentID] = append(h.operationQueues[agentID], operation)
+		h.operationsMutex.Unlock()
+		klog.Infof("Agent %s endpoint not available, queued VDC creation operation %s", agentID, operation.ID)
+	}
+
+	return operation.ID
+}
+
 // generateOperationID generates a unique operation ID
 func generateOperationID() string {
 	// Simple timestamp-based ID for demo purposes
@@ -344,4 +390,53 @@ func (h *SpokeHandlers) spokeAuthMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// pushOperationToAgent pushes an operation directly to a spoke agent
+func (h *SpokeHandlers) pushOperationToAgent(agentID, endpoint string, operation *SpokeOperation) {
+	// Create JSON payload
+	data, err := json.Marshal(operation)
+	if err != nil {
+		klog.Errorf("Failed to marshal operation %s for agent %s: %v", operation.ID, agentID, err)
+		return
+	}
+
+	// Create HTTP request
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Agent callback URL should have /operations endpoint
+	url := fmt.Sprintf("%s/operations", endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	if err != nil {
+		klog.Errorf("Failed to create push request for operation %s to agent %s: %v", operation.ID, agentID, err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Operation-ID", operation.ID)
+
+	// Send the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		klog.Errorf("Failed to push operation %s to agent %s at %s: %v", operation.ID, agentID, url, err)
+		// Fallback to queue
+		h.operationsMutex.Lock()
+		h.operationQueues[agentID] = append(h.operationQueues[agentID], operation)
+		h.operationsMutex.Unlock()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		klog.Errorf("Agent %s rejected operation %s (status %d)", agentID, operation.ID, resp.StatusCode)
+		// Fallback to queue
+		h.operationsMutex.Lock()
+		h.operationQueues[agentID] = append(h.operationQueues[agentID], operation)
+		h.operationsMutex.Unlock()
+		return
+	}
+
+	klog.Infof("Successfully pushed VDC creation operation %s to spoke agent %s", operation.ID, agentID)
 }

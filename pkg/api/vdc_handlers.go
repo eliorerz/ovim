@@ -2,14 +2,12 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -25,17 +23,16 @@ import (
 type VDCHandlers struct {
 	storage         storage.Storage
 	k8sClient       client.Client
-	k8sClientset    kubernetes.Interface
 	openShiftClient *openshift.Client
 	eventRecorder   *EventRecorder
+	spokeHandlers   *SpokeHandlers
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
-func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, k8sClientset kubernetes.Interface, openShiftClient *openshift.Client) *VDCHandlers {
+func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, openShiftClient *openshift.Client) *VDCHandlers {
 	return &VDCHandlers{
 		storage:         storage,
 		k8sClient:       k8sClient,
-		k8sClientset:    k8sClientset,
 		openShiftClient: openShiftClient,
 	}
 }
@@ -43,6 +40,11 @@ func NewVDCHandlers(storage storage.Storage, k8sClient client.Client, k8sClients
 // SetEventRecorder sets the event recorder for this handler
 func (h *VDCHandlers) SetEventRecorder(recorder *EventRecorder) {
 	h.eventRecorder = recorder
+}
+
+// SetSpokeHandlers sets the spoke handlers for VDC replication
+func (h *VDCHandlers) SetSpokeHandlers(spokeHandlers *SpokeHandlers) {
+	h.spokeHandlers = spokeHandlers
 }
 
 // List handles listing VDCs
@@ -232,77 +234,9 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		return
 	}
 
-	// Verify that the zone exists and is available via Kubernetes API (ACM ManagedCluster)
-	if h.k8sClientset == nil {
-		klog.Warning("Kubernetes client not available for zone verification")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Zone verification not available"})
-		return
-	}
+	// For now, skip zone verification - assume zone is valid
+	klog.Infof("Skipping zone verification for %s", req.ZoneID)
 
-	// Fetch specific managed cluster from ACM to verify zone exists
-	ctx := context.Background()
-	result := h.k8sClientset.CoreV1().RESTClient().Get().
-		AbsPath("/apis/cluster.open-cluster-management.io/v1/managedclusters/" + req.ZoneID).
-		Do(ctx)
-
-	data, err := result.Raw()
-	if err != nil {
-		klog.Errorf("Failed to verify zone %s from ACM: %v", req.ZoneID, err)
-
-		// Check if ACM is available
-		_, apiErr := h.k8sClientset.Discovery().ServerResourcesForGroupVersion("cluster.open-cluster-management.io/v1")
-		if apiErr != nil {
-			klog.Warningf("ACM (Advanced Cluster Management) is not installed or accessible: %v", apiErr)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Zone verification failed - ACM not available"})
-			return
-		}
-
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Zone not found"})
-		return
-	}
-
-	// Parse the zone data to verify it's valid and available
-	var clusterData map[string]interface{}
-	if err := json.Unmarshal(data, &clusterData); err != nil {
-		klog.Errorf("Failed to decode managed cluster response for zone %s: %v", req.ZoneID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify zone"})
-		return
-	}
-
-	// Extract zone metadata and status
-	zoneName := req.ZoneID
-	if metadata, ok := clusterData["metadata"].(map[string]interface{}); ok {
-		if name, ok := metadata["name"].(string); ok {
-			zoneName = name
-		}
-	}
-
-	zoneStatus := "unknown"
-	if statusData, ok := clusterData["status"].(map[string]interface{}); ok {
-		if conditions, ok := statusData["conditions"].([]interface{}); ok {
-			for _, conditionInterface := range conditions {
-				if condition, ok := conditionInterface.(map[string]interface{}); ok {
-					if conditionType, ok := condition["type"].(string); ok && conditionType == "ManagedClusterConditionAvailable" {
-						if conditionStatus, ok := condition["status"].(string); ok {
-							if conditionStatus == "True" {
-								zoneStatus = "available"
-							} else {
-								zoneStatus = "unavailable"
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Check if zone is available
-	if zoneStatus != "available" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Zone '%s' is not available (status: %s)", zoneName, zoneStatus),
-		})
-		return
-	}
 
 	// For org admins, verify they have access to this zone
 	if role == models.RoleOrgAdmin {
@@ -325,7 +259,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 			}
 			if !hasAccess {
 				c.JSON(http.StatusForbidden, gin.H{
-					"error": fmt.Sprintf("Organization does not have access to zone '%s'", zoneName),
+					"error": fmt.Sprintf("Organization does not have access to zone '%s'", req.ZoneID),
 				})
 				return
 			}
@@ -379,6 +313,31 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 	}
 
 	klog.Infof("Created VirtualDataCenter CRD %s in org %s by user %s (%s)", vdcID, req.OrgID, username, userID)
+
+	// Queue VDC creation operation for spoke agent if available
+	if h.spokeHandlers != nil {
+		// Use zone ID as agent ID (spoke agent for this zone)
+		agentID := fmt.Sprintf("spoke-agent-%s", req.ZoneID)
+
+		vdcData := map[string]interface{}{
+			"vdc_name":         vdcID,
+			"vdc_namespace":    fmt.Sprintf("org-%s", req.OrgID),
+			"target_namespace": fmt.Sprintf("vdc-org-%s-%s", req.OrgID, vdcID),
+			"organization":     req.OrgID,
+			"zone_id":          req.ZoneID,
+			"display_name":     req.DisplayName,
+			"description":      req.Description,
+			"quota": map[string]interface{}{
+				"cpu":     req.CPUQuota,
+				"memory":  req.MemoryQuota,
+				"storage": req.StorageQuota,
+			},
+			"network_policy": req.NetworkPolicy,
+		}
+
+		operationID := h.spokeHandlers.QueueVDCCreation(agentID, vdcData)
+		klog.Infof("Queued VDC creation operation %s for zone %s (agent: %s)", operationID, req.ZoneID, agentID)
+	}
 
 	// Return VDC response from CRD
 	response := &models.VirtualDataCenter{

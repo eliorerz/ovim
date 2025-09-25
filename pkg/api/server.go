@@ -203,6 +203,15 @@ func (s *Server) setupRoutes() {
 				}
 				catalogHandlers := NewCatalogHandlers(s.storage, s.catalogService)
 				userHandlers := NewUserHandlers(s.storage)
+
+				// VDC handlers for organization routes
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				if s.eventRecorder != nil {
+					vdcHandlers.SetEventRecorder(s.eventRecorder)
+				}
+				if s.spokeHandlers != nil {
+					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
+				}
 				orgs.GET("/", orgHandlers.List)
 				orgs.POST("/", orgHandlers.Create)
 				orgs.GET("/:id", orgHandlers.Get)
@@ -229,7 +238,6 @@ func (s *Server) setupRoutes() {
 				orgs.GET("/:id/catalog/templates", catalogHandlers.GetOrganizationCatalogTemplates)
 
 				// VDC requirements check endpoint for VM deployment
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
 				orgs.GET("/:id/vdc-requirements", vdcHandlers.CheckVDCRequirements)
 
 				// Organization zone management (system admin only)
@@ -254,7 +262,10 @@ func (s *Server) setupRoutes() {
 			userProfile := protected.Group("/profile")
 			{
 				orgHandlers := NewOrganizationHandlers(s.storage, s.k8sClient, s.openshiftClient)
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
+				if s.spokeHandlers != nil {
+					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
+				}
 				userProfile.GET("/organization", orgHandlers.GetUserOrganization)
 				userProfile.GET("/vdcs", vdcHandlers.ListUserVDCs)
 				// Allow org admins to view their organization's resource usage
@@ -274,9 +285,13 @@ func (s *Server) setupRoutes() {
 			vdcs := protected.Group("/vdcs")
 			vdcs.Use(s.authManager.RequireRole("system_admin", "org_admin"))
 			{
-				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.k8sClientset, s.openshiftClient)
+				vdcHandlers := NewVDCHandlers(s.storage, s.k8sClient, s.openshiftClient)
 				if s.eventRecorder != nil {
 					vdcHandlers.SetEventRecorder(s.eventRecorder)
+				}
+				// Connect spoke handlers for VDC replication
+				if s.spokeHandlers != nil {
+					vdcHandlers.SetSpokeHandlers(s.spokeHandlers)
 				}
 				vdcs.GET("/", vdcHandlers.List)
 				vdcs.POST("/", vdcHandlers.Create)
