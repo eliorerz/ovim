@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -47,6 +48,26 @@ const (
 	EnvOpenShiftConfig            = "OVIM_OPENSHIFT_KUBECONFIG"
 	EnvOpenShiftInCluster         = "OVIM_OPENSHIFT_IN_CLUSTER"
 	EnvOpenShiftTemplateNamespace = "OVIM_OPENSHIFT_TEMPLATE_NAMESPACE"
+
+	// Spoke Agent Environment variables
+	EnvSpokeDomainSuffix       = "OVIM_SPOKE_DOMAIN_SUFFIX"
+	EnvSpokeHostPattern        = "OVIM_SPOKE_HOST_PATTERN"
+	EnvSpokeFQDNTemplate       = "OVIM_SPOKE_FQDN_TEMPLATE"
+	EnvSpokeCustomFQDNs        = "OVIM_SPOKE_CUSTOM_FQDNS"
+	EnvSpokeProtocol           = "OVIM_SPOKE_PROTOCOL"
+	EnvSpokeTLSSkipVerify      = "OVIM_SPOKE_TLS_SKIP_VERIFY"
+	EnvSpokeTimeout            = "OVIM_SPOKE_TIMEOUT"
+	EnvSpokeRetryEnabled       = "OVIM_SPOKE_RETRY_ENABLED"
+	EnvSpokeMaxRetries         = "OVIM_SPOKE_MAX_RETRIES"
+	EnvSpokeInitialDelay       = "OVIM_SPOKE_INITIAL_DELAY"
+	EnvSpokeMaxDelay           = "OVIM_SPOKE_MAX_DELAY"
+	EnvSpokeBackoffMultiplier  = "OVIM_SPOKE_BACKOFF_MULTIPLIER"
+	EnvSpokeHealthEnabled      = "OVIM_SPOKE_HEALTH_ENABLED"
+	EnvSpokeHealthInterval     = "OVIM_SPOKE_HEALTH_INTERVAL"
+	EnvSpokeHealthTimeout      = "OVIM_SPOKE_HEALTH_TIMEOUT"
+	EnvSpokeDiscoverySource    = "OVIM_SPOKE_DISCOVERY_SOURCE"
+	EnvSpokeListEnv            = "OVIM_SPOKE_LIST"
+	EnvSpokeRefreshInterval    = "OVIM_SPOKE_REFRESH_INTERVAL"
 )
 
 // Config holds all configuration for the OVIM backend
@@ -57,6 +78,7 @@ type Config struct {
 	OpenShift  OpenShiftConfig  `yaml:"openshift"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Logging    LoggingConfig    `yaml:"logging"`
+	Spoke      SpokeConfig      `yaml:"spoke"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -76,6 +98,7 @@ type TLSConfig struct {
 	CertFile         string `yaml:"certFile"`
 	KeyFile          string `yaml:"keyFile"`
 	AutoGenerateCert bool   `yaml:"autoGenerateCert"`
+	SkipVerify       bool   `yaml:"skipVerify"`
 }
 
 // DatabaseConfig holds database configuration
@@ -131,6 +154,66 @@ type LoggingConfig struct {
 	Format string `yaml:"format"`
 }
 
+// SpokeConfig holds spoke agent communication configuration
+type SpokeConfig struct {
+	// FQDN discovery configuration
+	DomainSuffix       string            `yaml:"domain_suffix"`
+	HostPattern        string            `yaml:"host_pattern"`
+	FQDNTemplate       string            `yaml:"fqdn_template"`
+	CustomFQDNs        map[string]string `yaml:"custom_fqdns"`
+
+	// Communication settings
+	Protocol           string        `yaml:"protocol"`
+	TLS                TLSConfig     `yaml:"tls"`
+	Timeout            time.Duration `yaml:"timeout"`
+
+	// Retry configuration
+	Retry              RetryConfig   `yaml:"retry"`
+
+	// Health checking
+	HealthCheck        HealthCheckConfig `yaml:"health_check"`
+
+	// Discovery configuration
+	Discovery          DiscoveryConfig `yaml:"discovery"`
+}
+
+// RetryConfig represents retry configuration for spoke communication
+type RetryConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	MaxRetries      int           `yaml:"max_retries"`
+	InitialDelay    time.Duration `yaml:"initial_delay"`
+	MaxDelay        time.Duration `yaml:"max_delay"`
+	BackoffMultiplier float64     `yaml:"backoff_multiplier"`
+	JitterEnabled   bool          `yaml:"jitter_enabled"`
+}
+
+// HealthCheckConfig represents health check configuration
+type HealthCheckConfig struct {
+	Enabled    bool          `yaml:"enabled"`
+	Interval   time.Duration `yaml:"interval"`
+	Timeout    time.Duration `yaml:"timeout"`
+	Path       string        `yaml:"path"`
+	Port       int           `yaml:"port"`
+}
+
+// DiscoveryConfig represents spoke discovery configuration
+type DiscoveryConfig struct {
+	// Source of spoke agent information
+	Source       string            `yaml:"source"` // "config", "database", "crd", "environment"
+
+	// Environment variable names for static spoke list
+	SpokeListEnv string            `yaml:"spoke_list_env"`
+
+	// Database query configuration
+	DatabaseQuery string           `yaml:"database_query"`
+
+	// CRD selector for spoke discovery
+	CRDSelector   map[string]string `yaml:"crd_selector"`
+
+	// Refresh interval for dynamic discovery
+	RefreshInterval time.Duration  `yaml:"refresh_interval"`
+}
+
 // Load loads configuration from environment variables and config file
 func Load(configPath string) (*Config, error) {
 	cfg := &Config{
@@ -184,6 +267,48 @@ func Load(configPath string) (*Config, error) {
 		Logging: LoggingConfig{
 			Level:  getEnvString(EnvLogLevel, "info"),
 			Format: "json",
+		},
+		Spoke: SpokeConfig{
+			// Default FQDN configuration
+			DomainSuffix: getEnvString(EnvSpokeDomainSuffix, ""),
+			HostPattern:  getEnvString(EnvSpokeHostPattern, "ovim-spoke-agent"),
+			FQDNTemplate: getEnvString(EnvSpokeFQDNTemplate, "{{.HostPattern}}-{{.ClusterID}}.{{.DomainSuffix}}"),
+			CustomFQDNs:  parseEnvJSON(EnvSpokeCustomFQDNs, make(map[string]string)),
+
+			// Default communication settings
+			Protocol: getEnvString(EnvSpokeProtocol, "https"),
+			TLS: TLSConfig{
+				Enabled:          true,
+				AutoGenerateCert: false,
+				SkipVerify:       getEnvBool(EnvSpokeTLSSkipVerify, false),
+			},
+			Timeout: parseDurationEnv(EnvSpokeTimeout, 30*time.Second),
+
+			// Default retry configuration
+			Retry: RetryConfig{
+				Enabled:           getEnvBool(EnvSpokeRetryEnabled, true),
+				MaxRetries:        getEnvInt(EnvSpokeMaxRetries, 3),
+				InitialDelay:      parseDurationEnv(EnvSpokeInitialDelay, 1*time.Second),
+				MaxDelay:          parseDurationEnv(EnvSpokeMaxDelay, 30*time.Second),
+				BackoffMultiplier: parseFloatEnv(EnvSpokeBackoffMultiplier, 2.0),
+				JitterEnabled:     true,
+			},
+
+			// Default health check configuration
+			HealthCheck: HealthCheckConfig{
+				Enabled:  getEnvBool(EnvSpokeHealthEnabled, true),
+				Interval: parseDurationEnv(EnvSpokeHealthInterval, 60*time.Second),
+				Timeout:  parseDurationEnv(EnvSpokeHealthTimeout, 10*time.Second),
+				Path:     "/health",
+				Port:     8080,
+			},
+
+			// Default discovery configuration
+			Discovery: DiscoveryConfig{
+				Source:          getEnvString(EnvSpokeDiscoverySource, "environment"),
+				SpokeListEnv:    getEnvString(EnvSpokeListEnv, ""),
+				RefreshInterval: parseDurationEnv(EnvSpokeRefreshInterval, 5*time.Minute),
+			},
 		},
 	}
 
@@ -245,6 +370,37 @@ func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		if boolValue, err := strconv.ParseBool(value); err == nil {
 			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+// parseDurationEnv parses a duration environment variable with a default value
+func parseDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
+			return duration
+		}
+	}
+	return defaultValue
+}
+
+// parseFloatEnv parses a float environment variable with a default value
+func parseFloatEnv(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatValue
+		}
+	}
+	return defaultValue
+}
+
+// parseEnvJSON parses a JSON environment variable with a default value
+func parseEnvJSON[T any](key string, defaultValue T) T {
+	if value := os.Getenv(key); value != "" {
+		var result T
+		if err := json.Unmarshal([]byte(value), &result); err == nil {
+			return result
 		}
 	}
 	return defaultValue
