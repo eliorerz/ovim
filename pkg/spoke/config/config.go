@@ -40,7 +40,7 @@ type SpokeConfig struct {
 // HubConfig represents hub connection configuration
 type HubConfig struct {
 	Endpoint        string        `yaml:"endpoint" env:"OVIM_HUB_ENDPOINT"`
-	Protocol        string        `yaml:"protocol" env:"OVIM_HUB_PROTOCOL"` // "http", "grpc"
+	Protocol        string        `yaml:"protocol" env:"OVIM_HUB_PROTOCOL"` // "https"
 	TLSEnabled      bool          `yaml:"tls_enabled" env:"OVIM_HUB_TLS_ENABLED"`
 	TLSSkipVerify   bool          `yaml:"tls_skip_verify" env:"OVIM_HUB_TLS_SKIP_VERIFY"`
 	CertificatePath string        `yaml:"certificate_path" env:"OVIM_HUB_CERT_PATH"`
@@ -119,7 +119,7 @@ var DefaultConfig = &SpokeConfig{
 
 	Hub: HubConfig{
 		Endpoint:      "https://ovim-hub:8443",
-		Protocol:      "http",
+		Protocol:      "https",
 		TLSEnabled:    true,
 		TLSSkipVerify: false,
 		Timeout:       30 * time.Second,
@@ -292,8 +292,8 @@ func validateConfig(config *SpokeConfig) error {
 	if config.Hub.Endpoint == "" {
 		return fmt.Errorf("hub endpoint is required")
 	}
-	if config.Hub.Protocol != "http" && config.Hub.Protocol != "grpc" {
-		return fmt.Errorf("hub protocol must be 'http' or 'grpc'")
+	if config.Hub.Protocol != "https" {
+		return fmt.Errorf("hub protocol must be 'https'")
 	}
 	if config.API.Port <= 0 || config.API.Port > 65535 {
 		return fmt.Errorf("api port must be between 1 and 65535")

@@ -34,6 +34,9 @@ type HubClient interface {
 	// ReceiveOperations returns a channel for receiving operations from the hub
 	ReceiveOperations() <-chan *Operation
 
+	// ReceiveOperation receives a single operation via push notification
+	ReceiveOperation(operation *Operation)
+
 	// SendOperationResult sends an operation result back to the hub
 	SendOperationResult(ctx context.Context, result *OperationResult) error
 

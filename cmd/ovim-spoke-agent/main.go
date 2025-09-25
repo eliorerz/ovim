@@ -8,7 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/eliorerz/ovim-updated/pkg/spoke"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/agent"
+	"github.com/eliorerz/ovim-updated/pkg/spoke/api"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/config"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/hub"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/processor"
@@ -62,25 +64,38 @@ func main() {
 	hubClient := hub.NewHTTPClient(cfg, logger)
 	spokeAgent.SetHubClient(hubClient)
 
-	// Initialize VM manager
-	vmManager, err := vm.NewManager(cfg, logger)
-	if err != nil {
-		logger.Error("Failed to initialize VM manager", "error", err)
-		os.Exit(1)
+	// Initialize VM manager (skip if Kubernetes not available)
+	var vmManager spoke.VMManager
+	if cfg.Kubernetes.InCluster || cfg.Kubernetes.ConfigPath != "" {
+		vmManager, err = vm.NewManager(cfg, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize VM manager, continuing without it", "error", err)
+			vmManager = nil
+		}
+	} else {
+		logger.Info("VM manager disabled - no Kubernetes configuration")
+		vmManager = nil
 	}
-	spokeAgent.SetVMManager(vmManager)
+	if vmManager != nil {
+		spokeAgent.SetVMManager(vmManager)
+	}
 
 	// Initialize operation processor
 	opProcessor := processor.NewProcessor(cfg, logger)
 	opProcessor.SetVMManager(vmManager)
 	spokeAgent.SetOperationProcessor(opProcessor)
 
+	// Initialize local API server
+	localAPIServer := api.NewServer(cfg, logger)
+	localAPIServer.SetHubClient(hubClient)
+	localAPIServer.SetAgent(spokeAgent)
+	spokeAgent.SetLocalAPIServer(localAPIServer)
+
 	// TODO: Initialize other components
 	// - VDC Manager (namespace and quota management)
 	// - Metrics Collector (cluster resource monitoring)
 	// - Health Reporter (health checking)
 	// - Template Manager (VM template caching)
-	// - Local API Server (debugging endpoints)
 
 	logger.Info("Components initialized, starting agent")
 

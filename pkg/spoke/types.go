@@ -145,6 +145,7 @@ type StatusReport struct {
 	LastHubContact time.Time      `json:"last_hub_contact"`
 	ReportTime     time.Time      `json:"report_time"`
 	Errors         []string       `json:"errors,omitempty"`
+	CallbackURL    string         `json:"callback_url,omitempty"`
 }
 
 // VMCreateRequest represents a request to create a VM

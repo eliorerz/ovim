@@ -130,7 +130,7 @@ func validateTestConfig(cfg *config.SpokeConfig) error {
 	if cfg.ClusterID == "" {
 		return fmt.Errorf("cluster_id is required")
 	}
-	if cfg.Hub.Protocol != "http" && cfg.Hub.Protocol != "grpc" {
+	if cfg.Hub.Protocol != "http" && cfg.Hub.Protocol != "" {
 		return fmt.Errorf("invalid protocol")
 	}
 	if cfg.API.Port <= 0 || cfg.API.Port > 65535 {

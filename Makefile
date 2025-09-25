@@ -1062,13 +1062,13 @@ deploy-image:
 ## deploy-spoke-agent-image: Update spoke agent deployment with latest unique image
 deploy-spoke-agent-image:
 	@echo "Updating spoke agent deployment with latest image..."
-	$(eval LATEST_TAG := $(shell podman images quay.io/eerez/ovim --format "{{.Tag}}" | grep -E '^[0-9]{8}-[0-9]{6}-' | head -1))
+	$(eval LATEST_TAG := $(shell podman images quay.io/eerez/ovim-spoke-agent --format "{{.Tag}}" | grep -E '^[0-9]{8}-[0-9]{6}-' | head -1))
 	@if [ -z "$(LATEST_TAG)" ]; then \
 		echo "No timestamped tag found, using latest"; \
-		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim:latest -n ovim-system; \
+		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim-spoke-agent:latest -n ovim-system; \
 	else \
 		echo "Using tag: $(LATEST_TAG)"; \
-		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim:$(LATEST_TAG) -n ovim-system; \
+		kubectl set image deployment/ovim-spoke-agent spoke-agent=quay.io/eerez/ovim-spoke-agent:$(LATEST_TAG) -n ovim-system; \
 	fi
 	@echo "Waiting for rollout to complete..."
 	@kubectl rollout status deployment/ovim-spoke-agent -n ovim-system --timeout=300s

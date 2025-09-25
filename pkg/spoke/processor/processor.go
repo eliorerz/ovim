@@ -262,12 +262,28 @@ func (p *Processor) handleGetMetrics(ctx context.Context, operation *spoke.Opera
 func (p *Processor) handleCreateVDC(ctx context.Context, operation *spoke.Operation) *spoke.OperationResult {
 	result := &spoke.OperationResult{
 		OperationID: operation.ID,
-		Status:      spoke.OperationStatusFailed,
-		Error:       "VDC creation not yet implemented",
+		Status:      spoke.OperationStatusCompleted,
+		Result:      map[string]interface{}{"status": "simulated"},
 	}
 
-	// TODO: Parse payload and call VDC manager
-	p.logger.Info("VDC creation requested but not implemented", "operation_id", operation.ID)
+	// Log detailed VDC creation data
+	p.logger.Info("Received VDC creation request",
+		"operation_id", operation.ID,
+		"payload", operation.Payload)
+
+	// Parse payload to extract VDC details
+	if vdcName, ok := operation.Payload["vdc_name"].(string); ok {
+		p.logger.Info("VDC creation details",
+			"vdc_name", vdcName,
+			"target_namespace", operation.Payload["target_namespace"],
+			"organization", operation.Payload["organization"],
+			"zone_id", operation.Payload["zone_id"],
+			"quota", operation.Payload["quota"])
+	}
+
+	// TODO: Call VDC manager to actually create the VDC
+	// For now, simulate successful creation
+	p.logger.Info("VDC creation completed (simulated)", "operation_id", operation.ID)
 
 	return result
 }

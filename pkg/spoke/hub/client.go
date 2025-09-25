@@ -126,8 +126,7 @@ func (c *HTTPClient) Connect(ctx context.Context) error {
 	c.connected = true
 	c.lastContact = time.Now()
 
-	// Start polling for operations
-	c.startOperationPolling()
+	// Operation polling removed - using push-based messaging
 
 	c.logger.Info("Successfully connected to hub")
 	return nil
@@ -176,6 +175,16 @@ func (c *HTTPClient) SendStatusReport(ctx context.Context, report *spoke.StatusR
 		return fmt.Errorf("not connected to hub")
 	}
 	c.mu.RUnlock()
+
+	// Add callback URL for push notifications if local API is enabled
+	if c.config.API.Enabled {
+		callbackURL := fmt.Sprintf("http://%s:%d", c.config.API.Address, c.config.API.Port)
+		if c.config.API.Address == "0.0.0.0" {
+			// Use localhost for callback when binding to all interfaces
+			callbackURL = fmt.Sprintf("http://localhost:%d", c.config.API.Port)
+		}
+		report.CallbackURL = callbackURL
+	}
 
 	data, err := json.Marshal(report)
 	if err != nil {
@@ -262,74 +271,16 @@ func (c *HTTPClient) GetLastContact() time.Time {
 	return c.lastContact
 }
 
-// startOperationPolling starts polling the hub for new operations
-func (c *HTTPClient) startOperationPolling() {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-
-		ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				if err := c.pollForOperations(); err != nil {
-					c.logger.Error("Failed to poll for operations", "error", err)
-				}
-			case <-c.ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-// pollForOperations polls the hub for new operations
-func (c *HTTPClient) pollForOperations() error {
-	url := fmt.Sprintf("%s/api/v1/spoke/operations?agent_id=%s", c.baseURL, c.config.AgentID)
-	req, err := http.NewRequestWithContext(c.ctx, "GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create operations request: %w", err)
+// ReceiveOperation receives a single operation via push notification (public method)
+func (c *HTTPClient) ReceiveOperation(operation *spoke.Operation) {
+	select {
+	case c.operations <- operation:
+		c.logger.Info("Received operation via push notification", "operation_id", operation.ID, "type", operation.Type)
+	case <-c.ctx.Done():
+		return
+	default:
+		c.logger.Warn("Operations channel full, dropping operation", "operation_id", operation.ID)
 	}
-
-	c.addAuthHeaders(req)
-
-	resp, err := c.doRequestWithRetry(c.ctx, req)
-	if err != nil {
-		return fmt.Errorf("failed to poll for operations: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNoContent {
-		// No operations available
-		c.updateLastContact()
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("operations poll failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var operations []*spoke.Operation
-	if err := json.NewDecoder(resp.Body).Decode(&operations); err != nil {
-		return fmt.Errorf("failed to decode operations: %w", err)
-	}
-
-	// Send operations to the channel
-	for _, op := range operations {
-		select {
-		case c.operations <- op:
-			c.logger.Debug("Received operation from hub", "operation_id", op.ID, "type", op.Type)
-		case <-c.ctx.Done():
-			return nil
-		default:
-			c.logger.Warn("Operations channel full, dropping operation", "operation_id", op.ID)
-		}
-	}
-
-	c.updateLastContact()
-	return nil
 }
 
 // addAuthHeaders adds authentication headers to the request

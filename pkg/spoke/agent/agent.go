@@ -281,9 +281,7 @@ func (a *Agent) validateComponents() error {
 	if a.hubClient == nil {
 		return fmt.Errorf("hub client is required")
 	}
-	if a.vmManager == nil {
-		return fmt.Errorf("VM manager is required")
-	}
+	// VM manager is optional - can work without Kubernetes
 	if a.processor == nil {
 		return fmt.Errorf("operation processor is required")
 	}

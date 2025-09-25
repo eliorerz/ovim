@@ -1,10 +1,12 @@
-# Multi-stage build for OVIM Spoke Agent
+# =========================
+# Build stage
+# =========================
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata curl
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -19,13 +21,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s -X main.Version=v1.0.0" \
     -o ovim_spoke_agent ./cmd/ovim-spoke-agent
 
-# Final stage - minimal runtime image
-FROM alpine:latest
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata curl
+# =========================
+# Final stage: release (minimal runtime)
+# =========================
+FROM alpine:latest AS release
 
-# Create non-root user for security
+# Install runtime dependencies (no curl here to keep it small)
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create non-root user
 RUN addgroup -g 1000 ovim && \
     adduser -D -u 1000 -G ovim ovim
 
@@ -34,7 +39,7 @@ WORKDIR /app
 # Copy the binary
 COPY --from=builder /app/ovim_spoke_agent /usr/local/bin/ovim_spoke_agent
 
-# Set ownership and permissions
+# Set permissions
 RUN chown root:root /usr/local/bin/ovim_spoke_agent && \
     chmod +x /usr/local/bin/ovim_spoke_agent
 
@@ -43,21 +48,44 @@ USER ovim
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD wget -qO- http://localhost:8080/health || exit 1
 
-# Default environment variables
-ENV OVIM_LOG_LEVEL=info
-ENV OVIM_LOG_FORMAT=json
-ENV OVIM_API_ENABLED=true
-ENV OVIM_API_ADDRESS=0.0.0.0
-ENV OVIM_API_PORT=8080
-ENV OVIM_HUB_PROTOCOL=http
-ENV OVIM_HUB_TLS_ENABLED=false
-ENV OVIM_METRICS_ENABLED=true
-ENV OVIM_HEALTH_ENABLED=true
+# Default env vars
+ENV OVIM_LOG_LEVEL=info \
+    OVIM_LOG_FORMAT=json \
+    OVIM_API_ENABLED=true \
+    OVIM_API_ADDRESS=0.0.0.0 \
+    OVIM_API_PORT=8080 \
+    OVIM_HUB_PROTOCOL=http \
+    OVIM_HUB_TLS_ENABLED=false \
+    OVIM_METRICS_ENABLED=true \
+    OVIM_HEALTH_ENABLED=true
 
-# Expose the local API port
 EXPOSE 8080
+CMD ["ovim_spoke_agent"]
 
-# Default command
+
+# =========================
+# Final stage: debug (extra tools included)
+# =========================
+FROM alpine:latest AS debug
+
+# Install extra debugging tools
+RUN apk --no-cache add ca-certificates tzdata curl bash bind-tools
+
+# Create non-root user
+RUN addgroup -g 1000 ovim && \
+    adduser -D -u 1000 -G ovim ovim
+
+WORKDIR /app
+
+# Copy the binary
+COPY --from=builder /app/ovim_spoke_agent /usr/local/bin/ovim_spoke_agent
+
+RUN chown root:root /usr/local/bin/ovim_spoke_agent && \
+    chmod +x /usr/local/bin/ovim_spoke_agent
+
+USER ovim
+
+EXPOSE 8080
 CMD ["ovim_spoke_agent"]
