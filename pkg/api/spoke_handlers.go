@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -137,10 +138,13 @@ func (h *SpokeHandlers) HandleStatusReport(c *gin.Context) {
 
 	// Store agent callback endpoint if provided
 	if report.CallbackURL != "" {
+		// Transform localhost URLs to proper FQDN URLs for cross-cluster communication
+		callbackURL := h.transformCallbackURL(report.AgentID, report.CallbackURL, report.ClusterID)
+
 		h.endpointsMutex.Lock()
-		h.agentEndpoints[report.AgentID] = report.CallbackURL
+		h.agentEndpoints[report.AgentID] = callbackURL
 		h.endpointsMutex.Unlock()
-		klog.Infof("Registered callback endpoint for agent %s: %s", report.AgentID, report.CallbackURL)
+		klog.Infof("Registered callback endpoint for agent %s: %s (original: %s)", report.AgentID, callbackURL, report.CallbackURL)
 	}
 
 	klog.Infof("Received status report from spoke agent %s (cluster: %s, zone: %s, status: %s)",
@@ -439,4 +443,33 @@ func (h *SpokeHandlers) pushOperationToAgent(agentID, endpoint string, operation
 	}
 
 	klog.Infof("Successfully pushed VDC creation operation %s to spoke agent %s", operation.ID, agentID)
+}
+
+// transformCallbackURL converts localhost callback URLs to proper FQDN URLs for cross-cluster communication
+func (h *SpokeHandlers) transformCallbackURL(agentID, originalURL, clusterID string) string {
+	// If the URL contains localhost or 127.0.0.1, transform it to the proper FQDN
+	if strings.Contains(originalURL, "localhost") || strings.Contains(originalURL, "127.0.0.1") {
+		// Map cluster IDs to their external FQDN
+		clusterFQDNMap := map[string]string{
+			"test-infra-cluster-bf2fb343": "agent-ovim.apps.test-infra-cluster-bf2fb343.redhat.com",
+			"test-infra-cluster-d4e82f9b": "agent-ovim.apps.test-infra-cluster-d4e82f9b.redhat.com",
+			"local-cluster":               "agent-ovim.apps.ostest.test.metalkube.org",
+		}
+
+		if fqdn, exists := clusterFQDNMap[clusterID]; exists {
+			// Extract port from original URL if present
+			if strings.Contains(originalURL, ":8081") {
+				return fmt.Sprintf("https://%s", fqdn)
+			} else if strings.Contains(originalURL, ":8080") {
+				return fmt.Sprintf("https://%s", fqdn)
+			} else {
+				return fmt.Sprintf("https://%s", fqdn)
+			}
+		} else {
+			klog.Warningf("Unknown cluster ID %s for agent %s, using original callback URL %s", clusterID, agentID, originalURL)
+		}
+	}
+
+	// Return original URL if no transformation needed
+	return originalURL
 }
