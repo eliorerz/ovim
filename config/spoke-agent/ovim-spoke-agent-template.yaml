@@ -59,13 +59,13 @@ spec:
         - name: OVIM_VERSION
           value: "with-spoke-agent"
 
-        # Hub connection - automatically determined
+        # Hub connection - automatically determined (HTTPS-only)
         - name: OVIM_HUB_ENDPOINT
           value: "${HUB_ENDPOINT}"
         - name: OVIM_HUB_PROTOCOL
-          value: "${HUB_PROTOCOL}"
+          value: "https"
         - name: OVIM_HUB_TLS_ENABLED
-          value: "${HUB_TLS_ENABLED}"
+          value: "true"
         - name: OVIM_HUB_TLS_SKIP_VERIFY
           value: "${HUB_TLS_SKIP_VERIFY}"
 

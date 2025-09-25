@@ -9,8 +9,10 @@ set -euo pipefail
 HUB_EXTERNAL_ENDPOINT="https://192.168.111.20:32443"
 HUB_INTERNAL_ENDPOINT="https://ovim-server.ovim-system.svc.cluster.local:8443"
 TEMPLATE_FILE="config/spoke-agent/ovim-spoke-agent-template.yaml"
+ROUTE_TEMPLATE_FILE="config/routes/ovim-spoke-agent-route-template.yaml"
 DRY_RUN=false
 VERBOSE=false
+CREATE_ROUTE=false
 
 # Function to print usage
 usage() {
@@ -239,22 +241,22 @@ main() {
     # Use cluster name as zone ID (ACM managed clusters have same name as zone)
     ZONE_ID="$CLUSTER_NAME"
 
-    # Determine hub endpoint and connection settings
+    # Determine hub endpoint and connection settings (HTTPS-only)
     if [[ -n "${HUB_ENDPOINT_OVERRIDE:-}" ]]; then
         HUB_ENDPOINT="$HUB_ENDPOINT_OVERRIDE"
-        HUB_PROTOCOL="http"
+        HUB_PROTOCOL="https"
         HUB_TLS_ENABLED="true"
         HUB_TLS_SKIP_VERIFY="true"
         log "Using override hub endpoint: $HUB_ENDPOINT"
     elif is_hub_cluster; then
         HUB_ENDPOINT="$HUB_INTERNAL_ENDPOINT"
-        HUB_PROTOCOL="http"
+        HUB_PROTOCOL="https"
         HUB_TLS_ENABLED="true"
         HUB_TLS_SKIP_VERIFY="true"
         log "Detected hub cluster, using internal endpoint: $HUB_ENDPOINT"
     else
         HUB_ENDPOINT="$HUB_EXTERNAL_ENDPOINT"
-        HUB_PROTOCOL="http"
+        HUB_PROTOCOL="https"
         HUB_TLS_ENABLED="true"
         HUB_TLS_SKIP_VERIFY="true"
         log "Detected remote cluster, using external endpoint: $HUB_ENDPOINT"
