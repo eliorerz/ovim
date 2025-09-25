@@ -178,10 +178,17 @@ func (c *HTTPClient) SendStatusReport(ctx context.Context, report *spoke.StatusR
 
 	// Add callback URL for push notifications if local API is enabled
 	if c.config.API.Enabled {
-		callbackURL := fmt.Sprintf("http://%s:%d", c.config.API.Address, c.config.API.Port)
-		if c.config.API.Address == "0.0.0.0" {
-			// Use localhost for callback when binding to all interfaces
-			callbackURL = fmt.Sprintf("http://localhost:%d", c.config.API.Port)
+		var callbackURL string
+		if c.config.API.CallbackURL != "" {
+			// Use explicitly configured callback URL (e.g., external FQDN)
+			callbackURL = c.config.API.CallbackURL
+		} else {
+			// Fall back to constructed URL from address and port
+			callbackURL = fmt.Sprintf("http://%s:%d", c.config.API.Address, c.config.API.Port)
+			if c.config.API.Address == "0.0.0.0" {
+				// Use localhost for callback when binding to all interfaces
+				callbackURL = fmt.Sprintf("http://localhost:%d", c.config.API.Port)
+			}
 		}
 		report.CallbackURL = callbackURL
 	}
