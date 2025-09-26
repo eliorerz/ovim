@@ -58,9 +58,9 @@ type APIConfig struct {
 	Address     string `yaml:"address" env:"OVIM_API_ADDRESS"`
 	Port        int    `yaml:"port" env:"OVIM_API_PORT"`
 	CallbackURL string `yaml:"callback_url" env:"OVIM_API_CALLBACK_URL"`
-	TLS      bool   `yaml:"tls" env:"OVIM_API_TLS"`
-	CertPath string `yaml:"cert_path" env:"OVIM_API_CERT_PATH"`
-	KeyPath  string `yaml:"key_path" env:"OVIM_API_KEY_PATH"`
+	TLS         bool   `yaml:"tls" env:"OVIM_API_TLS"`
+	CertPath    string `yaml:"cert_path" env:"OVIM_API_CERT_PATH"`
+	KeyPath     string `yaml:"key_path" env:"OVIM_API_KEY_PATH"`
 }
 
 // KubernetesConfig represents Kubernetes client configuration

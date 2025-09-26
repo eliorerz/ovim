@@ -365,10 +365,10 @@ func (h *SpokeHandlers) QueueVDCDeletion(agentID string, vdcData map[string]inte
 	// Store operation metadata for later retrieval
 	h.metadataMutex.Lock()
 	h.operationMetadata[operation.ID] = map[string]interface{}{
-		"vdc_name":    vdcData["vdc_name"],
-		"agent_id":    agentID,
-		"operation":   "delete_vdc",
-		"created_at":  time.Now(),
+		"vdc_name":   vdcData["vdc_name"],
+		"agent_id":   agentID,
+		"operation":  "delete_vdc",
+		"created_at": time.Now(),
 	}
 	h.metadataMutex.Unlock()
 

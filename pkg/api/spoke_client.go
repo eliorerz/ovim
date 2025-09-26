@@ -46,8 +46,8 @@ type SpokeClient struct {
 	httpClient *http.Client
 
 	// Spoke discovery and state
-	spokes     map[string]*SpokeInfo
-	spokesMux  sync.RWMutex
+	spokes    map[string]*SpokeInfo
+	spokesMux sync.RWMutex
 
 	// Health monitoring
 	healthStatus map[string]*SpokeHealthResponse

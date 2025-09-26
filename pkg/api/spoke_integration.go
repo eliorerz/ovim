@@ -98,10 +98,10 @@ func (si *SpokeIntegration) QueueVDCCreation(zoneID string, vdcData map[string]i
 	// Store operation metadata in spoke handlers for result processing
 	si.spokeHandler.metadataMutex.Lock()
 	si.spokeHandler.operationMetadata[operationID] = map[string]interface{}{
-		"vdc_name":    vdcData["vdc_name"],
-		"agent_id":    fmt.Sprintf("spoke-agent-%s", zoneID),
-		"operation":   "create_vdc",
-		"created_at":  time.Now(),
+		"vdc_name":   vdcData["vdc_name"],
+		"agent_id":   fmt.Sprintf("spoke-agent-%s", zoneID),
+		"operation":  "create_vdc",
+		"created_at": time.Now(),
 	}
 	si.spokeHandler.metadataMutex.Unlock()
 
@@ -160,10 +160,10 @@ func (si *SpokeIntegration) QueueVDCDeletion(zoneID string, vdcData map[string]i
 	// Store operation metadata in spoke handlers for result processing
 	si.spokeHandler.metadataMutex.Lock()
 	si.spokeHandler.operationMetadata[operationID] = map[string]interface{}{
-		"vdc_name":    vdcData["vdc_name"],
-		"agent_id":    fmt.Sprintf("spoke-agent-%s", zoneID),
-		"operation":   "delete_vdc",
-		"created_at":  time.Now(),
+		"vdc_name":   vdcData["vdc_name"],
+		"agent_id":   fmt.Sprintf("spoke-agent-%s", zoneID),
+		"operation":  "delete_vdc",
+		"created_at": time.Now(),
 	}
 	si.spokeHandler.metadataMutex.Unlock()
 

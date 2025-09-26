@@ -50,24 +50,24 @@ const (
 	EnvOpenShiftTemplateNamespace = "OVIM_OPENSHIFT_TEMPLATE_NAMESPACE"
 
 	// Spoke Agent Environment variables
-	EnvSpokeDomainSuffix       = "OVIM_SPOKE_DOMAIN_SUFFIX"
-	EnvSpokeHostPattern        = "OVIM_SPOKE_HOST_PATTERN"
-	EnvSpokeFQDNTemplate       = "OVIM_SPOKE_FQDN_TEMPLATE"
-	EnvSpokeCustomFQDNs        = "OVIM_SPOKE_CUSTOM_FQDNS"
-	EnvSpokeProtocol           = "OVIM_SPOKE_PROTOCOL"
-	EnvSpokeTLSSkipVerify      = "OVIM_SPOKE_TLS_SKIP_VERIFY"
-	EnvSpokeTimeout            = "OVIM_SPOKE_TIMEOUT"
-	EnvSpokeRetryEnabled       = "OVIM_SPOKE_RETRY_ENABLED"
-	EnvSpokeMaxRetries         = "OVIM_SPOKE_MAX_RETRIES"
-	EnvSpokeInitialDelay       = "OVIM_SPOKE_INITIAL_DELAY"
-	EnvSpokeMaxDelay           = "OVIM_SPOKE_MAX_DELAY"
-	EnvSpokeBackoffMultiplier  = "OVIM_SPOKE_BACKOFF_MULTIPLIER"
-	EnvSpokeHealthEnabled      = "OVIM_SPOKE_HEALTH_ENABLED"
-	EnvSpokeHealthInterval     = "OVIM_SPOKE_HEALTH_INTERVAL"
-	EnvSpokeHealthTimeout      = "OVIM_SPOKE_HEALTH_TIMEOUT"
-	EnvSpokeDiscoverySource    = "OVIM_SPOKE_DISCOVERY_SOURCE"
-	EnvSpokeListEnv            = "OVIM_SPOKE_LIST"
-	EnvSpokeRefreshInterval    = "OVIM_SPOKE_REFRESH_INTERVAL"
+	EnvSpokeDomainSuffix      = "OVIM_SPOKE_DOMAIN_SUFFIX"
+	EnvSpokeHostPattern       = "OVIM_SPOKE_HOST_PATTERN"
+	EnvSpokeFQDNTemplate      = "OVIM_SPOKE_FQDN_TEMPLATE"
+	EnvSpokeCustomFQDNs       = "OVIM_SPOKE_CUSTOM_FQDNS"
+	EnvSpokeProtocol          = "OVIM_SPOKE_PROTOCOL"
+	EnvSpokeTLSSkipVerify     = "OVIM_SPOKE_TLS_SKIP_VERIFY"
+	EnvSpokeTimeout           = "OVIM_SPOKE_TIMEOUT"
+	EnvSpokeRetryEnabled      = "OVIM_SPOKE_RETRY_ENABLED"
+	EnvSpokeMaxRetries        = "OVIM_SPOKE_MAX_RETRIES"
+	EnvSpokeInitialDelay      = "OVIM_SPOKE_INITIAL_DELAY"
+	EnvSpokeMaxDelay          = "OVIM_SPOKE_MAX_DELAY"
+	EnvSpokeBackoffMultiplier = "OVIM_SPOKE_BACKOFF_MULTIPLIER"
+	EnvSpokeHealthEnabled     = "OVIM_SPOKE_HEALTH_ENABLED"
+	EnvSpokeHealthInterval    = "OVIM_SPOKE_HEALTH_INTERVAL"
+	EnvSpokeHealthTimeout     = "OVIM_SPOKE_HEALTH_TIMEOUT"
+	EnvSpokeDiscoverySource   = "OVIM_SPOKE_DISCOVERY_SOURCE"
+	EnvSpokeListEnv           = "OVIM_SPOKE_LIST"
+	EnvSpokeRefreshInterval   = "OVIM_SPOKE_REFRESH_INTERVAL"
 )
 
 // Config holds all configuration for the OVIM backend
@@ -157,61 +157,61 @@ type LoggingConfig struct {
 // SpokeConfig holds spoke agent communication configuration
 type SpokeConfig struct {
 	// FQDN discovery configuration
-	DomainSuffix       string            `yaml:"domain_suffix"`
-	HostPattern        string            `yaml:"host_pattern"`
-	FQDNTemplate       string            `yaml:"fqdn_template"`
-	CustomFQDNs        map[string]string `yaml:"custom_fqdns"`
+	DomainSuffix string            `yaml:"domain_suffix"`
+	HostPattern  string            `yaml:"host_pattern"`
+	FQDNTemplate string            `yaml:"fqdn_template"`
+	CustomFQDNs  map[string]string `yaml:"custom_fqdns"`
 
 	// Communication settings
-	Protocol           string        `yaml:"protocol"`
-	TLS                TLSConfig     `yaml:"tls"`
-	Timeout            time.Duration `yaml:"timeout"`
+	Protocol string        `yaml:"protocol"`
+	TLS      TLSConfig     `yaml:"tls"`
+	Timeout  time.Duration `yaml:"timeout"`
 
 	// Retry configuration
-	Retry              RetryConfig   `yaml:"retry"`
+	Retry RetryConfig `yaml:"retry"`
 
 	// Health checking
-	HealthCheck        HealthCheckConfig `yaml:"health_check"`
+	HealthCheck HealthCheckConfig `yaml:"health_check"`
 
 	// Discovery configuration
-	Discovery          DiscoveryConfig `yaml:"discovery"`
+	Discovery DiscoveryConfig `yaml:"discovery"`
 }
 
 // RetryConfig represents retry configuration for spoke communication
 type RetryConfig struct {
-	Enabled         bool          `yaml:"enabled"`
-	MaxRetries      int           `yaml:"max_retries"`
-	InitialDelay    time.Duration `yaml:"initial_delay"`
-	MaxDelay        time.Duration `yaml:"max_delay"`
-	BackoffMultiplier float64     `yaml:"backoff_multiplier"`
-	JitterEnabled   bool          `yaml:"jitter_enabled"`
+	Enabled           bool          `yaml:"enabled"`
+	MaxRetries        int           `yaml:"max_retries"`
+	InitialDelay      time.Duration `yaml:"initial_delay"`
+	MaxDelay          time.Duration `yaml:"max_delay"`
+	BackoffMultiplier float64       `yaml:"backoff_multiplier"`
+	JitterEnabled     bool          `yaml:"jitter_enabled"`
 }
 
 // HealthCheckConfig represents health check configuration
 type HealthCheckConfig struct {
-	Enabled    bool          `yaml:"enabled"`
-	Interval   time.Duration `yaml:"interval"`
-	Timeout    time.Duration `yaml:"timeout"`
-	Path       string        `yaml:"path"`
-	Port       int           `yaml:"port"`
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Path     string        `yaml:"path"`
+	Port     int           `yaml:"port"`
 }
 
 // DiscoveryConfig represents spoke discovery configuration
 type DiscoveryConfig struct {
 	// Source of spoke agent information
-	Source       string            `yaml:"source"` // "config", "database", "crd", "environment"
+	Source string `yaml:"source"` // "config", "database", "crd", "environment"
 
 	// Environment variable names for static spoke list
-	SpokeListEnv string            `yaml:"spoke_list_env"`
+	SpokeListEnv string `yaml:"spoke_list_env"`
 
 	// Database query configuration
-	DatabaseQuery string           `yaml:"database_query"`
+	DatabaseQuery string `yaml:"database_query"`
 
 	// CRD selector for spoke discovery
-	CRDSelector   map[string]string `yaml:"crd_selector"`
+	CRDSelector map[string]string `yaml:"crd_selector"`
 
 	// Refresh interval for dynamic discovery
-	RefreshInterval time.Duration  `yaml:"refresh_interval"`
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
 }
 
 // Load loads configuration from environment variables and config file
