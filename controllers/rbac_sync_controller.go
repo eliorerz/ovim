@@ -39,6 +39,11 @@ type RBACReconciler struct {
 func (r *RBACReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("organization", req.NamespacedName)
 
+	// Determine what triggered this reconciliation
+	trigger := r.determineReconcileTrigger(ctx, req)
+	logger = logger.WithValues("trigger", trigger)
+	logger.Info("Starting RBAC sync reconciliation", "trigger", trigger)
+
 	// Fetch the Organization instance
 	var org ovimv1.Organization
 	if err := r.Get(ctx, req.NamespacedName, &org); err != nil {
@@ -83,18 +88,35 @@ func (r *RBACReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		syncedVDCs++
 	}
 
-	// Update org status with last RBAC sync time using retry on conflict
+	// Update org status with last RBAC sync time using retry on conflict - only if needed
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest version of the resource
 		if getErr := r.Get(ctx, client.ObjectKeyFromObject(&org), &org); getErr != nil {
 			return getErr
 		}
 
-		// Update status fields
-		org.Status.LastRBACSync = &metav1.Time{Time: time.Now()}
-		org.Status.VDCCount = len(vdcList.Items)
+		// Check if status update is needed (idempotent pattern)
+		needsUpdate := false
 
-		return r.Status().Update(ctx, &org)
+		// Only update VDC count if it changed
+		if org.Status.VDCCount != len(vdcList.Items) {
+			org.Status.VDCCount = len(vdcList.Items)
+			needsUpdate = true
+		}
+
+		// Only update LastRBACSync if we actually synced some VDCs
+		if syncedVDCs > 0 {
+			org.Status.LastRBACSync = &metav1.Time{Time: time.Now()}
+			needsUpdate = true
+		}
+
+		// Only write to etcd if something actually changed
+		if needsUpdate {
+			return r.Status().Update(ctx, &org)
+		}
+
+		// No-op: nothing changed, skip write
+		return nil
 	}); err != nil {
 		logger.Error(err, "unable to update organization status after retries")
 		return ctrl.Result{}, err
@@ -189,10 +211,16 @@ func (r *RBACReconciler) syncVDCRBAC(ctx context.Context, org *ovimv1.Organizati
 		if errors.IsNotFound(err) {
 			// Create new binding
 			if err := r.Create(ctx, roleBinding); err != nil {
-				logger.Error(err, "failed to create role binding", "admin", adminGroup)
-				return err
+				if errors.IsAlreadyExists(err) {
+					// Handle race condition - another reconcile created it
+					logger.Info("Role binding already exists (race condition)", "admin", adminGroup)
+				} else {
+					logger.Error(err, "failed to create role binding", "admin", adminGroup)
+					return err
+				}
+			} else {
+				logger.Info("Created admin binding", "admin", adminGroup)
 			}
-			logger.Info("Created admin binding", "admin", adminGroup)
 		} else {
 			// Update existing binding if needed
 			if !r.roleBindingsEqual(existingBinding, roleBinding) {
@@ -238,11 +266,63 @@ func (r *RBACReconciler) roleBindingsEqual(a, b *rbacv1.RoleBinding) bool {
 	return true
 }
 
+// determineReconcileTrigger analyzes the context and resource to determine what triggered the reconciliation
+func (r *RBACReconciler) determineReconcileTrigger(ctx context.Context, req ctrl.Request) string {
+	// Get the current organization to analyze
+	var org ovimv1.Organization
+	if err := r.Get(ctx, req.NamespacedName, &org); err != nil {
+		if errors.IsNotFound(err) {
+			return "resource-deleted"
+		}
+		return "resource-fetch-error"
+	}
+
+	// Check if this is a deletion
+	if org.DeletionTimestamp != nil {
+		return "resource-deletion"
+	}
+
+	// Check if this is a new resource (recently created)
+	if org.CreationTimestamp.Add(10 * time.Second).After(time.Now()) {
+		return "resource-creation"
+	}
+
+	// Check if this is a new resource or has recent changes (admin list changes)
+	if org.Generation > 1 {
+		return "admin-list-change"
+	}
+
+	// Check if this is a scheduled RBAC sync (every 10 minutes)
+	if org.Status.LastRBACSync == nil {
+		return "initial-rbac-sync"
+	}
+	if org.Status.LastRBACSync.Add(10 * time.Minute).Before(time.Now()) {
+		return "scheduled-rbac-sync"
+	}
+
+	// Check if organization became ready (triggering RBAC setup)
+	if org.Status.Phase == ovimv1.OrganizationPhaseActive && org.Status.Namespace != "" {
+		// Check for recent condition changes
+		for _, condition := range org.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
+				if condition.LastTransitionTime.Add(1 * time.Minute).After(time.Now()) {
+					return "org-activation"
+				}
+			}
+		}
+	}
+
+	// Check if VDC count changed (new/deleted VDCs requiring RBAC updates)
+	// This is indirect - we can't easily detect VDC changes from here, but we can infer
+	return "rbac-consistency-check"
+}
+
 // SetupWithManager sets up the controller with the Manager
 func (r *RBACReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.Organization{}).
-		Owns(&rbacv1.RoleBinding{}).
+		// Removed Owns() relationship to prevent reconciliation loops
+		// RoleBindings are managed but not watched to avoid conflicts
 		Named("ovim-rbac-sync-controller").
 		Complete(r)
 }

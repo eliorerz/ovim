@@ -2,15 +2,18 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -33,6 +36,11 @@ type MetricsReconciler struct {
 func (r *MetricsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("vdc", req.NamespacedName)
 
+	// Determine what triggered this reconciliation
+	trigger := r.determineReconcileTrigger(ctx, req)
+	logger = logger.WithValues("trigger", trigger)
+	logger.Info("Starting metrics reconciliation", "trigger", trigger)
+
 	// Fetch the VirtualDataCenter instance
 	var vdc ovimv1.VirtualDataCenter
 	if err := r.Get(ctx, req.NamespacedName, &vdc); err != nil {
@@ -41,6 +49,19 @@ func (r *MetricsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		logger.Error(err, "unable to fetch VirtualDataCenter")
 		return ctrl.Result{}, err
+	}
+
+	// Hub metrics controller should only process hub-managed VDCs, not spoke VDCs
+	// Spoke VDCs are identified by the "ovim.io/managed-by": "spoke-agent" label
+	if managedBy, exists := vdc.Labels["ovim.io/managed-by"]; exists && managedBy == "spoke-agent" {
+		logger.V(4).Info("Skipping spoke-managed VDC on hub metrics controller", "vdc", vdc.Name, "managed-by", managedBy)
+		return ctrl.Result{}, nil
+	}
+
+	// Skip VDCs that aren't hub-managed (let VDC controller claim them first)
+	if managedBy, exists := vdc.Labels["ovim.io/managed-by"]; !exists || (managedBy != "hub-controller" && managedBy != "") {
+		logger.V(4).Info("Skipping unlabeled VDC on metrics controller", "vdc", vdc.Name, "managed-by", managedBy)
+		return ctrl.Result{}, nil
 	}
 
 	// Skip if VDC is being deleted or not ready
@@ -55,15 +76,43 @@ func (r *MetricsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// Update VDC status with collected metrics
-	vdc.Status.ResourceUsage = metrics.ResourceUsage
-	vdc.Status.TotalPods = metrics.TotalPods
-	vdc.Status.TotalVMs = metrics.TotalVMs
-	vdc.Status.LastMetricsUpdate = &metav1.Time{Time: time.Now()}
+	// Update VDC status with collected metrics using retry on conflict - only if metrics changed
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get latest version of the resource
+		if getErr := r.Get(ctx, client.ObjectKeyFromObject(&vdc), &vdc); getErr != nil {
+			return getErr
+		}
 
-	if err := r.Status().Update(ctx, &vdc); err != nil {
-		logger.Error(err, "unable to update VDC status with metrics")
-		return ctrl.Result{}, err
+		// Check if metrics actually changed (idempotent pattern)
+		needsUpdate := false
+
+		// Use deep equality for resource usage comparison
+		if !equality.Semantic.DeepEqual(vdc.Status.ResourceUsage, metrics.ResourceUsage) {
+			vdc.Status.ResourceUsage = metrics.ResourceUsage
+			needsUpdate = true
+		}
+
+		if vdc.Status.TotalPods != metrics.TotalPods {
+			vdc.Status.TotalPods = metrics.TotalPods
+			needsUpdate = true
+		}
+
+		if vdc.Status.TotalVMs != metrics.TotalVMs {
+			vdc.Status.TotalVMs = metrics.TotalVMs
+			needsUpdate = true
+		}
+
+		// Only update timestamp when metrics actually changed
+		if needsUpdate {
+			vdc.Status.LastMetricsUpdate = &metav1.Time{Time: time.Now()}
+			return r.Status().Update(ctx, &vdc)
+		}
+
+		// No-op: metrics are identical, skip write to etcd
+		return nil
+	}); err != nil {
+		logger.Error(err, "unable to update VDC status with metrics after retries")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
 	logger.Info("Metrics collected successfully",
@@ -217,6 +266,57 @@ func (r *MetricsReconciler) collectStorageMetrics(ctx context.Context, namespace
 	}
 
 	return metrics, nil
+}
+
+// determineReconcileTrigger analyzes the context and resource to determine what triggered the reconciliation
+func (r *MetricsReconciler) determineReconcileTrigger(ctx context.Context, req ctrl.Request) string {
+	// Get the current VDC to analyze
+	var vdc ovimv1.VirtualDataCenter
+	if err := r.Get(ctx, req.NamespacedName, &vdc); err != nil {
+		if errors.IsNotFound(err) {
+			return "resource-deleted"
+		}
+		return "resource-fetch-error"
+	}
+
+	// Check if this is a deletion
+	if vdc.DeletionTimestamp != nil {
+		return "resource-deletion"
+	}
+
+	// Check if this is a new resource (recently created)
+	if vdc.CreationTimestamp.Add(10 * time.Second).After(time.Now()) {
+		return "resource-creation"
+	}
+
+	// Check if metrics haven't been collected yet
+	if vdc.Status.LastMetricsUpdate == nil {
+		return "initial-metrics-collection"
+	}
+
+	// Check if this could be a scheduled metrics collection (every 2 minutes)
+	if vdc.Status.LastMetricsUpdate.Add(2 * time.Minute).Before(time.Now()) {
+		return "scheduled-metrics-collection"
+	}
+
+	// Check for recent status changes in the main VDC
+	for _, condition := range vdc.Status.Conditions {
+		if condition.LastTransitionTime.Add(30 * time.Second).After(time.Now()) {
+			return fmt.Sprintf("vdc-condition-change-%s", condition.Type)
+		}
+	}
+
+	// Check if VDC namespace changed (would trigger metrics collection)
+	if vdc.Status.Namespace != "" {
+		return "namespace-ready"
+	}
+
+	// Check if this is triggered by pod/VM changes in the workload namespace
+	if vdc.Status.LastMetricsUpdate.Add(30 * time.Second).After(time.Now()) {
+		return "recent-metrics-update"
+	}
+
+	return "metrics-periodic-check"
 }
 
 // SetupWithManager sets up the controller with the Manager

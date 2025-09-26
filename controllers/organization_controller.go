@@ -54,6 +54,11 @@ type OrganizationReconciler struct {
 func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("organization", req.NamespacedName)
 
+	// Determine what triggered this reconciliation
+	trigger := r.determineReconcileTrigger(ctx, req)
+	logger = logger.WithValues("trigger", trigger)
+	logger.Info("Starting organization reconciliation", "trigger", trigger)
+
 	// Fetch the Organization instance
 	var org ovimv1.Organization
 	if err := r.Get(ctx, req.NamespacedName, &org); err != nil {
@@ -105,19 +110,39 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// Update status with retry on conflict
+	// Update status with retry on conflict - only if something actually changed
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest version of the resource
 		if getErr := r.Get(ctx, client.ObjectKeyFromObject(&org), &org); getErr != nil {
 			return getErr
 		}
 
-		// Update status fields
-		org.Status.Namespace = orgNamespace
-		org.Status.Phase = ovimv1.OrganizationPhaseActive
-		r.updateOrgCondition(&org, ConditionReady, metav1.ConditionTrue, "OrganizationReady", "Organization is ready and active")
+		// Check if status update is needed (idempotent pattern)
+		needsUpdate := false
 
-		return r.Status().Update(ctx, &org)
+		if org.Status.Namespace != orgNamespace {
+			org.Status.Namespace = orgNamespace
+			needsUpdate = true
+		}
+
+		if org.Status.Phase != ovimv1.OrganizationPhaseActive {
+			org.Status.Phase = ovimv1.OrganizationPhaseActive
+			needsUpdate = true
+		}
+
+		// Only update condition if it's actually different
+		if r.shouldUpdateOrgCondition(&org, ConditionReady, metav1.ConditionTrue, "OrganizationReady", "Organization is ready and active") {
+			r.updateOrgCondition(&org, ConditionReady, metav1.ConditionTrue, "OrganizationReady", "Organization is ready and active")
+			needsUpdate = true
+		}
+
+		// Only write to etcd if something actually changed
+		if needsUpdate {
+			return r.Status().Update(ctx, &org)
+		}
+
+		// No-op: nothing changed, skip write
+		return nil
 	}); err != nil {
 		logger.Error(err, "unable to update status after retries")
 		return ctrl.Result{}, err
@@ -133,7 +158,8 @@ func (r *OrganizationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	logger.Info("Organization reconciled successfully")
-	return ctrl.Result{}, nil
+	// Requeue after 5 minutes to avoid continuous reconciliation
+	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
 // ensureOrgNamespace creates organization namespace if it doesn't exist
@@ -289,7 +315,10 @@ func (r *OrganizationReconciler) handleOrgDeletion(ctx context.Context, org *ovi
 	// Remove from database
 	if r.Storage != nil {
 		if err := r.Storage.DeleteOrganization(org.Name); err != nil {
-			logger.Error(err, "unable to delete organization from database")
+			// Only log error if it's not "not found" - organization may not exist in DB
+			if err != storage.ErrNotFound {
+				logger.Error(err, "unable to delete organization from database")
+			}
 			// Don't block deletion for database issues
 		}
 	}
@@ -347,8 +376,25 @@ func (r *OrganizationReconciler) syncToDatabase(ctx context.Context, org *ovimv1
 	return nil
 }
 
-// updateOrgCondition updates a condition in the organization status
+// updateOrgCondition updates a condition in the organization status only if something changed
 func (r *OrganizationReconciler) updateOrgCondition(org *ovimv1.Organization, conditionType string, status metav1.ConditionStatus, reason, message string) {
+	// Find existing condition and only update if something actually changed
+	for i, existing := range org.Status.Conditions {
+		if existing.Type == conditionType {
+			// Only update if status, reason, or message changed
+			if existing.Status != status || existing.Reason != reason || existing.Message != message {
+				existing.Status = status
+				existing.Reason = reason
+				existing.Message = message
+				existing.LastTransitionTime = metav1.Now() // Only update timestamp when values change
+				org.Status.Conditions[i] = existing
+			}
+			// If nothing changed, do nothing (idempotent)
+			return
+		}
+	}
+
+	// Add new condition if not found
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
@@ -356,16 +402,17 @@ func (r *OrganizationReconciler) updateOrgCondition(org *ovimv1.Organization, co
 		Reason:             reason,
 		Message:            message,
 	}
+	org.Status.Conditions = append(org.Status.Conditions, condition)
+}
 
-	// Find existing condition and update it, or append new one
-	for i, existing := range org.Status.Conditions {
+// shouldUpdateOrgCondition checks if a condition needs updating (helper for idempotency checks)
+func (r *OrganizationReconciler) shouldUpdateOrgCondition(org *ovimv1.Organization, conditionType string, status metav1.ConditionStatus, reason, message string) bool {
+	for _, existing := range org.Status.Conditions {
 		if existing.Type == conditionType {
-			org.Status.Conditions[i] = condition
-			return
+			return existing.Status != status || existing.Reason != reason || existing.Message != message
 		}
 	}
-
-	org.Status.Conditions = append(org.Status.Conditions, condition)
+	return true // Condition doesn't exist, needs to be added
 }
 
 // recordEvent records an event for the given organization
@@ -375,12 +422,68 @@ func (r *OrganizationReconciler) recordEvent(org *ovimv1.Organization, eventType
 	}
 }
 
+// determineReconcileTrigger analyzes the context and resource to determine what triggered the reconciliation
+func (r *OrganizationReconciler) determineReconcileTrigger(ctx context.Context, req ctrl.Request) string {
+	// Get the current organization to analyze
+	var org ovimv1.Organization
+	if err := r.Get(ctx, req.NamespacedName, &org); err != nil {
+		if errors.IsNotFound(err) {
+			return "resource-deleted"
+		}
+		return "resource-fetch-error"
+	}
+
+	// Check if this is a deletion
+	if org.DeletionTimestamp != nil {
+		return "resource-deletion"
+	}
+
+	// Check if this is a new resource (recently created)
+	if org.CreationTimestamp.Add(10 * time.Second).After(time.Now()) {
+		return "resource-creation"
+	}
+
+	// Check if this is a new resource or has recent changes (admin list changes)
+	if org.Generation > 1 {
+		return "spec-change"
+	}
+
+	// Check for status updates by looking at recent condition changes
+	for _, condition := range org.Status.Conditions {
+		if condition.LastTransitionTime.Add(30 * time.Second).After(time.Now()) {
+			return "status-change"
+		}
+	}
+
+	// Check if this is triggered by RBAC sync
+	if org.Status.LastRBACSync != nil && org.Status.LastRBACSync.Add(1*time.Minute).After(time.Now()) {
+		return "rbac-sync-trigger"
+	}
+
+	// Check for finalizer operations
+	if len(org.Finalizers) > 0 && org.DeletionTimestamp == nil {
+		return "finalizer-update"
+	}
+
+	// Check if organization namespace doesn't exist yet
+	if org.Status.Namespace == "" {
+		return "namespace-creation-needed"
+	}
+
+	// Default cases
+	if org.Status.Phase == "" || org.Status.Phase != ovimv1.OrganizationPhaseActive {
+		return "activation-reconcile"
+	}
+
+	return "periodic-reconcile"
+}
+
 // SetupWithManager sets up the controller with the Manager
 func (r *OrganizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ovimv1.Organization{}).
-		Owns(&corev1.Namespace{}).
-		Owns(&rbacv1.RoleBinding{}).
+		// Removed Owns() relationships to prevent reconciliation loops
+		// Resources are managed but not watched to avoid conflicts
 		Named("ovim-organization-controller").
 		Complete(r)
 }

@@ -21,12 +21,12 @@ import (
 
 // VDCHandlers handles VDC-related requests
 type VDCHandlers struct {
-	storage           storage.Storage
-	k8sClient         client.Client
-	openShiftClient   *openshift.Client
-	eventRecorder     *EventRecorder
-	spokeHandlers     *SpokeHandlers
-	spokeIntegration  *SpokeIntegration
+	storage          storage.Storage
+	k8sClient        client.Client
+	openShiftClient  *openshift.Client
+	eventRecorder    *EventRecorder
+	spokeHandlers    *SpokeHandlers
+	spokeIntegration *SpokeIntegration
 }
 
 // NewVDCHandlers creates a new VDC handlers instance
@@ -242,7 +242,6 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 
 	// For now, skip zone verification - assume zone is valid
 	klog.Infof("Skipping zone verification for %s", req.ZoneID)
-
 
 	// For org admins, verify they have access to this zone
 	if role == models.RoleOrgAdmin {
