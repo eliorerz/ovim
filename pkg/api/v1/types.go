@@ -156,10 +156,12 @@ type ResourceUsage struct {
 type VirtualDataCenterPhase string
 
 const (
-	VirtualDataCenterPhasePending   VirtualDataCenterPhase = "Pending"
-	VirtualDataCenterPhaseActive    VirtualDataCenterPhase = "Active"
-	VirtualDataCenterPhaseFailed    VirtualDataCenterPhase = "Failed"
-	VirtualDataCenterPhaseSuspended VirtualDataCenterPhase = "Suspended"
+	VirtualDataCenterPhasePending         VirtualDataCenterPhase = "Pending"
+	VirtualDataCenterPhaseActive          VirtualDataCenterPhase = "Active"
+	VirtualDataCenterPhaseFailed          VirtualDataCenterPhase = "Failed"
+	VirtualDataCenterPhaseSuspended       VirtualDataCenterPhase = "Suspended"
+	VirtualDataCenterPhaseDeletionPending VirtualDataCenterPhase = "DeletionPending"
+	VirtualDataCenterPhaseDeletionFailed  VirtualDataCenterPhase = "DeletionFailed"
 )
 
 // +kubebuilder:object:root=true
