@@ -434,3 +434,8 @@ func (a *Agent) updateLastContact() {
 	defer a.mu.Unlock()
 	a.lastContact = time.Now()
 }
+
+// GetProcessor returns the operation processor for direct operation processing
+func (a *Agent) GetProcessor() spoke.OperationProcessor {
+	return a.processor
+}

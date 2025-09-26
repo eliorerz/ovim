@@ -171,6 +171,12 @@ type VDCCreateRequest struct {
 	NetworkPolicy    string            `json:"network_policy"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	Annotations      map[string]string `json:"annotations,omitempty"`
+
+	// LimitRange parameters for VM resource constraints
+	MinCPU    *int `json:"min_cpu,omitempty"`    // millicores
+	MaxCPU    *int `json:"max_cpu,omitempty"`    // millicores
+	MinMemory *int `json:"min_memory,omitempty"` // MiB
+	MaxMemory *int `json:"max_memory,omitempty"` // MiB
 }
 
 // Template represents a VM template cached locally

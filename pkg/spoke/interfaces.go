@@ -18,6 +18,9 @@ type Agent interface {
 
 	// GetHealth returns the current health status
 	GetHealth() *AgentHealth
+
+	// GetProcessor returns the operation processor for direct operation processing
+	GetProcessor() OperationProcessor
 }
 
 // HubClient defines the interface for communicating with the OVIM hub

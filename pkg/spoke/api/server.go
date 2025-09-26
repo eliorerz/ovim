@@ -140,15 +140,33 @@ func (s *Server) handleOperations(c *gin.Context) {
 			operation.ID, operation.Payload)
 	}
 
-	// Forward the operation to the hub client for processing
-	if s.hubClient != nil {
-		s.hubClient.ReceiveOperation(&operation)
-	} else {
-		s.logger.Warn("Hub client not available, cannot forward operation")
-	}
+	// Process the operation directly and send result back to hub
+	go func() {
+		ctx := context.Background()
+
+		// Process the operation using the agent's processor
+		if s.agent != nil {
+			result := s.agent.GetProcessor().ProcessOperation(ctx, &operation)
+
+			// Send the result back to the hub
+			if s.hubClient != nil {
+				if err := s.hubClient.SendOperationResult(ctx, result); err != nil {
+					s.logger.Error("Failed to send operation result to hub",
+						"operation_id", result.OperationID, "error", err)
+				} else {
+					s.logger.Info("Successfully sent operation result to hub",
+						"operation_id", result.OperationID, "status", result.Status)
+				}
+			} else {
+				s.logger.Warn("Hub client not available, cannot send result")
+			}
+		} else {
+			s.logger.Warn("Agent not available, cannot process operation")
+		}
+	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "received",
-		"message": "Operation received and forwarded for processing",
+		"message": "Operation received and processing started",
 	})
 }

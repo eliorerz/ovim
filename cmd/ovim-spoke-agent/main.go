@@ -8,12 +8,16 @@ import (
 	"os/signal"
 	"syscall"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"github.com/eliorerz/ovim-updated/pkg/spoke"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/agent"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/api"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/config"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/hub"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/processor"
+	"github.com/eliorerz/ovim-updated/pkg/spoke/vdc"
 	"github.com/eliorerz/ovim-updated/pkg/spoke/vm"
 )
 
@@ -80,9 +84,44 @@ func main() {
 		spokeAgent.SetVMManager(vmManager)
 	}
 
+	// Initialize VDC manager
+	var vdcManager spoke.VDCManager
+	if cfg.Kubernetes.InCluster || cfg.Kubernetes.ConfigPath != "" {
+		logger.Info("Initializing VDC manager with Kubernetes client")
+
+		// Create Kubernetes client configuration
+		restConfig, err := rest.InClusterConfig()
+		if err != nil {
+			logger.Warn("Failed to create Kubernetes config for VDC manager", "error", err)
+			vdcManager = nil
+		} else {
+			// Create standard Kubernetes client
+			k8sClientset, err := kubernetes.NewForConfig(restConfig)
+			if err != nil {
+				logger.Warn("Failed to create Kubernetes clientset for VDC manager", "error", err)
+				vdcManager = nil
+			} else {
+				// Create controller-runtime client (no custom CRDs needed for spoke)
+				k8sClient, err := client.New(restConfig, client.Options{})
+				if err != nil {
+					logger.Warn("Failed to create controller-runtime client for VDC manager", "error", err)
+					vdcManager = nil
+				} else {
+					vdcManager = vdc.NewManager(k8sClient, k8sClientset, logger, cfg)
+					spokeAgent.SetVDCManager(vdcManager)
+					logger.Info("VDC manager initialized successfully")
+				}
+			}
+		}
+	} else {
+		logger.Info("VDC manager disabled - no Kubernetes configuration")
+		vdcManager = nil
+	}
+
 	// Initialize operation processor
 	opProcessor := processor.NewProcessor(cfg, logger)
 	opProcessor.SetVMManager(vmManager)
+	opProcessor.SetVDCManager(vdcManager)
 	spokeAgent.SetOperationProcessor(opProcessor)
 
 	// Initialize local API server
