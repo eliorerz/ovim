@@ -325,7 +325,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		vdcData := map[string]interface{}{
 			"vdc_name":         vdcID,
 			"vdc_namespace":    fmt.Sprintf("org-%s", req.OrgID),
-			"target_namespace": fmt.Sprintf("vdc-org-%s-%s", req.OrgID, vdcID),
+			"target_namespace": fmt.Sprintf("vdc-%s-%s", req.OrgID, vdcID),
 			"organization":     req.OrgID,
 			"zone_id":          req.ZoneID,
 			"display_name":     req.DisplayName,
@@ -336,6 +336,16 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 				"storage": req.StorageQuota,
 			},
 			"network_policy": req.NetworkPolicy,
+		}
+
+		// Add LimitRange data if provided
+		if req.MinCPU != nil || req.MaxCPU != nil || req.MinMemory != nil || req.MaxMemory != nil {
+			vdcData["limit_range"] = map[string]interface{}{
+				"min_cpu":    req.MinCPU,    // millicores
+				"max_cpu":    req.MaxCPU,    // millicores
+				"min_memory": req.MinMemory, // MiB
+				"max_memory": req.MaxMemory, // MiB
+			}
 		}
 
 		operationID, err := h.spokeIntegration.QueueVDCCreation(req.ZoneID, vdcData)
@@ -351,7 +361,7 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 		vdcData := map[string]interface{}{
 			"vdc_name":         vdcID,
 			"vdc_namespace":    fmt.Sprintf("org-%s", req.OrgID),
-			"target_namespace": fmt.Sprintf("vdc-org-%s-%s", req.OrgID, vdcID),
+			"target_namespace": fmt.Sprintf("vdc-%s-%s", req.OrgID, vdcID),
 			"organization":     req.OrgID,
 			"zone_id":          req.ZoneID,
 			"display_name":     req.DisplayName,
@@ -362,6 +372,16 @@ func (h *VDCHandlers) Create(c *gin.Context) {
 				"storage": req.StorageQuota,
 			},
 			"network_policy": req.NetworkPolicy,
+		}
+
+		// Add LimitRange data if provided
+		if req.MinCPU != nil || req.MaxCPU != nil || req.MinMemory != nil || req.MaxMemory != nil {
+			vdcData["limit_range"] = map[string]interface{}{
+				"min_cpu":    req.MinCPU,    // millicores
+				"max_cpu":    req.MaxCPU,    // millicores
+				"min_memory": req.MinMemory, // MiB
+				"max_memory": req.MaxMemory, // MiB
+			}
 		}
 
 		operationID := h.spokeHandlers.QueueVDCCreation(agentID, vdcData)
@@ -593,40 +613,202 @@ func (h *VDCHandlers) Delete(c *gin.Context) {
 		}
 	}
 
-	if len(vmsInVDC) > 0 {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":    "Cannot delete VDC with existing VMs",
-			"vm_count": len(vmsInVDC),
-		})
-		return
-	}
-
-	// Add deletion annotation for audit
+	// Instead of preventing deletion, mark VDC for deletion and note VMs
+	// Update VDC status to indicate deletion in progress
 	if vdcCR.Annotations == nil {
 		vdcCR.Annotations = make(map[string]string)
 	}
 	vdcCR.Annotations["ovim.io/deleted-by"] = username
 	vdcCR.Annotations["ovim.io/deleted-at"] = time.Now().Format(time.RFC3339)
+	vdcCR.Annotations["ovim.io/deletion-status"] = "pending"
 
-	if err := h.k8sClient.Update(ctx, vdcCR); err != nil {
-		klog.Warningf("Failed to add deletion annotation to VDC CRD %s: %v", id, err)
+	// Add VM information for deletion planning
+	if len(vmsInVDC) > 0 {
+		vdcCR.Annotations["ovim.io/vms-in-vdc"] = fmt.Sprintf("%d", len(vmsInVDC))
+		// TODO: Decide what to do with VMs in VDC during deletion:
+		// Option 1: Force delete all VMs
+		// Option 2: Move VMs to a default VDC
+		// Option 3: Prevent deletion until VMs are manually moved/deleted
+		// For now, we'll proceed with deletion but log the VM count
+		klog.Warningf("VDC %s marked for deletion contains %d VMs - TODO: implement VM handling strategy", id, len(vmsInVDC))
 	}
 
-	// Delete the VDC CRD
-	if err := h.k8sClient.Delete(ctx, vdcCR); err != nil {
-		klog.Errorf("Failed to delete VirtualDataCenter CRD %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete VDC CRD"})
+	// Queue VDC deletion operation for spoke agent first (step 2)
+	zoneID := vdcCR.Spec.ZoneID
+	var operationID string
+	var queueErr error
+
+	if h.spokeIntegration != nil {
+		vdcDeleteData := map[string]interface{}{
+			"vdc_name":         id,
+			"vdc_namespace":    vdcCR.Namespace,
+			"target_namespace": fmt.Sprintf("vdc-%s-%s", vdcCR.Spec.OrganizationRef, id),
+			"organization":     vdcCR.Spec.OrganizationRef,
+			"zone_id":          zoneID,
+			"vm_count":         len(vmsInVDC),
+		}
+
+		operationID, queueErr = h.spokeIntegration.QueueVDCDeletion(zoneID, vdcDeleteData)
+		if queueErr != nil {
+			klog.Errorf("Failed to queue VDC deletion operation for zone %s: %v", zoneID, queueErr)
+		} else {
+			klog.Infof("Queued VDC deletion operation %s for zone %s using dynamic spoke integration", operationID, zoneID)
+		}
+	} else if h.spokeHandlers != nil {
+		// Fallback to legacy spoke handlers
+		agentID := fmt.Sprintf("spoke-agent-%s", zoneID)
+
+		vdcDeleteData := map[string]interface{}{
+			"vdc_name":         id,
+			"vdc_namespace":    vdcCR.Namespace,
+			"target_namespace": fmt.Sprintf("vdc-%s-%s", vdcCR.Spec.OrganizationRef, id),
+			"organization":     vdcCR.Spec.OrganizationRef,
+			"zone_id":          zoneID,
+			"vm_count":         len(vmsInVDC),
+		}
+
+		operationID = h.spokeHandlers.QueueVDCDeletion(agentID, vdcDeleteData)
+		klog.Infof("Queued VDC deletion operation %s for zone %s (legacy agent: %s)", operationID, zoneID, agentID)
+	} else {
+		queueErr = fmt.Errorf("no spoke integration available")
+	}
+
+	// If operation queuing failed, don't proceed with status update
+	if queueErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue VDC deletion operation"})
 		return
 	}
 
-	klog.Infof("Deleted VirtualDataCenter CRD %s by user %s (%s) - controller will handle cleanup", id, username, userID)
+	// Update VDC status to DeletionPending after successful queuing (step 3)
+	vdcCR.Status.Phase = ovimv1.VirtualDataCenterPhaseDeletionPending
+
+	// Add condition to track deletion progress
+	now := metav1.Now()
+	deletionCondition := metav1.Condition{
+		Type:               "DeletionInProgress",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: now,
+		Reason:             "DeletionQueued",
+		Message:            fmt.Sprintf("VDC deletion operation %s queued for spoke agent by %s", operationID, username),
+	}
+	vdcCR.Status.Conditions = append(vdcCR.Status.Conditions, deletionCondition)
+
+	if err := h.k8sClient.Update(ctx, vdcCR); err != nil {
+		klog.Errorf("Failed to update VDC status for deletion %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update VDC deletion status"})
+		return
+	}
+
+	klog.Infof("VDC %s deletion queued (operation %s) by user %s (%s) - waiting for spoke agent completion", id, operationID, username, userID)
 
 	// Record API event
 	if h.eventRecorder != nil {
 		h.eventRecorder.RecordVDCDeleted(ctx, id, vdcCR.Spec.OrganizationRef, username)
 	}
 
-	c.JSON(http.StatusNoContent, nil)
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "VDC deletion initiated",
+		"status":  "DeletionPending",
+		"phase":   string(vdcCR.Status.Phase),
+	})
+}
+
+// HandleVDCDeletionComplete handles the callback when spoke agent completes VDC deletion
+func (h *VDCHandlers) HandleVDCDeletionComplete(c *gin.Context) {
+	vdcID := c.Param("id")
+	if vdcID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VDC ID required"})
+		return
+	}
+
+	var callbackData struct {
+		Status   string   `json:"status"`
+		Warnings []string `json:"warnings,omitempty"`
+		Error    string   `json:"error,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&callbackData); err != nil {
+		klog.Errorf("Invalid VDC deletion callback data for %s: %v", vdcID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid callback data"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Find the VDC CRD
+	var vdcCR *ovimv1.VirtualDataCenter
+	vdcList := &ovimv1.VirtualDataCenterList{}
+	if err := h.k8sClient.List(ctx, vdcList); err != nil {
+		klog.Errorf("Failed to list VDCs to find %s for deletion callback: %v", vdcID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find VDC"})
+		return
+	}
+
+	for _, vdc := range vdcList.Items {
+		if vdc.Name == vdcID {
+			vdcCR = &vdc
+			break
+		}
+	}
+
+	if vdcCR == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "VDC not found"})
+		return
+	}
+
+	if callbackData.Status == "deleted" || callbackData.Status == "deleted_with_warnings" {
+		// Spoke agent successfully deleted VDC resources, now delete the CRD
+		if err := h.k8sClient.Delete(ctx, vdcCR); err != nil {
+			klog.Errorf("Failed to delete VirtualDataCenter CRD %s after spoke completion: %v", vdcID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete VDC deletion"})
+			return
+		}
+
+		klog.Infof("VDC %s deletion completed successfully by spoke agent", vdcID)
+		if len(callbackData.Warnings) > 0 {
+			klog.Warningf("VDC %s deletion completed with warnings: %v", vdcID, callbackData.Warnings)
+		}
+
+		// Record API event
+		if h.eventRecorder != nil {
+			h.eventRecorder.RecordVDCDeleted(ctx, vdcID, vdcCR.Spec.OrganizationRef, "spoke-agent")
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "VDC deletion completed",
+			"warnings": callbackData.Warnings,
+		})
+	} else {
+		// Update VDC status to reflect deletion failure
+		if vdcCR.Annotations == nil {
+			vdcCR.Annotations = make(map[string]string)
+		}
+		vdcCR.Annotations["ovim.io/deletion-status"] = "failed"
+		vdcCR.Annotations["ovim.io/deletion-error"] = callbackData.Error
+		vdcCR.Status.Phase = ovimv1.VirtualDataCenterPhaseDeletionFailed
+
+		// Add condition to track deletion failure
+		now := metav1.Now()
+		failureCondition := metav1.Condition{
+			Type:               "DeletionInProgress",
+			Status:             metav1.ConditionFalse,
+			LastTransitionTime: now,
+			Reason:             "SpokeAgentFailure",
+			Message:            fmt.Sprintf("Spoke agent deletion failed: %s", callbackData.Error),
+		}
+		vdcCR.Status.Conditions = append(vdcCR.Status.Conditions, failureCondition)
+
+		if err := h.k8sClient.Update(ctx, vdcCR); err != nil {
+			klog.Errorf("Failed to update VDC status for deletion failure %s: %v", vdcID, err)
+		}
+
+		klog.Errorf("VDC %s deletion failed on spoke agent: %s", vdcID, callbackData.Error)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "VDC deletion failed",
+			"error":   callbackData.Error,
+		})
+	}
 }
 
 // ListUserVDCs handles listing VDCs for the current user's organization
