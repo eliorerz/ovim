@@ -331,6 +331,9 @@ func (s *Server) setupRoutes() {
 				// VDC status and limitrange endpoints
 				vdcs.GET("/:id/status", vdcHandlers.GetStatus)
 				vdcs.GET("/:id/limitrange", vdcHandlers.GetLimitRange)
+
+				// VDC deletion completion callback endpoint (for spoke agents)
+				vdcs.POST("/:id/deletion-complete", vdcHandlers.HandleVDCDeletionComplete)
 			}
 
 			// VM catalog (all authenticated users)

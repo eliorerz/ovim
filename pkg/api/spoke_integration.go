@@ -87,12 +87,23 @@ func (si *SpokeIntegration) QueueVDCCreation(zoneID string, vdcData map[string]i
 	klog.Infof("Found spoke agent for cluster %s at %s", clusterID, spoke.FQDN)
 
 	// Prepare operation for the spoke agent
+	operationID := generateOperationID()
 	operation := map[string]interface{}{
-		"id":        generateOperationID(),
+		"id":        operationID,
 		"type":      "create_vdc",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"payload":   vdcData,
 	}
+
+	// Store operation metadata in spoke handlers for result processing
+	si.spokeHandler.metadataMutex.Lock()
+	si.spokeHandler.operationMetadata[operationID] = map[string]interface{}{
+		"vdc_name":    vdcData["vdc_name"],
+		"agent_id":    fmt.Sprintf("spoke-agent-%s", zoneID),
+		"operation":   "create_vdc",
+		"created_at":  time.Now(),
+	}
+	si.spokeHandler.metadataMutex.Unlock()
 
 	// Send operation directly to spoke via HTTPS
 	resp, err := si.spokeClient.SendToSpoke(clusterID, "/operations", "POST", operation)
@@ -107,7 +118,6 @@ func (si *SpokeIntegration) QueueVDCCreation(zoneID string, vdcData map[string]i
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		operationID := operation["id"].(string)
 		klog.Infof("Successfully sent VDC creation operation %s to spoke %s via HTTPS (status: %d)",
 			operationID, clusterID, resp.StatusCode)
 		return operationID, nil
@@ -116,6 +126,68 @@ func (si *SpokeIntegration) QueueVDCCreation(zoneID string, vdcData map[string]i
 		// Fallback to legacy queue mechanism
 		agentID := fmt.Sprintf("spoke-agent-%s", zoneID)
 		operationID := si.spokeHandler.QueueVDCCreation(agentID, vdcData)
+		return operationID, nil
+	}
+}
+
+// QueueVDCDeletion queues a VDC deletion operation using the new spoke client
+func (si *SpokeIntegration) QueueVDCDeletion(zoneID string, vdcData map[string]interface{}) (string, error) {
+	klog.Infof("Queuing VDC deletion for zone %s using dynamic spoke client", zoneID)
+
+	// Map zone ID to cluster ID for spoke client discovery
+	clusterID := zoneID // In your setup, zone ID == cluster ID
+
+	// Check if spoke is available
+	spoke, exists := si.spokeClient.GetSpokeByClusterID(clusterID)
+	if !exists {
+		klog.Warningf("Spoke agent not found for cluster %s, falling back to legacy queue", clusterID)
+		// Fallback to legacy spoke handlers
+		agentID := fmt.Sprintf("spoke-agent-%s", zoneID)
+		return si.spokeHandler.QueueVDCDeletion(agentID, vdcData), nil
+	}
+
+	klog.Infof("Found spoke agent for cluster %s at %s", clusterID, spoke.FQDN)
+
+	// Prepare operation for the spoke agent
+	operationID := generateOperationID()
+	operation := map[string]interface{}{
+		"id":        operationID,
+		"type":      "delete_vdc",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload":   vdcData,
+	}
+
+	// Store operation metadata in spoke handlers for result processing
+	si.spokeHandler.metadataMutex.Lock()
+	si.spokeHandler.operationMetadata[operationID] = map[string]interface{}{
+		"vdc_name":    vdcData["vdc_name"],
+		"agent_id":    fmt.Sprintf("spoke-agent-%s", zoneID),
+		"operation":   "delete_vdc",
+		"created_at":  time.Now(),
+	}
+	si.spokeHandler.metadataMutex.Unlock()
+
+	// Send operation directly to spoke via HTTPS
+	resp, err := si.spokeClient.SendToSpoke(clusterID, "/operations", "POST", operation)
+	if err != nil {
+		klog.Errorf("Failed to send VDC deletion to spoke %s via HTTPS: %v", clusterID, err)
+		// Fallback to legacy queue mechanism
+		agentID := fmt.Sprintf("spoke-agent-%s", zoneID)
+		operationID := si.spokeHandler.QueueVDCDeletion(agentID, vdcData)
+		klog.Infof("Fallback: Queued VDC deletion operation %s for legacy agent %s", operationID, agentID)
+		return operationID, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		klog.Infof("Successfully sent VDC deletion operation %s to spoke %s via HTTPS (status: %d)",
+			operationID, clusterID, resp.StatusCode)
+		return operationID, nil
+	} else {
+		klog.Warningf("Spoke %s responded with status %d, falling back to legacy queue", clusterID, resp.StatusCode)
+		// Fallback to legacy queue mechanism
+		agentID := fmt.Sprintf("spoke-agent-%s", zoneID)
+		operationID := si.spokeHandler.QueueVDCDeletion(agentID, vdcData)
 		return operationID, nil
 	}
 }

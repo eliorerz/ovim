@@ -36,6 +36,10 @@ type SpokeHandlers struct {
 	// Store agent endpoints for push notifications
 	agentEndpoints map[string]string
 	endpointsMutex sync.RWMutex
+
+	// Store operation metadata for tracking VDC names and other info
+	operationMetadata map[string]map[string]interface{}
+	metadataMutex     sync.RWMutex
 }
 
 // SpokeStatusReport represents a status report from a spoke agent
@@ -77,11 +81,12 @@ type SpokeOperationResult struct {
 // NewSpokeHandlers creates a new spoke handlers instance
 func NewSpokeHandlers(storage storage.Storage) *SpokeHandlers {
 	return &SpokeHandlers{
-		storage:          storage,
-		operationQueues:  make(map[string][]*SpokeOperation),
-		operationResults: make(map[string]*SpokeOperationResult),
-		agentStatuses:    make(map[string]*SpokeStatusReport),
-		agentEndpoints:   make(map[string]string),
+		storage:           storage,
+		operationQueues:   make(map[string][]*SpokeOperation),
+		operationResults:  make(map[string]*SpokeOperationResult),
+		agentStatuses:     make(map[string]*SpokeStatusReport),
+		agentEndpoints:    make(map[string]string),
+		operationMetadata: make(map[string]map[string]interface{}),
 	}
 }
 
@@ -212,9 +217,8 @@ func (h *SpokeHandlers) HandleOperationResult(c *gin.Context) {
 
 	klog.Infof("Received operation result for %s: status=%s", operationID, result.Status)
 
-	// TODO: Process operation result
-	// TODO: Update VM/VDC status based on operation result
-	// TODO: Notify waiting API calls about operation completion
+	// Process operation result based on operation type
+	go h.processOperationResult(&result)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "received",
@@ -349,6 +353,44 @@ func (h *SpokeHandlers) QueueVDCCreation(agentID string, vdcData map[string]inte
 	return operation.ID
 }
 
+// QueueVDCDeletion queues a VDC deletion operation for a spoke agent
+func (h *SpokeHandlers) QueueVDCDeletion(agentID string, vdcData map[string]interface{}) string {
+	operation := &SpokeOperation{
+		ID:        generateOperationID(),
+		Type:      "delete_vdc",
+		Timestamp: time.Now(),
+		Payload:   vdcData,
+	}
+
+	// Store operation metadata for later retrieval
+	h.metadataMutex.Lock()
+	h.operationMetadata[operation.ID] = map[string]interface{}{
+		"vdc_name":    vdcData["vdc_name"],
+		"agent_id":    agentID,
+		"operation":   "delete_vdc",
+		"created_at":  time.Now(),
+	}
+	h.metadataMutex.Unlock()
+
+	// Try to push operation directly to agent first
+	h.endpointsMutex.RLock()
+	endpoint, hasEndpoint := h.agentEndpoints[agentID]
+	h.endpointsMutex.RUnlock()
+
+	if hasEndpoint {
+		// Push operation directly to agent
+		go h.pushOperationToAgent(agentID, endpoint, operation)
+	} else {
+		// Fallback to queue-based approach
+		h.operationsMutex.Lock()
+		h.operationQueues[agentID] = append(h.operationQueues[agentID], operation)
+		h.operationsMutex.Unlock()
+		klog.Infof("Agent %s endpoint not available, queued VDC deletion operation %s", agentID, operation.ID)
+	}
+
+	return operation.ID
+}
+
 // generateOperationID generates a unique operation ID
 func generateOperationID() string {
 	// Simple timestamp-based ID for demo purposes
@@ -443,6 +485,180 @@ func (h *SpokeHandlers) pushOperationToAgent(agentID, endpoint string, operation
 	}
 
 	klog.Infof("Successfully pushed VDC creation operation %s to spoke agent %s", operation.ID, agentID)
+}
+
+// processOperationResult processes operation results and updates corresponding resource status
+func (h *SpokeHandlers) processOperationResult(result *SpokeOperationResult) {
+	klog.Infof("Processing operation result %s with status %s", result.OperationID, result.Status)
+
+	// Extract operation type from the operation ID pattern or result data
+	// We need to track operation types properly to handle them
+	h.operationsMutex.RLock()
+	var operationType string
+	// Look up operation type from stored operations
+	for _, operations := range h.operationQueues {
+		for _, op := range operations {
+			if op.ID == result.OperationID {
+				operationType = op.Type
+				break
+			}
+		}
+		if operationType != "" {
+			break
+		}
+	}
+	h.operationsMutex.RUnlock()
+
+	// Process based on operation type
+	switch operationType {
+	case "create_vdc":
+		h.processVDCCreationResult(result)
+	case "delete_vdc":
+		h.processVDCDeletionResult(result)
+	default:
+		// Fallback: check result data for VDC operations
+		if result.Result != nil {
+			if _, hasNamespace := result.Result["namespace"]; hasNamespace {
+				h.processVDCCreationResult(result)
+			} else if status, hasStatus := result.Result["status"]; hasStatus {
+				if statusStr, ok := status.(string); ok && (statusStr == "deleted" || statusStr == "deleted_with_warnings") {
+					h.processVDCDeletionResult(result)
+				}
+			}
+		}
+	}
+
+	// TODO: Add other operation types (VM operations, etc.)
+}
+
+// processVDCCreationResult processes VDC creation operation results
+func (h *SpokeHandlers) processVDCCreationResult(result *SpokeOperationResult) {
+	klog.Infof("Processing VDC creation result %s", result.OperationID)
+
+	// For VDC creation, we typically just log the result
+	// The VDC CRD status is managed by the controller
+	if result.Status == "completed" {
+		klog.Infof("VDC creation completed successfully: %s", result.OperationID)
+	} else {
+		klog.Errorf("VDC creation failed: %s (status: %s, error: %s)", result.OperationID, result.Status, result.Error)
+	}
+}
+
+// processVDCDeletionResult processes VDC deletion operation results
+func (h *SpokeHandlers) processVDCDeletionResult(result *SpokeOperationResult) {
+	klog.Infof("Processing VDC deletion result %s", result.OperationID)
+
+	// Step 5: When deletion is complete, we need to delete the VDC CRD
+	if result.Status == "completed" && result.Result != nil {
+		status, _ := result.Result["status"].(string)
+		if status == "deleted" || status == "deleted_with_warnings" {
+			// Extract VDC name from the operation data
+			// We need to track the VDC name from the original operation
+			h.completeVDCDeletion(result.OperationID, result.Result)
+		} else {
+			klog.Errorf("VDC deletion completed but with unexpected status: %s", status)
+		}
+	} else {
+		klog.Errorf("VDC deletion failed: %s (status: %s, error: %s)", result.OperationID, result.Status, result.Error)
+		// TODO: Update VDC status to DeletionFailed
+	}
+}
+
+// completeVDCDeletion completes the VDC deletion by removing the CRD
+func (h *SpokeHandlers) completeVDCDeletion(operationID string, resultData map[string]interface{}) {
+	klog.Infof("Completing VDC deletion for operation %s", operationID)
+
+	// Extract VDC name from stored operation data
+	vdcName := h.getVDCNameFromOperation(operationID)
+	if vdcName == "" {
+		klog.Errorf("Could not find VDC name for operation %s", operationID)
+		return
+	}
+
+	// Extract warnings if present
+	var warnings []string
+	if warningsData, ok := resultData["warnings"]; ok {
+		if warningsList, ok := warningsData.([]interface{}); ok {
+			for _, w := range warningsList {
+				if wStr, ok := w.(string); ok {
+					warnings = append(warnings, wStr)
+				}
+			}
+		}
+	}
+
+	// Call the VDC deletion completion endpoint to finalize deletion
+	callbackData := map[string]interface{}{
+		"status": resultData["status"],
+	}
+	if len(warnings) > 0 {
+		callbackData["warnings"] = warnings
+	}
+
+	// Make internal API call to complete VDC deletion
+	h.callVDCDeletionComplete(vdcName, callbackData)
+
+	klog.Infof("VDC deletion operation %s completed successfully", operationID)
+	if len(warnings) > 0 {
+		klog.Warningf("VDC deletion operation %s completed with warnings: %v", operationID, warnings)
+	}
+
+	// Clean up operation metadata
+	h.metadataMutex.Lock()
+	delete(h.operationMetadata, operationID)
+	h.metadataMutex.Unlock()
+}
+
+// getVDCNameFromOperation extracts VDC name from stored operation metadata
+func (h *SpokeHandlers) getVDCNameFromOperation(operationID string) string {
+	h.metadataMutex.RLock()
+	defer h.metadataMutex.RUnlock()
+
+	// Look up operation metadata to extract VDC name
+	if metadata, exists := h.operationMetadata[operationID]; exists {
+		if vdcName, ok := metadata["vdc_name"].(string); ok {
+			return vdcName
+		}
+	}
+	return ""
+}
+
+// callVDCDeletionComplete makes an internal API call to complete VDC deletion
+func (h *SpokeHandlers) callVDCDeletionComplete(vdcName string, callbackData map[string]interface{}) {
+	jsonData, err := json.Marshal(callbackData)
+	if err != nil {
+		klog.Errorf("Failed to marshal VDC deletion callback data for %s: %v", vdcName, err)
+		return
+	}
+
+	// Make internal API call to the VDC deletion completion endpoint
+	url := fmt.Sprintf("http://localhost:8443/api/v1/vdcs/%s/deletion-complete", vdcName)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		klog.Errorf("Failed to create VDC deletion completion request for %s: %v", vdcName, err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Add internal API authentication if needed
+	// req.Header.Set("Authorization", "Bearer " + internalToken)
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		klog.Errorf("Failed to call VDC deletion completion for %s: %v", vdcName, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		klog.Infof("Successfully completed VDC deletion for %s", vdcName)
+	} else {
+		klog.Errorf("VDC deletion completion failed for %s: status %d", vdcName, resp.StatusCode)
+	}
 }
 
 // transformCallbackURL converts localhost callback URLs to proper FQDN URLs for cross-cluster communication
