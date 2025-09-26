@@ -104,13 +104,41 @@ type VirtualDataCenterSpec struct {
 	// CustomNetworkConfig defines custom network configuration when NetworkPolicy is "custom"
 	// +kubebuilder:pruning:PreserveUnknownFields
 	CustomNetworkConfig map[string]string `json:"customNetworkConfig,omitempty"`
+
+	// VDCType specifies whether this is hub-managed or spoke-local
+	// +kubebuilder:validation:Enum=hub-managed;spoke-local
+	// +kubebuilder:default=hub-managed
+	VDCType string `json:"vdcType,omitempty"`
+
+	// HubVDCName is the original VDC name from hub (for spoke VDCs)
+	HubVDCName string `json:"hubVDCName,omitempty"`
+
+	// HubVDCNamespace is the hub namespace (for spoke VDCs)
+	HubVDCNamespace string `json:"hubVDCNamespace,omitempty"`
+
+	// OrgNamespace is the org namespace on spoke (for spoke VDCs)
+	OrgNamespace string `json:"orgNamespace,omitempty"`
+
+	// TargetNamespace is the workload namespace (for spoke VDCs)
+	TargetNamespace string `json:"targetNamespace,omitempty"`
+
+	// HubOperationID is the current operation ID from hub (for spoke VDCs)
+	HubOperationID string `json:"hubOperationID,omitempty"`
+
+	// LastHubSync is the last successful hub sync timestamp (for spoke VDCs)
+	LastHubSync *metav1.Time `json:"lastHubSync,omitempty"`
+
+	// ReconcileUntilSuccess keeps reconciling until hub confirms success (for spoke VDCs)
+	ReconcileUntilSuccess bool `json:"reconcileUntilSuccess,omitempty"`
 }
 
 // ResourceQuota defines resource limits
 type ResourceQuota struct {
-	CPU     string `json:"cpu"`     // e.g., "20"
-	Memory  string `json:"memory"`  // e.g., "64Gi"
-	Storage string `json:"storage"` // e.g., "500Ti"
+	CPU             string `json:"cpu"`                       // e.g., "20"
+	Memory          string `json:"memory"`                    // e.g., "64Gi"
+	Storage         string `json:"storage"`                   // e.g., "500Ti"
+	Pods            int    `json:"pods,omitempty"`            // Maximum number of pods
+	VirtualMachines int    `json:"virtualMachines,omitempty"` // Maximum number of virtual machines
 }
 
 // LimitRange defines VM resource constraints
@@ -143,6 +171,24 @@ type VirtualDataCenterStatus struct {
 
 	// Conditions represent the latest available observations
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// OrgNamespace is the created org namespace (for spoke VDCs)
+	OrgNamespace string `json:"orgNamespace,omitempty"`
+
+	// WorkloadNamespace is the created workload namespace (for spoke VDCs)
+	WorkloadNamespace string `json:"workloadNamespace,omitempty"`
+
+	// LastReconcile is the last reconcile attempt timestamp (for spoke VDCs)
+	LastReconcile *metav1.Time `json:"lastReconcile,omitempty"`
+
+	// HubSyncStatus indicates the hub synchronization status (for spoke VDCs)
+	HubSyncStatus string `json:"hubSyncStatus,omitempty"`
+
+	// RetryCount is the number of reconcile attempts (for spoke VDCs)
+	RetryCount int `json:"retryCount,omitempty"`
+
+	// LastHubSync is the last successful hub sync timestamp (for spoke VDCs)
+	LastHubSync *metav1.Time `json:"lastHubSync,omitempty"`
 }
 
 // ResourceUsage represents current resource consumption
@@ -162,6 +208,19 @@ const (
 	VirtualDataCenterPhaseSuspended       VirtualDataCenterPhase = "Suspended"
 	VirtualDataCenterPhaseDeletionPending VirtualDataCenterPhase = "DeletionPending"
 	VirtualDataCenterPhaseDeletionFailed  VirtualDataCenterPhase = "DeletionFailed"
+)
+
+// VDC type constants
+const (
+	VDCTypeHubManaged = "hub-managed"
+	VDCTypeSpokeLocal = "spoke-local"
+)
+
+// Hub sync status constants
+const (
+	HubSyncStatusPending = "pending"
+	HubSyncStatusSuccess = "success"
+	HubSyncStatusFailed  = "failed"
 )
 
 // +kubebuilder:object:root=true

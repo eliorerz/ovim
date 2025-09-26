@@ -416,3 +416,75 @@ func (c *HTTPClient) doRequestWithRetry(ctx context.Context, req *http.Request) 
 
 	return resp, nil
 }
+
+// SendVDCStatus sends VDC status to the hub for reconciliation
+func (c *HTTPClient) SendVDCStatus(ctx context.Context, vdcData map[string]interface{}) (map[string]interface{}, error) {
+	c.logger.Debug("Sending VDC status to hub", "vdc_data", vdcData)
+
+	data, err := json.Marshal(vdcData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal VDC data: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/spoke/vdc/status", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VDC status request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	c.addAuthHeaders(req)
+
+	resp, err := c.doRequestWithRetry(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send VDC status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("hub responded with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode hub response: %w", err)
+	}
+
+	return response, nil
+}
+
+// SendVDCDeletion notifies the hub of VDC deletion
+func (c *HTTPClient) SendVDCDeletion(ctx context.Context, deletionData map[string]interface{}) (map[string]interface{}, error) {
+	c.logger.Debug("Sending VDC deletion notification to hub", "deletion_data", deletionData)
+
+	data, err := json.Marshal(deletionData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal deletion data: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/spoke/vdc/deletion", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VDC deletion request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	c.addAuthHeaders(req)
+
+	resp, err := c.doRequestWithRetry(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send VDC deletion: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("hub responded with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode hub response: %w", err)
+	}
+
+	return response, nil
+}

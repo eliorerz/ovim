@@ -45,6 +45,25 @@ type VMRequest struct {
 func (r *VMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("vm-controller", req.NamespacedName)
 
+	// Check if this is triggered by a VDC resource
+	if req.NamespacedName.Name != "" && req.NamespacedName.Namespace != "" {
+		// Fetch the VDC to check if it's spoke-managed
+		var vdc ovimv1.VirtualDataCenter
+		if err := r.Get(ctx, req.NamespacedName, &vdc); err != nil {
+			if errors.IsNotFound(err) {
+				return ctrl.Result{}, nil
+			}
+			logger.Error(err, "unable to fetch VirtualDataCenter")
+			return ctrl.Result{}, err
+		}
+
+		// Hub VM controller should only process hub-managed VDCs, not spoke VDCs
+		if managedBy, exists := vdc.Labels["ovim.io/managed-by"]; exists && managedBy == "spoke-agent" {
+			logger.V(4).Info("Skipping spoke-managed VDC on hub VM controller", "vdc", vdc.Name, "managed-by", managedBy)
+			return ctrl.Result{}, nil
+		}
+	}
+
 	// This controller is triggered by VDC changes and database events
 	// For now, we'll implement periodic reconciliation to sync VMs from database
 

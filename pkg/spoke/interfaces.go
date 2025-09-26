@@ -48,6 +48,12 @@ type HubClient interface {
 
 	// GetLastContact returns the time of last successful contact with hub
 	GetLastContact() time.Time
+
+	// SendVDCStatus sends VDC status to the hub for reconciliation
+	SendVDCStatus(ctx context.Context, vdcData map[string]interface{}) (map[string]interface{}, error)
+
+	// SendVDCDeletion notifies the hub of VDC deletion
+	SendVDCDeletion(ctx context.Context, deletionData map[string]interface{}) (map[string]interface{}, error)
 }
 
 // VMManager defines the interface for managing VMs on the spoke cluster
