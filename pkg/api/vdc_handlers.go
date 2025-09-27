@@ -100,10 +100,94 @@ func (h *VDCHandlers) List(c *gin.Context) {
 		vdcs = filteredVDCs
 	}
 
-	klog.V(6).Infof("Listed %d VDCs for user %s (%s)", len(vdcs), username, userID)
+	// Get Kubernetes CRD status information to enrich VDC data
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create map to hold enhanced VDC responses with status and zone info
+	enhancedVDCs := make([]map[string]interface{}, 0, len(vdcs))
+
+	// Get all VDC CRDs from Kubernetes for status and zone information
+	var vdcCRMap map[string]*ovimv1.VirtualDataCenter
+	if h.k8sClient != nil {
+		vdcList := &ovimv1.VirtualDataCenterList{}
+		if err := h.k8sClient.List(ctx, vdcList); err != nil {
+			klog.Warningf("Failed to list VDC CRDs for enrichment (user %s): %v", username, err)
+			// Continue without CRD information - use database fields as fallback
+		} else {
+			// Create map for quick lookup by VDC name
+			vdcCRMap = make(map[string]*ovimv1.VirtualDataCenter)
+			for i := range vdcList.Items {
+				vdcCR := &vdcList.Items[i]
+				vdcCRMap[vdcCR.Name] = vdcCR
+			}
+		}
+	}
+
+	// Transform each VDC to include proper status and zone information
+	for _, vdc := range vdcs {
+		enhancedVDC := map[string]interface{}{
+			"id":                 vdc.ID,
+			"name":               vdc.Name,
+			"description":        vdc.Description,
+			"org_id":             vdc.OrgID,
+			"display_name":       vdc.DisplayName,
+			"cr_name":            vdc.CRName,
+			"cr_namespace":       vdc.CRNamespace,
+			"workload_namespace": vdc.WorkloadNamespace,
+			"cpu_quota":          vdc.CPUQuota,
+			"memory_quota":       vdc.MemoryQuota,
+			"storage_quota":      vdc.StorageQuota,
+			"network_policy":     vdc.NetworkPolicy,
+			"created_at":         vdc.CreatedAt,
+			"updated_at":         vdc.UpdatedAt,
+		}
+
+		// Add zone and status information from CRD if available, fallback to database
+		if vdcCRMap != nil {
+			if vdcCR, exists := vdcCRMap[vdc.ID]; exists {
+				// Use real-time zone and status from Kubernetes CRD
+				enhancedVDC["zone_id"] = vdcCR.Spec.ZoneID
+				enhancedVDC["status"] = map[string]interface{}{
+					"phase":           string(vdcCR.Status.Phase),
+					"conditions":      vdcCR.Status.Conditions,
+					"last_reconciled": vdcCR.Status.LastReconcile,
+					"hub_sync_status": vdcCR.Status.HubSyncStatus,
+					"retry_count":     vdcCR.Status.RetryCount,
+					"last_hub_sync":   vdcCR.Status.LastHubSync,
+				}
+			} else {
+				// CRD not found, use database fallback
+				enhancedVDC["zone_id"] = vdc.ZoneID
+				enhancedVDC["status"] = map[string]interface{}{
+					"phase":           vdc.Phase,
+					"conditions":      vdc.Conditions,
+					"last_reconciled": nil,
+					"hub_sync_status": "unknown",
+					"retry_count":     0,
+					"last_hub_sync":   nil,
+				}
+			}
+		} else {
+			// Kubernetes client not available, use database fallback
+			enhancedVDC["zone_id"] = vdc.ZoneID
+			enhancedVDC["status"] = map[string]interface{}{
+				"phase":           vdc.Phase,
+				"conditions":      vdc.Conditions,
+				"last_reconciled": nil,
+				"hub_sync_status": "unknown",
+				"retry_count":     0,
+				"last_hub_sync":   nil,
+			}
+		}
+
+		enhancedVDCs = append(enhancedVDCs, enhancedVDC)
+	}
+
+	klog.V(6).Infof("Listed %d VDCs with zone and status information for user %s (%s)", len(enhancedVDCs), username, userID)
 	c.JSON(http.StatusOK, gin.H{
-		"vdcs":  vdcs,
-		"total": len(vdcs),
+		"vdcs":  enhancedVDCs,
+		"total": len(enhancedVDCs),
 	})
 }
 
@@ -853,10 +937,94 @@ func (h *VDCHandlers) ListUserVDCs(c *gin.Context) {
 		vdcs = filteredVDCs
 	}
 
-	klog.V(6).Infof("Listed %d VDCs for user %s (%s) in org %s", len(vdcs), username, userID, userOrgID)
+	// Get Kubernetes CRD status information to enrich VDC data
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create map to hold enhanced VDC responses with status and zone info
+	enhancedVDCs := make([]map[string]interface{}, 0, len(vdcs))
+
+	// Get all VDC CRDs from Kubernetes for status and zone information
+	var vdcCRMap map[string]*ovimv1.VirtualDataCenter
+	if h.k8sClient != nil {
+		vdcList := &ovimv1.VirtualDataCenterList{}
+		if err := h.k8sClient.List(ctx, vdcList); err != nil {
+			klog.Warningf("Failed to list VDC CRDs for enrichment (user %s): %v", username, err)
+			// Continue without CRD information - use database fields as fallback
+		} else {
+			// Create map for quick lookup by VDC name
+			vdcCRMap = make(map[string]*ovimv1.VirtualDataCenter)
+			for i := range vdcList.Items {
+				vdcCR := &vdcList.Items[i]
+				vdcCRMap[vdcCR.Name] = vdcCR
+			}
+		}
+	}
+
+	// Transform each VDC to include proper status and zone information
+	for _, vdc := range vdcs {
+		enhancedVDC := map[string]interface{}{
+			"id":                 vdc.ID,
+			"name":               vdc.Name,
+			"description":        vdc.Description,
+			"org_id":             vdc.OrgID,
+			"display_name":       vdc.DisplayName,
+			"cr_name":            vdc.CRName,
+			"cr_namespace":       vdc.CRNamespace,
+			"workload_namespace": vdc.WorkloadNamespace,
+			"cpu_quota":          vdc.CPUQuota,
+			"memory_quota":       vdc.MemoryQuota,
+			"storage_quota":      vdc.StorageQuota,
+			"network_policy":     vdc.NetworkPolicy,
+			"created_at":         vdc.CreatedAt,
+			"updated_at":         vdc.UpdatedAt,
+		}
+
+		// Add zone and status information from CRD if available, fallback to database
+		if vdcCRMap != nil {
+			if vdcCR, exists := vdcCRMap[vdc.ID]; exists {
+				// Use real-time zone and status from Kubernetes CRD
+				enhancedVDC["zone_id"] = vdcCR.Spec.ZoneID
+				enhancedVDC["status"] = map[string]interface{}{
+					"phase":           string(vdcCR.Status.Phase),
+					"conditions":      vdcCR.Status.Conditions,
+					"last_reconciled": vdcCR.Status.LastReconcile,
+					"hub_sync_status": vdcCR.Status.HubSyncStatus,
+					"retry_count":     vdcCR.Status.RetryCount,
+					"last_hub_sync":   vdcCR.Status.LastHubSync,
+				}
+			} else {
+				// CRD not found, use database fallback
+				enhancedVDC["zone_id"] = vdc.ZoneID
+				enhancedVDC["status"] = map[string]interface{}{
+					"phase":           vdc.Phase,
+					"conditions":      vdc.Conditions,
+					"last_reconciled": nil,
+					"hub_sync_status": "unknown",
+					"retry_count":     0,
+					"last_hub_sync":   nil,
+				}
+			}
+		} else {
+			// Kubernetes client not available, use database fallback
+			enhancedVDC["zone_id"] = vdc.ZoneID
+			enhancedVDC["status"] = map[string]interface{}{
+				"phase":           vdc.Phase,
+				"conditions":      vdc.Conditions,
+				"last_reconciled": nil,
+				"hub_sync_status": "unknown",
+				"retry_count":     0,
+				"last_hub_sync":   nil,
+			}
+		}
+
+		enhancedVDCs = append(enhancedVDCs, enhancedVDC)
+	}
+
+	klog.V(6).Infof("Listed %d VDCs with zone and status information for user %s (%s) in org %s", len(enhancedVDCs), username, userID, userOrgID)
 	c.JSON(http.StatusOK, gin.H{
-		"vdcs":  vdcs,
-		"total": len(vdcs),
+		"vdcs":  enhancedVDCs,
+		"total": len(enhancedVDCs),
 	})
 }
 
